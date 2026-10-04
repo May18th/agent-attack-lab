@@ -18,12 +18,12 @@ uv sync
 
 ```powershell
 .\restart.ps1
+```
 
 运行测试并检查服务：
 
 ```powershell
 .\verify.ps1
-```
 ```
 
 如果 8787 端口被占用：
@@ -32,7 +32,7 @@ uv sync
 .\start.ps1 -Port 8788
 ```
 
-打开 `http://127.0.0.1:8787/docs` 可查看中文接口文档。测试命令：
+打开 `http://127.0.0.1:8787/dashboard` 查看中文后台页面，打开 `http://127.0.0.1:8787/docs` 查看接口文档。测试命令：
 
 ```powershell
 uv run pytest -q

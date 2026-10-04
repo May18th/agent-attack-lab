@@ -16,6 +16,13 @@ def test_health_and_index() -> None:
     assert "/agent/attack" in index.json()["endpoints"]
 
 
+def test_dashboard_is_chinese_html() -> None:
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "智能体攻防实验室后台" in response.text
+
+
 def test_attack_by_difficulty() -> None:
     response = client.post("/agent/attack", json={"difficulty": "high", "topic": "SQL 注入"})
     assert response.status_code == 200

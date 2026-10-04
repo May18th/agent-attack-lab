@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from acps_sdk.aip import (
@@ -93,6 +94,66 @@ def index() -> dict[str, Any]:
         "endpoints": ["/health", "/battles", "/agent/attack", "/agent/defend", "/rpc", "/docs"],
         "note": "当前提供 JSON-RPC 2.0 和兼容的 HTTP JSON 接口；平台审核通过并下发证书后再启用 mTLS。",
     }
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard() -> str:
+    return """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>智能体攻防实验室后台</title>
+  <style>
+    :root { color-scheme: light; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f3f6f8; color: #17202a; }
+    main { max-width: 980px; margin: 0 auto; padding: 42px 22px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    .sub { color: #5c6873; margin: 0 0 28px; }
+    .status { display: flex; align-items: center; gap: 12px; padding: 18px 20px; background: #fff; border: 1px solid #d8e0e5; border-radius: 8px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; background: #c0392b; }
+    .dot.ok { background: #1f9d55; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 22px; }
+    a.card { display: block; padding: 18px; background: #fff; border: 1px solid #d8e0e5; border-radius: 8px; color: inherit; text-decoration: none; }
+    a.card:hover { border-color: #2878c8; box-shadow: 0 3px 12px #1b4d6b18; }
+    .card strong { display: block; margin-bottom: 7px; font-size: 17px; }
+    .card span { color: #5c6873; font-size: 14px; }
+    code { font-family: Consolas, monospace; font-size: 13px; }
+    footer { margin-top: 28px; color: #6d7881; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>智能体攻防实验室后台</h1>
+    <p class="sub">后端服务控制台与接口入口</p>
+    <section class="status" aria-live="polite">
+      <span id="dot" class="dot"></span>
+      <div><strong id="status">正在检查服务状态...</strong><br><span id="detail">请稍候</span></div>
+    </section>
+    <section class="grid">
+      <a class="card" href="/docs"><strong>接口文档</strong><span>查看和调试 REST / JSON-RPC 接口</span></a>
+      <a class="card" href="/health"><strong>健康检查</strong><span>查看服务在线状态 JSON</span></a>
+      <a class="card" href="/battles"><strong>战局列表</strong><span>查看已保存的攻防战局</span></a>
+      <a class="card" href="/openapi.json"><strong>OpenAPI JSON</strong><span>下载接口契约文件</span></a>
+    </section>
+    <footer>本地服务地址：<code id="origin"></code></footer>
+  </main>
+  <script>
+    document.getElementById("origin").textContent = window.location.origin;
+    fetch("/health").then(function (response) {
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return response.json();
+    }).then(function (data) {
+      document.getElementById("dot").className = "dot ok";
+      document.getElementById("status").textContent = "服务运行正常";
+      document.getElementById("detail").textContent = data.service;
+    }).catch(function (error) {
+      document.getElementById("status").textContent = "服务检查失败";
+      document.getElementById("detail").textContent = error.message;
+    });
+  </script>
+</body>
+</html>"""
 
 
 @app.get("/health")
