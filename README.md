@@ -8,6 +8,8 @@
 - `frontend/`：前端联调材料和队友文件
 - `docs/`：接口契约与协作规则
 
+协作边界详见 `docs/COLLABORATION_BOUNDARIES.md`。
+
 ## 后端启动
 
 ```powershell
