@@ -53,6 +53,12 @@ VITE_AGENT_API=http://127.0.0.1:8787
 VITE_AGENT_API=https://spice-mil-src-seat.trycloudflare.com
 ```
 
+当前前端公网页面：
+
+```text
+https://platinum-require-instruction-bet.trycloudflare.com
+```
+
 ## 当前暂不作为验收项的功能
 
 以下功能属于后续扩展，第一版不要因为它们阻塞页面开发：

@@ -24,6 +24,14 @@ http://127.0.0.1:8787
 https://spice-mil-src-seat.trycloudflare.com
 ```
 
+当前前端公网地址（由队友 Tunnel 提供）：
+
+```text
+https://platinum-require-instruction-bet.trycloudflare.com
+```
+
+前端公网地址仅用于打开队友页面；后端 API 仍使用上面的后端地址。
+
 前端本地开发优先使用本地地址；远程联调前先确认公网地址和 `/health` 可访问。公网地址依赖 Cloudflare Tunnel，服务停止后会暂时无法访问。
 
 ## 3. 启动后端
