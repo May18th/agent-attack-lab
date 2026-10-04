@@ -1,0 +1,25 @@
+# Python environments and generated data
+.venv/
+**/.venv/
+.data/
+**/.data/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+
+# Credentials and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+backend/acs-*.json
+backend/attack-agent-acs.json
+
+# Local editor and OS files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

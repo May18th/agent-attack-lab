@@ -1,0 +1,23 @@
+[project]
+name = "agent-attack-lab"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "3498414260", email = "3498414260@qq.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "acps-sdk>=2.1.0",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "pytest>=8.0",
+    "uvicorn>=0.29",
+]
+
+[project.scripts]
+agent-attack-lab = "agent_attack_lab:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
