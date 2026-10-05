@@ -5,8 +5,25 @@
 ## 目录
 
 - `backend/`：FastAPI 后端、Agent 逻辑和测试
-- `frontend/`：前端联调材料和队友文件
+- `frontend/`：前端源码和前端联调材料；队友的实际前端项目应放在这里
 - `docs/`：接口契约与协作规则
+
+完整结构：
+
+```text
+D:\梧桐
+├─ backend
+│  ├─ src              后端源码
+│  ├─ tests            后端测试
+│  ├─ .venv            本机运行环境，不提交
+│  └─ .data            SQLite 和运行日志，不提交
+├─ frontend            前端源码与前端材料
+├─ docs                统一交接、边界和接口文档
+├─ README.md           项目入口
+└─ .gitignore          忽略规则
+```
+
+不要把源码、临时日志、虚拟环境或数据库放到项目根目录；前后端文件分别放入对应目录。
 
 协作边界详见 `docs/COLLABORATION_BOUNDARIES.md`。
 
