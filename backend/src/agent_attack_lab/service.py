@@ -132,14 +132,10 @@ def dashboard() -> str:
     </section>
     <section class="grid">
       <a class="card" href="/docs"><strong>接口文档</strong><span>查看和调试 REST / JSON-RPC 接口</span></a>
-      <a class="card" href="/health"><strong>健康检查</strong><span>查看服务在线状态 JSON</span></a>
       <a class="card" href="/battles"><strong>战局列表</strong><span>查看已保存的攻防战局</span></a>
-      <a class="card" href="/openapi.json"><strong>OpenAPI JSON</strong><span>下载接口契约文件</span></a>
     </section>
-    <footer>本地服务地址：<code id="origin"></code></footer>
   </main>
   <script>
-    document.getElementById("origin").textContent = window.location.origin;
     fetch("/health").then(function (response) {
       if (!response.ok) throw new Error("HTTP " + response.status);
       return response.json();
