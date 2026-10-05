@@ -143,10 +143,32 @@ def dashboard() -> str:
     .battle-head { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid #e4eaee; }
     .battle-head strong { font-size: 15px; }
     .battle-head span { color: #667580; font-size: 12px; }
-    .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
-    .columns h3 { margin: 0 0 8px; font-size: 13px; color: #52606c; }
-    .sample { padding: 9px 10px; margin-bottom: 7px; border-left: 3px solid #e08b2c; background: #fff8ed; font-size: 12px; line-height: 1.5; }
-    .defense { padding: 9px 10px; margin-bottom: 7px; border-left: 3px solid #1f9d55; background: #effaf3; font-size: 12px; line-height: 1.5; }
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 16px 0 18px; }
+    .flow-step { position: relative; min-height: 64px; padding: 10px 10px 8px 36px; border: 1px solid #dce5ea; border-radius: 6px; background: #f7fafb; }
+    .flow-step:not(:last-child)::after { content: ""; position: absolute; top: 28px; right: -9px; width: 10px; border-top: 1px solid #a9bbc7; z-index: 1; }
+    .flow-step i { position: absolute; left: 10px; top: 11px; display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; background: #1769aa; color: #fff; font-style: normal; font-size: 11px; font-weight: 700; }
+    .flow-step b { display: block; font-size: 12px; }
+    .flow-step small { display: block; margin-top: 4px; color: #75818a; font-size: 11px; }
+    .battle-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+    .summary-item { padding: 9px 10px; border-radius: 5px; background: #f5f8fa; text-align: center; }
+    .summary-item b { display: block; font-size: 18px; }
+    .summary-item span { color: #71808a; font-size: 11px; }
+    .round-list { display: grid; gap: 12px; }
+    .round { border: 1px solid #dce5ea; border-radius: 7px; overflow: hidden; background: #fff; }
+    .round-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: #f5f8fa; border-bottom: 1px solid #e4eaee; }
+    .round-number { color: #1769aa; font-weight: 700; font-size: 12px; }
+    .round-type { padding: 2px 6px; border-radius: 3px; background: #fff0da; color: #a46111; font-size: 11px; }
+    .round-state { margin-left: auto; color: #1f8050; font-size: 11px; }
+    .round-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
+    .round-grid h3 { margin: 0 0 7px; font-size: 12px; color: #52606c; }
+    .attack-box, .defend-box { min-width: 0; padding: 10px; border-radius: 5px; font-size: 12px; line-height: 1.5; }
+    .attack-box { border-left: 3px solid #e08b2c; background: #fff8ed; }
+    .defend-box { border-left: 3px solid #1f9d55; background: #effaf3; }
+    .round-content { margin-top: 6px; overflow-wrap: anywhere; color: #374650; }
+    .result-list { margin: 5px 0 0; padding-left: 17px; color: #43535d; }
+    .result-list li { margin: 2px 0; }
+    .result-label { margin-top: 9px; color: #71808a; font-size: 11px; }
+    .muted { color: #89959d; }
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 10px 8px; border-bottom: 1px solid #e7ecef; text-align: left; white-space: nowrap; }
@@ -155,7 +177,7 @@ def dashboard() -> str:
     a { color: #1769aa; text-decoration: none; }
     a:hover { text-decoration: underline; }
     .error { color: #b42318; background: #fff1f0; border: 1px solid #f2c4bf; border-radius: 6px; padding: 10px; font-size: 13px; }
-    @media (max-width: 760px) { .topbar { display: block; } .status { margin-top: 14px; } .layout { grid-template-columns: 1fr; } .columns { grid-template-columns: 1fr; } main { padding: 16px; } }
+    @media (max-width: 760px) { .topbar { display: block; } .status { margin-top: 14px; } .layout { grid-template-columns: 1fr; } .round-grid { grid-template-columns: 1fr; } .flow { grid-template-columns: repeat(2, 1fr); } .flow-step:not(:last-child)::after { display: none; } .battle-summary { grid-template-columns: repeat(2, 1fr); } main { padding: 16px; } }
   </style>
 </head>
 <body>
@@ -181,6 +203,7 @@ def dashboard() -> str:
     function escapeHtml(value) { return String(value).replace(/[&<>\"']/g, function (char) { return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"})[char]; }); }
     function formatTime(value) { return value ? new Date(value).toLocaleString("zh-CN", {hour12: false}) : "--"; }
     function difficulty(value) { return ({low: "低", mid: "中", high: "高"})[value] || value; }
+    function resultList(items, field, emptyText) { if (!items || !items.length) return '<li class="muted">' + escapeHtml(emptyText) + '</li>'; return items.map(function (item) { var value = item[field] || item.reason || item.action || item.level || "结果"; var suffix = item.status ? " · " + item.status : ""; return '<li>' + escapeHtml(value + suffix) + '</li>'; }).join(""); }
     function renderHistory(items) {
       $("total").textContent = items.length;
       $("high-count").textContent = items.filter(function (item) { return item.difficulty === "high"; }).length;
@@ -189,9 +212,13 @@ def dashboard() -> str:
     }
     function renderBattle(battle) {
       $("battle-id").textContent = battle.id;
-      var samples = (battle.attackerOut.samples || []).map(function (sample) { return "<div class=\"sample\"><b>" + escapeHtml(sample.type) + " · " + escapeHtml(sample.severity) + "</b><br>" + escapeHtml(sample.content) + "</div>"; }).join("") || '<div class="empty">无攻击样本</div>';
-      var defenses = (battle.defenderOut || []).map(function (item) { var caught = (item.caught || []).map(function (entry) { return escapeHtml(entry.reason); }).join("；") || "未发现风险"; return "<div class=\"defense\"><b>检测结果</b><br>" + caught + "</div>"; }).join("") || '<div class="empty">无防守结果</div>';
-      $("result").innerHTML = "<div class=\"battle-head\"><strong>" + escapeHtml(battle.topic) + " · " + difficulty(battle.difficulty) + "难度</strong><span>" + escapeHtml(battle.status) + " · " + formatTime(battle.createdAt) + "</span></div><div class=\"columns\"><div><h3>攻击样本</h3>" + samples + "</div><div><h3>防守检测</h3>" + defenses + "</div></div>";
+      var samples = battle.attackerOut.samples || [];
+      var defenses = battle.defenderOut || [];
+      var caughtCount = defenses.reduce(function (sum, item) { return sum + (item.caught || []).length; }, 0);
+      var riskCount = defenses.reduce(function (sum, item) { return sum + (item.risks || []).length; }, 0);
+      var fixedCount = defenses.reduce(function (sum, item) { return sum + (item.fixed || []).length; }, 0);
+      var rounds = samples.map(function (sample, index) { var defense = defenses[index] || {}; return '<article class="round"><div class="round-head"><span class="round-number">第 ' + (index + 1) + ' 轮</span><span class="round-type">' + escapeHtml(sample.type) + ' · ' + escapeHtml(sample.severity) + '</span><span class="round-state">已完成</span></div><div class="round-grid"><div class="attack-box"><h3>攻击方 · 样本生成</h3><div><b>主题：</b>' + escapeHtml(sample.topic) + '</div><div class="round-content">' + escapeHtml(sample.content) + '</div></div><div class="defend-box"><h3>防守方 · 检测与修复</h3><div class="result-label">发现问题</div><ul class="result-list">' + resultList(defense.caught, "reason", "未发现问题") + '</ul><div class="result-label">风险评估</div><ul class="result-list">' + resultList(defense.risks, "reason", "无额外风险") + '</ul><div class="result-label">修复动作</div><ul class="result-list">' + resultList(defense.fixed, "action", "无需修复") + '</ul></div></div></article>'; }).join("") || '<div class="empty">本轮没有生成样本</div>';
+      $("result").innerHTML = "<div class=\"battle-head\"><strong>" + escapeHtml(battle.topic) + " · " + difficulty(battle.difficulty) + "难度</strong><span>" + escapeHtml(battle.status) + " · " + formatTime(battle.createdAt) + "</span></div><div class=\"flow\"><div class=\"flow-step\"><i>1</i><b>战局创建</b><small>接收主题与难度</small></div><div class=\"flow-step\"><i>2</i><b>攻击生成</b><small>输出 " + samples.length + " 个样本</small></div><div class=\"flow-step\"><i>3</i><b>防守检测</b><small>识别 " + caughtCount + " 项问题</small></div><div class=\"flow-step\"><i>4</i><b>修复建议</b><small>输出 " + fixedCount + " 项动作</small></div></div><div class=\"battle-summary\"><div class=\"summary-item\"><b>" + samples.length + "</b><span>攻击样本</span></div><div class=\"summary-item\"><b>" + caughtCount + "</b><span>发现问题</span></div><div class=\"summary-item\"><b>" + riskCount + "</b><span>风险项</span></div><div class=\"summary-item\"><b>" + fixedCount + "</b><span>修复动作</span></div></div><div class=\"round-list\">" + rounds + "</div>";
     }
     function loadHistory() { fetch("/battles?limit=50").then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); }).then(renderHistory).catch(function () { $("history").innerHTML = '<tr><td colspan="4" class="error">历史战局暂时无法加载</td></tr>'; }); }
     fetch("/health").then(function (response) {

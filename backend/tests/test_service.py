@@ -23,6 +23,8 @@ def test_dashboard_is_chinese_html() -> None:
     assert response.headers["content-type"].startswith("text/html")
     assert "智能体攻防实验室后台" in response.text
     assert "开始新战局" in response.text
+    assert "防守检测" in response.text
+    assert "round-list" in response.text
     assert "OpenAPI JSON" not in response.text
 
 
