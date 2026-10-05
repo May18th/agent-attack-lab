@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -181,8 +181,10 @@ def create_battle(payload: BattleRequest) -> BattleRecord:
 
 
 @app.get("/battles")
-def list_battles() -> list[BattleRecord]:
-    return [BattleRecord.model_validate(item) for item in _battle_store.list()]
+def list_battles(
+    limit: int = Query(default=50, ge=1, le=200, description="返回的最大战局数量")
+) -> list[BattleRecord]:
+    return [BattleRecord.model_validate(item) for item in _battle_store.list(limit=limit)]
 
 
 @app.get("/battles/{battle_id}")

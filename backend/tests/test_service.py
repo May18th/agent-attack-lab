@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from agent_attack_lab.storage import BattleStore
 
 from agent_attack_lab.service import app
 
@@ -49,6 +50,28 @@ def test_battle_runs_attack_and_defense() -> None:
     assert lookup.status_code == 200
     assert lookup.json()["id"] == body["id"]
     assert any(item["id"] == body["id"] for item in client.get("/battles").json())
+
+
+def test_battle_list_limit_is_validated() -> None:
+    assert client.get("/battles?limit=0").status_code == 422
+    assert client.get("/battles?limit=201").status_code == 422
+
+
+def test_battle_store_persists_records(tmp_path) -> None:
+    database = tmp_path / "battles.sqlite3"
+    record = {
+        "id": "battle-persisted",
+        "difficulty": "low",
+        "topic": "持久化测试",
+        "status": "completed",
+        "createdAt": "2026-10-06T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    }
+    first_store = BattleStore(str(database))
+    first_store.save(record)
+    second_store = BattleStore(str(database))
+    assert second_store.get("battle-persisted") == record
 
 
 def test_unknown_battle_returns_404() -> None:

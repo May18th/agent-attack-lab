@@ -101,6 +101,10 @@
 
 `GET /health` 返回 `{"status":"ok","service":"智能体攻防实验室"}`。
 
+### 历史战局
+
+`GET /battles?limit=50` 返回最近战局，`limit` 可设置为 1-200；详情使用 `GET /battles/{battle_id}`。
+
 ## 前端请求示例
 
 ```ts

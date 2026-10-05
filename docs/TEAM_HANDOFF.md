@@ -95,7 +95,7 @@ Content-Type: application/json
 GET /battles/{battle_id}
 ```
 
-查询战局。另有 `GET /battles` 可获取最近战局列表。战局默认保存在项目目录下的 `.data/battles.sqlite3`，服务重启后仍保留。
+查询战局。另有 `GET /battles?limit=50` 可获取最近战局列表，`limit` 范围为 1-200。战局默认保存在项目目录下的 `.data/battles.sqlite3`，服务重启后仍保留。
 
 ### 健康检查
 
