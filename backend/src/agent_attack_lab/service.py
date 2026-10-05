@@ -106,47 +106,105 @@ def dashboard() -> str:
   <title>智能体攻防实验室后台</title>
   <style>
     :root { color-scheme: light; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; }
-    body { margin: 0; background: #f3f6f8; color: #17202a; }
-    main { max-width: 980px; margin: 0 auto; padding: 42px 22px; }
-    h1 { margin: 0 0 8px; font-size: 30px; }
-    .sub { color: #5c6873; margin: 0 0 28px; }
-    .status { display: flex; align-items: center; gap: 12px; padding: 18px 20px; background: #fff; border: 1px solid #d8e0e5; border-radius: 8px; }
-    .dot { width: 12px; height: 12px; border-radius: 50%; background: #c0392b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #eef2f5; color: #17202a; }
+    header { background: #fff; border-bottom: 1px solid #d8e0e5; }
+    .topbar { max-width: 1180px; margin: 0 auto; padding: 22px 24px 18px; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+    h1 { margin: 0 0 6px; font-size: 27px; letter-spacing: .2px; }
+    .sub { margin: 0; color: #65727d; font-size: 14px; }
+    .status { display: flex; align-items: center; gap: 9px; color: #53616d; font-size: 13px; white-space: nowrap; padding-top: 7px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #c0392b; }
     .dot.ok { background: #1f9d55; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 22px; }
-    a.card { display: block; padding: 18px; background: #fff; border: 1px solid #d8e0e5; border-radius: 8px; color: inherit; text-decoration: none; }
-    a.card:hover { border-color: #2878c8; box-shadow: 0 3px 12px #1b4d6b18; }
-    .card strong { display: block; margin-bottom: 7px; font-size: 17px; }
-    .card span { color: #5c6873; font-size: 14px; }
-    code { font-family: Consolas, monospace; font-size: 13px; }
-    footer { margin-top: 28px; color: #6d7881; font-size: 13px; }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    .layout { display: grid; grid-template-columns: minmax(290px, .82fr) minmax(0, 1.45fr); gap: 18px; align-items: start; }
+    .panel { background: #fff; border: 1px solid #d8e0e5; border-radius: 8px; padding: 20px; }
+    .panel + .panel { margin-top: 18px; }
+    .panel-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 16px; }
+    .panel-title h2 { margin: 0; font-size: 17px; }
+    .panel-title span { color: #74808a; font-size: 12px; }
+    label { display: block; margin: 0 0 7px; color: #52606c; font-size: 13px; }
+    input[type=text] { width: 100%; border: 1px solid #cbd5dc; border-radius: 6px; padding: 10px 11px; color: #17202a; font: inherit; outline: none; }
+    input[type=text]:focus { border-color: #2878c8; box-shadow: 0 0 0 3px #2878c81c; }
+    .field { margin-bottom: 18px; }
+    .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .choices input { position: absolute; opacity: 0; pointer-events: none; }
+    .choices label { margin: 0; border: 1px solid #cbd5dc; border-radius: 6px; padding: 10px 8px; text-align: center; cursor: pointer; color: #45535f; }
+    .choices input:checked + label { border-color: #2878c8; color: #125a9d; background: #edf6ff; }
+    button { border: 0; border-radius: 6px; padding: 11px 16px; background: #1769aa; color: #fff; font: inherit; font-weight: 600; cursor: pointer; width: 100%; }
+    button:hover { background: #12558b; }
+    button:disabled { cursor: wait; opacity: .65; }
+    .hint { margin: 10px 0 0; color: #77838d; font-size: 12px; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-bottom: 18px; }
+    .metric { border-left: 3px solid #2878c8; padding: 10px 12px; background: #f5f8fa; }
+    .metric b { display: block; font-size: 22px; line-height: 1.1; }
+    .metric span { display: block; margin-top: 4px; color: #687580; font-size: 12px; }
+    .result { min-height: 238px; border: 1px dashed #cbd5dc; border-radius: 6px; padding: 15px; background: #fbfcfd; }
+    .empty { color: #7a8790; text-align: center; padding: 78px 12px; font-size: 14px; }
+    .battle-head { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid #e4eaee; }
+    .battle-head strong { font-size: 15px; }
+    .battle-head span { color: #667580; font-size: 12px; }
+    .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+    .columns h3 { margin: 0 0 8px; font-size: 13px; color: #52606c; }
+    .sample { padding: 9px 10px; margin-bottom: 7px; border-left: 3px solid #e08b2c; background: #fff8ed; font-size: 12px; line-height: 1.5; }
+    .defense { padding: 9px 10px; margin-bottom: 7px; border-left: 3px solid #1f9d55; background: #effaf3; font-size: 12px; line-height: 1.5; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid #e7ecef; text-align: left; white-space: nowrap; }
+    th { color: #667580; font-size: 12px; font-weight: 600; }
+    td:last-child { text-align: right; }
+    a { color: #1769aa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .error { color: #b42318; background: #fff1f0; border: 1px solid #f2c4bf; border-radius: 6px; padding: 10px; font-size: 13px; }
+    @media (max-width: 760px) { .topbar { display: block; } .status { margin-top: 14px; } .layout { grid-template-columns: 1fr; } .columns { grid-template-columns: 1fr; } main { padding: 16px; } }
   </style>
 </head>
 <body>
+  <header><div class="topbar"><div><h1>智能体攻防实验室</h1><p class="sub">攻防战局控制台</p></div><div class="status"><span id="dot" class="dot"></span><span id="status">正在检查服务状态...</span></div></div></header>
   <main>
-    <h1>智能体攻防实验室后台</h1>
-    <p class="sub">后端服务控制台与接口入口</p>
-    <section class="status" aria-live="polite">
-      <span id="dot" class="dot"></span>
-      <div><strong id="status">正在检查服务状态...</strong><br><span id="detail">请稍候</span></div>
-    </section>
-    <section class="grid">
-      <a class="card" href="/docs"><strong>接口文档</strong><span>查看和调试 REST / JSON-RPC 接口</span></a>
-      <a class="card" href="/battles"><strong>战局列表</strong><span>查看已保存的攻防战局</span></a>
-    </section>
+    <div class="layout">
+      <section>
+        <div class="panel">
+          <div class="panel-title"><h2>开始新战局</h2><span>攻防编排</span></div>
+          <form id="battle-form">
+            <div class="field"><label for="topic">测试主题</label><input id="topic" name="topic" type="text" maxlength="200" value="通用安全测试" required></div>
+            <div class="field"><label>对抗难度</label><div class="choices"><div><input id="low" name="difficulty" value="low" type="radio"><label for="low">低</label></div><div><input id="mid" name="difficulty" value="mid" type="radio" checked><label for="mid">中</label></div><div><input id="high" name="difficulty" value="high" type="radio"><label for="high">高</label></div></div></div>
+            <button id="start" type="submit">开始攻防</button><p class="hint">完成后将在右侧显示攻击样本与防守结果。</p>
+          </form>
+        </div>
+        <div class="panel"><div class="panel-title"><h2>历史概览</h2><a href="/docs">接口文档</a></div><div class="metrics"><div class="metric"><b id="total">0</b><span>战局总数</span></div><div class="metric"><b id="high-count">0</b><span>高难度</span></div><div class="metric"><b id="latest">--</b><span>最近状态</span></div></div><div class="table-wrap"><table><thead><tr><th>主题</th><th>难度</th><th>状态</th><th>时间</th></tr></thead><tbody id="history"><tr><td colspan="4" class="empty">暂无历史战局</td></tr></tbody></table></div></div>
+      </section>
+      <section class="panel"><div class="panel-title"><h2>当前战况</h2><span id="battle-id">尚未开始</span></div><div id="result" class="result"><div class="empty">提交主题后开始一轮攻防</div></div></section>
+    </div>
   </main>
   <script>
+    var $ = function (id) { return document.getElementById(id); };
+    function escapeHtml(value) { return String(value).replace(/[&<>\"']/g, function (char) { return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"})[char]; }); }
+    function formatTime(value) { return value ? new Date(value).toLocaleString("zh-CN", {hour12: false}) : "--"; }
+    function difficulty(value) { return ({low: "低", mid: "中", high: "高"})[value] || value; }
+    function renderHistory(items) {
+      $("total").textContent = items.length;
+      $("high-count").textContent = items.filter(function (item) { return item.difficulty === "high"; }).length;
+      $("latest").textContent = items.length ? "已完成" : "--";
+      $("history").innerHTML = items.length ? items.slice(0, 8).map(function (item) { return "<tr><td>" + escapeHtml(item.topic) + "</td><td>" + difficulty(item.difficulty) + "</td><td>" + escapeHtml(item.status) + "</td><td>" + formatTime(item.createdAt) + "</td></tr>"; }).join("") : '<tr><td colspan="4" class="empty">暂无历史战局</td></tr>';
+    }
+    function renderBattle(battle) {
+      $("battle-id").textContent = battle.id;
+      var samples = (battle.attackerOut.samples || []).map(function (sample) { return "<div class=\"sample\"><b>" + escapeHtml(sample.type) + " · " + escapeHtml(sample.severity) + "</b><br>" + escapeHtml(sample.content) + "</div>"; }).join("") || '<div class="empty">无攻击样本</div>';
+      var defenses = (battle.defenderOut || []).map(function (item) { var caught = (item.caught || []).map(function (entry) { return escapeHtml(entry.reason); }).join("；") || "未发现风险"; return "<div class=\"defense\"><b>检测结果</b><br>" + caught + "</div>"; }).join("") || '<div class="empty">无防守结果</div>';
+      $("result").innerHTML = "<div class=\"battle-head\"><strong>" + escapeHtml(battle.topic) + " · " + difficulty(battle.difficulty) + "难度</strong><span>" + escapeHtml(battle.status) + " · " + formatTime(battle.createdAt) + "</span></div><div class=\"columns\"><div><h3>攻击样本</h3>" + samples + "</div><div><h3>防守检测</h3>" + defenses + "</div></div>";
+    }
+    function loadHistory() { fetch("/battles?limit=50").then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); }).then(renderHistory).catch(function () { $("history").innerHTML = '<tr><td colspan="4" class="error">历史战局暂时无法加载</td></tr>'; }); }
     fetch("/health").then(function (response) {
       if (!response.ok) throw new Error("HTTP " + response.status);
       return response.json();
     }).then(function (data) {
-      document.getElementById("dot").className = "dot ok";
-      document.getElementById("status").textContent = "服务运行正常";
-      document.getElementById("detail").textContent = data.service;
+      $("dot").className = "dot ok";
+      $("status").textContent = "服务运行正常";
     }).catch(function (error) {
-      document.getElementById("status").textContent = "服务检查失败";
-      document.getElementById("detail").textContent = error.message;
+      $("status").textContent = "服务检查失败";
     });
+    $("battle-form").addEventListener("submit", function (event) { event.preventDefault(); var button = $("start"); var topic = $("topic").value.trim(); var difficultyValue = document.querySelector("input[name=difficulty]:checked").value; if (!topic) return; button.disabled = true; button.textContent = "攻防进行中..."; $("result").innerHTML = '<div class="empty">正在生成攻击样本并执行防守检测</div>'; fetch("/battles", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({topic: topic, difficulty: difficultyValue})}).then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); }).then(function (battle) { renderBattle(battle); loadHistory(); }).catch(function (error) { $("result").innerHTML = '<div class="error">战局创建失败：' + escapeHtml(error.message) + '</div>'; }).finally(function () { button.disabled = false; button.textContent = "开始攻防"; }); });
+    loadHistory();
   </script>
 </body>
 </html>"""

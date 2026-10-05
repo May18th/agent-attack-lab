@@ -22,6 +22,8 @@ def test_dashboard_is_chinese_html() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "智能体攻防实验室后台" in response.text
+    assert "开始新战局" in response.text
+    assert "OpenAPI JSON" not in response.text
 
 
 def test_attack_by_difficulty() -> None:
