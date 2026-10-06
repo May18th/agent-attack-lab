@@ -21,7 +21,22 @@ Quick Tunnel 每次启动都会生成新地址，关闭进程后地址失效，�
 
 ## 稳定公网地址
 
-在 Cloudflare 控制台创建命名隧道并复制 Token，然后在 PowerShell 中设置：
+当前项目已创建命名 Tunnel `agent-attack-lab`，固定 API 域名为：
+
+```text
+https://api.kcwx.online
+```
+
+`kcwx.online` 仍需在注册商处完成 Cloudflare NS 委派：
+
+```text
+mimi.ns.cloudflare.com
+shane.ns.cloudflare.com
+```
+
+本机命名 Tunnel 配置位于用户目录下的 `.cloudflared/agent-attack-lab.yml`，不会提交到 Git。启动脚本会优先使用该命名 Tunnel，找不到配置时才回退到临时 Quick Tunnel。
+
+如果在另一台电脑重新部署，创建命名隧道并复制 Token，然后在 PowerShell 中设置：
 
 ```powershell
 $env:CLOUDFLARE_TUNNEL_TOKEN = "不要把真实 Token 提交到 Git"

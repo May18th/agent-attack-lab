@@ -24,6 +24,12 @@ http://127.0.0.1:8787
 https://radius-thumb-ago-headquarters.trycloudflare.com
 ```
 
+稳定公网 API（完成 DNS 委派后使用）：
+
+```text
+https://api.kcwx.online
+```
+
 当前前端公网地址（由队友 Tunnel 提供）：
 
 ```text

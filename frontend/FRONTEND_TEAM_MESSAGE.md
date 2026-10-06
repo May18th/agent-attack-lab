@@ -18,6 +18,12 @@ http://127.0.0.1:8787
 https://radius-thumb-ago-headquarters.trycloudflare.com
 ```
 
+稳定公网地址（完成 DNS 委派后）：
+
+```text
+https://api.kcwx.online
+```
+
 ## 当前可用接口
 
 ```text

@@ -9,6 +9,7 @@
 本地开发：`http://127.0.0.1:8787`
 
 临时后端公网：`https://radius-thumb-ago-headquarters.trycloudflare.com`（当前已验证 `/health` 返回 200）。
+稳定后端公网：`https://api.kcwx.online`（需等待 `kcwx.online` 完成 Cloudflare NS 委派）。
 临时前端公网：`https://platinum-require-instruction-bet.trycloudflare.com`。
 
 公网地址依赖 Cloudflare Tunnel 进程，服务重启时地址暂不变。前端开发优先使用本地地址；平台联调再使用公网地址。
