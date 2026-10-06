@@ -32,6 +32,12 @@ app = FastAPI(
     title="智能体攻防实验室 Agent 服务",
     description="用于生成攻防测试样本并检测风险的 HTTP JSON Agent 服务。",
     version="1.0.0",
+    swagger_ui_parameters={
+        "docExpansion": "none",
+        "defaultModelsExpandDepth": -1,
+        "defaultModelExpandDepth": -1,
+        "displayRequestDuration": True,
+    },
 )
 
 _default_origins = {
@@ -134,7 +140,7 @@ def _event(battle_id: str, sequence: int, event_type: str, status: str, data: di
     }
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 def index() -> dict[str, Any]:
     return {
         "service": "智能体攻防实验室",
@@ -148,7 +154,7 @@ def index() -> dict[str, Any]:
     }
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard() -> str:
     return """<!doctype html>
 <html lang="zh-CN">
@@ -273,15 +279,23 @@ def dashboard() -> str:
       $("result").innerHTML = "<div class=\"battle-head\"><strong>" + escapeHtml(battle.topic) + " · " + difficulty(battle.difficulty) + "难度</strong><span>" + escapeHtml(battle.status) + " · " + formatTime(battle.createdAt) + "</span></div><div class=\"flow\"><div class=\"flow-step\"><i>1</i><b>战局创建</b><small>接收主题与难度</small></div><div class=\"flow-step\"><i>2</i><b>攻击生成</b><small>输出 " + samples.length + " 个样本</small></div><div class=\"flow-step\"><i>3</i><b>防守检测</b><small>识别 " + caughtCount + " 项问题</small></div><div class=\"flow-step\"><i>4</i><b>修复建议</b><small>输出 " + fixedCount + " 项动作</small></div></div><div class=\"battle-summary\"><div class=\"summary-item\"><b>" + samples.length + "</b><span>攻击样本</span></div><div class=\"summary-item\"><b>" + caughtCount + "</b><span>发现问题</span></div><div class=\"summary-item\"><b>" + riskCount + "</b><span>风险项</span></div><div class=\"summary-item\"><b>" + fixedCount + "</b><span>修复动作</span></div></div><div class=\"round-list\">" + rounds + "</div>";
     }
     function loadHistory() { fetch("/battles?limit=50").then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); }).then(renderHistory).catch(function () { $("history").innerHTML = '<tr><td colspan="4" class="error">历史战局暂时无法加载</td></tr>'; }); }
-    fetch("/health").then(function (response) {
-      if (!response.ok) throw new Error("HTTP " + response.status);
-      return response.json();
-    }).then(function (data) {
-      $("dot").className = "dot ok";
-      $("status").textContent = "服务运行正常";
-    }).catch(function (error) {
-      $("status").textContent = "服务检查失败";
-    });
+    function checkHealth() {
+      var controller = new AbortController();
+      var timeout = window.setTimeout(function () { controller.abort(); }, 5000);
+      $("status").textContent = "正在检查服务状态...";
+      fetch("/health", {cache: "no-store", signal: controller.signal}).then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      }).then(function (data) {
+        $("dot").className = "dot ok";
+        $("status").textContent = "服务运行正常";
+      }).catch(function (error) {
+        $("dot").className = "dot";
+        $("status").textContent = error.name === "AbortError" ? "服务检查超时" : "服务检查失败";
+      }).finally(function () { window.clearTimeout(timeout); });
+    }
+    checkHealth();
+    window.setInterval(checkHealth, 30000);
     $("battle-form").addEventListener("submit", function (event) { event.preventDefault(); var button = $("start"); var topic = $("topic").value.trim(); var difficultyValue = document.querySelector("input[name=difficulty]:checked").value; if (!topic) return; button.disabled = true; button.textContent = "攻防进行中..."; $("result").innerHTML = '<div class="empty">正在生成攻击样本并执行防守检测</div>'; fetch("/battles", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({topic: topic, difficulty: difficultyValue})}).then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); }).then(function (battle) { renderBattle(battle); loadHistory(); }).catch(function (error) { $("result").innerHTML = '<div class="error">战局创建失败：' + escapeHtml(error.message) + '</div>'; }).finally(function () { button.disabled = false; button.textContent = "开始攻防"; }); });
     loadHistory();
   </script>
@@ -289,12 +303,12 @@ def dashboard() -> str:
 </html>"""
 
 
-@app.get("/health")
+@app.get("/health", summary="服务健康检查", tags=["核心接口"])
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "智能体攻防实验室"}
 
 
-@app.get("/metrics")
+@app.get("/metrics", include_in_schema=False)
 def metrics() -> dict[str, Any]:
     return {
         "service": "智能体攻防实验室",
@@ -306,7 +320,13 @@ def metrics() -> dict[str, Any]:
     }
 
 
-@app.post("/battles", status_code=201)
+@app.post(
+    "/battles",
+    status_code=201,
+    summary="创建一场攻防战局",
+    description="输入测试主题和难度，返回完整的攻击样本与防守结果。",
+    tags=["战局接口"],
+)
 def create_battle(payload: BattleRequest, request: Request) -> BattleRecord:
     _check_api_key(request)
     battle_id = f"battle-{uuid.uuid4()}"
@@ -354,7 +374,12 @@ def create_battle(payload: BattleRequest, request: Request) -> BattleRecord:
     return record
 
 
-@app.get("/battles")
+@app.get(
+    "/battles",
+    summary="查询历史战局",
+    description="支持分页、难度和关键词筛选。",
+    tags=["战局接口"],
+)
 def list_battles(
     limit: int = Query(default=50, ge=1, le=200, description="返回的最大战局数量"),
     offset: int = Query(default=0, ge=0, le=100000, description="跳过的战局数量"),
@@ -370,21 +395,26 @@ def list_battles(
     ]
 
 
-@app.get("/battles/{battle_id}/events")
+@app.get("/battles/{battle_id}/events", include_in_schema=False)
 def get_battle_events(battle_id: str) -> list[BattleEvent]:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return [BattleEvent.model_validate(item) for item in _battle_store.list_events(battle_id)]
 
 
-@app.get("/battles/{battle_id}/replay")
+@app.get("/battles/{battle_id}/replay", include_in_schema=False)
 def replay_battle(battle_id: str) -> dict[str, Any]:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return {"battleId": battle_id, "events": _battle_store.list_events(battle_id), "mode": "replay"}
 
 
-@app.get("/battles/{battle_id}")
+@app.get(
+    "/battles/{battle_id}",
+    summary="查询战局详情",
+    description="按战局编号恢复攻击、防守和修复结果。",
+    tags=["战局接口"],
+)
 def get_battle(battle_id: str) -> BattleRecord:
     record = _battle_store.get(battle_id)
     if record is None:
@@ -440,8 +470,13 @@ def _markdown_report(record: dict[str, Any], events: list[dict[str, Any]]) -> st
     return "\n".join(lines) + "\n"
 
 
-@app.get("/battles/{battle_id}/report")
-@app.get("/reports/{battle_id}")
+@app.get("/battles/{battle_id}/report", include_in_schema=False)
+@app.get(
+    "/reports/{battle_id}",
+    summary="查看或下载战报",
+    description="默认返回 JSON；将 format 设置为 markdown 可下载 Markdown 战报。",
+    tags=["战报接口"],
+)
 def battle_report(
     battle_id: str,
     format: Literal["json", "markdown"] = Query(default="json"),
@@ -464,7 +499,12 @@ def battle_report(
     }
 
 
-@app.get("/leaderboard")
+@app.get(
+    "/leaderboard",
+    summary="查看攻防排行榜",
+    description="返回攻击方和防守方的累计得分与对抗轮次。",
+    tags=["统计接口"],
+)
 def leaderboard() -> dict[str, Any]:
     attacker_score = defender_score = 0
     rounds = 0
@@ -481,7 +521,7 @@ def leaderboard() -> dict[str, Any]:
     }
 
 
-@app.get("/battles/{battle_id}/events/stream")
+@app.get("/battles/{battle_id}/events/stream", include_in_schema=False)
 async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> StreamingResponse:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
@@ -527,7 +567,7 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
             await websocket.close()
 
 
-@app.post("/agent/attack", dependencies=[Depends(_api_key_dependency)])
+@app.post("/agent/attack", dependencies=[Depends(_api_key_dependency)], include_in_schema=False)
 def attack(payload: AttackRequest) -> dict[str, Any]:
     difficulty = payload.difficulty
     topic = payload.topic
@@ -547,7 +587,7 @@ def attack(payload: AttackRequest) -> dict[str, Any]:
     return {"samples": samples}
 
 
-@app.post("/agent/defend", dependencies=[Depends(_api_key_dependency)])
+@app.post("/agent/defend", dependencies=[Depends(_api_key_dependency)], include_in_schema=False)
 def defend(payload: DefendRequest) -> dict[str, Any]:
     sample = payload.sample
     content = str(sample.get("content", "")).lower()
@@ -615,7 +655,7 @@ async def _aip_start(command: TaskCommand, task: TaskResult | None) -> TaskResul
 _aip_handlers = CommandHandlers(on_start=_aip_start)
 
 
-@app.post("/rpc", dependencies=[Depends(_api_key_dependency)])
+@app.post("/rpc", dependencies=[Depends(_api_key_dependency)], include_in_schema=False)
 async def rpc(request: Request) -> dict[str, Any]:
     """JSON-RPC endpoint supporting both AIP ``rpc`` and simple agent methods."""
     body = await request.json()
