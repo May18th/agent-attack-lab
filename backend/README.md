@@ -38,6 +38,19 @@ uv sync
 uv run pytest -q
 ```
 
+## 对抗过程能力
+
+- `GET /battles?limit=50&offset=0&difficulty=high&q=SQL`：分页、难度和关键词筛选。
+- `GET /battles/{battle_id}/events`：读取持久化事件时间线。
+- `GET /battles/{battle_id}/replay`：按事件顺序获取回放数据。
+- `GET /battles/{battle_id}/events/stream?follow=true`：SSE 事件流。
+- `WS /ws/battles/{battle_id}`：WebSocket 事件推送。
+- `GET /reports/{battle_id}?format=markdown`：下载 Markdown 战报；默认返回 JSON 战报。
+- `GET /leaderboard`：按攻击方、防守方累计得分统计排行榜。
+- `GET /metrics`：查看运行时间、请求数、错误数、战局数和事件数。
+
+部署到公网时可设置 `AGENT_API_KEY`。设置后，`POST /battles`、`POST /agent/*` 和 `POST /rpc` 必须携带 `X-API-Key` 请求头；本地未设置时保持免密开发模式。
+
 战局默认保存到 `.data/battles.sqlite3`，服务重启后仍保留。需要指定其他数据库路径时设置环境变量：
 
 ```powershell

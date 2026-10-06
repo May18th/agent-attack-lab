@@ -61,6 +61,28 @@ def test_battle_list_limit_is_validated() -> None:
     assert client.get("/battles?limit=201").status_code == 422
 
 
+def test_battle_events_report_filters_and_leaderboard() -> None:
+    response = client.post("/battles", json={"difficulty": "high", "topic": "事件测试"})
+    assert response.status_code == 201
+    battle_id = response.json()["id"]
+
+    events = client.get(f"/battles/{battle_id}/events")
+    assert events.status_code == 200
+    assert events.json()[0]["type"] == "battle.created"
+    assert events.json()[-1]["type"] == "battle.completed"
+    assert client.get(f"/battles/{battle_id}/replay").json()["mode"] == "replay"
+
+    report = client.get(f"/reports/{battle_id}")
+    assert report.status_code == 200
+    assert report.json()["scores"]["defender"] > 0
+    markdown = client.get(f"/reports/{battle_id}?format=markdown")
+    assert markdown.status_code == 200
+    assert "# 智能体攻防战报" in markdown.text
+    assert client.get(f"/battles?difficulty=high&q=事件测试").json()[0]["id"] == battle_id
+    assert client.get("/leaderboard").json()["items"][0]["rounds"] >= 3
+    assert client.get("/metrics").json()["events"] >= len(events.json())
+
+
 def test_battle_store_persists_records(tmp_path) -> None:
     database = tmp_path / "battles.sqlite3"
     record = {

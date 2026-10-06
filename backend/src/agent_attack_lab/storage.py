@@ -35,6 +35,23 @@ class BattleStore:
             )
             """
         )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS battle_events (
+                id TEXT PRIMARY KEY,
+                battle_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                data TEXT NOT NULL,
+                UNIQUE (battle_id, sequence)
+            )
+            """
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_battle_events_battle ON battle_events (battle_id, sequence)"
+        )
         self._connection.commit()
 
     def save(self, record: dict[str, Any]) -> None:
@@ -57,6 +74,27 @@ class BattleStore:
             )
             self._connection.commit()
 
+    def save_event(self, event: dict[str, Any]) -> None:
+        """Persist one auditable step in a battle."""
+        with self._lock:
+            self._connection.execute(
+                """
+                INSERT OR REPLACE INTO battle_events
+                (id, battle_id, sequence, event_type, status, created_at, data)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event["id"],
+                    event["battleId"],
+                    event["sequence"],
+                    event["type"],
+                    event["status"],
+                    event["createdAt"],
+                    json.dumps(event.get("data", {}), ensure_ascii=False),
+                ),
+            )
+            self._connection.commit()
+
     def get(self, battle_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._connection.execute(
@@ -66,12 +104,52 @@ class BattleStore:
             return None
         return self._to_record(row)
 
-    def list(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        difficulty: str | None = None,
+        status: str | None = None,
+        query: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if difficulty:
+            clauses.append("difficulty = ?")
+            params.append(difficulty)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if query:
+            clauses.append("(topic LIKE ? OR id LIKE ?)")
+            pattern = f"%{query}%"
+            params.extend([pattern, pattern])
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.extend([limit, offset])
         with self._lock:
             rows = self._connection.execute(
-                "SELECT * FROM battles ORDER BY created_at DESC LIMIT ?", (limit,)
+                f"SELECT * FROM battles {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                params,
             ).fetchall()
         return [self._to_record(row) for row in rows]
+
+    def list_events(self, battle_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM battle_events WHERE battle_id = ? ORDER BY sequence",
+                (battle_id,),
+            ).fetchall()
+        return [self._to_event(row) for row in rows]
+
+    def count(self) -> int:
+        with self._lock:
+            row = self._connection.execute("SELECT COUNT(*) AS total FROM battles").fetchone()
+        return int(row["total"])
+
+    def count_events(self) -> int:
+        with self._lock:
+            row = self._connection.execute("SELECT COUNT(*) AS total FROM battle_events").fetchone()
+        return int(row["total"])
 
     @staticmethod
     def _to_record(row: sqlite3.Row) -> dict[str, Any]:
@@ -83,4 +161,16 @@ class BattleStore:
             "createdAt": row["created_at"],
             "attackerOut": json.loads(row["attacker_out"]),
             "defenderOut": json.loads(row["defender_out"]),
+        }
+
+    @staticmethod
+    def _to_event(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "battleId": row["battle_id"],
+            "sequence": row["sequence"],
+            "type": row["event_type"],
+            "status": row["status"],
+            "createdAt": row["created_at"],
+            "data": json.loads(row["data"]),
         }

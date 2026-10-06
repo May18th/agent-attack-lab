@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from acps_sdk.aip import (
@@ -83,7 +85,53 @@ class BattleRecord(BaseModel):
     defenderOut: list[dict[str, Any]]
 
 
+class BattleEvent(BaseModel):
+    id: str
+    battleId: str
+    sequence: int
+    type: str
+    status: str
+    createdAt: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
 _battle_store = BattleStore()
+_started_at = time.monotonic()
+_request_count = 0
+_request_errors = 0
+_api_key = os.getenv("AGENT_API_KEY", "").strip()
+
+
+@app.middleware("http")
+async def collect_request_metrics(request: Request, call_next: Any) -> Any:
+    global _request_count, _request_errors
+    _request_count += 1
+    response = await call_next(request)
+    if response.status_code >= 400:
+        _request_errors += 1
+    return response
+
+
+def _check_api_key(request: Request) -> None:
+    """Enable a simple deployment-time API key without affecting local development."""
+    if _api_key and request.headers.get("x-api-key") != _api_key:
+        raise HTTPException(status_code=401, detail="缺少或无效的 API 密钥")
+
+
+def _api_key_dependency(request: Request) -> None:
+    _check_api_key(request)
+
+
+def _event(battle_id: str, sequence: int, event_type: str, status: str, data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": f"event-{uuid.uuid4()}",
+        "battleId": battle_id,
+        "sequence": sequence,
+        "type": event_type,
+        "status": status,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "data": data,
+    }
 
 
 @app.get("/")
@@ -91,7 +139,11 @@ def index() -> dict[str, Any]:
     return {
         "service": "智能体攻防实验室",
         "status": "ok",
-        "endpoints": ["/health", "/battles", "/agent/attack", "/agent/defend", "/rpc", "/docs"],
+        "endpoints": [
+            "/health", "/metrics", "/battles", "/battles/{id}/events",
+            "/battles/{id}/report", "/leaderboard", "/agent/attack",
+            "/agent/defend", "/rpc", "/docs",
+        ],
         "note": "当前提供 JSON-RPC 2.0 和兼容的 HTTP JSON 接口；平台审核通过并下发证书后再启用 mTLS。",
     }
 
@@ -242,14 +294,52 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "智能体攻防实验室"}
 
 
+@app.get("/metrics")
+def metrics() -> dict[str, Any]:
+    return {
+        "service": "智能体攻防实验室",
+        "uptimeSeconds": round(time.monotonic() - _started_at, 2),
+        "requests": _request_count,
+        "errors": _request_errors,
+        "battles": _battle_store.count(),
+        "events": _battle_store.count_events(),
+    }
+
+
 @app.post("/battles", status_code=201)
-def create_battle(payload: BattleRequest) -> BattleRecord:
+def create_battle(payload: BattleRequest, request: Request) -> BattleRecord:
+    _check_api_key(request)
+    battle_id = f"battle-{uuid.uuid4()}"
+    events: list[dict[str, Any]] = []
+    sequence = 1
+
+    def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
+        nonlocal sequence
+        events.append(_event(battle_id, sequence, event_type, status, data))
+        sequence += 1
+
+    add_event("battle.created", "completed", {"topic": payload.topic, "difficulty": payload.difficulty})
+    add_event("attack.started", "completed", {"topic": payload.topic})
     attack_result = attack(AttackRequest.model_validate(payload.model_dump()))
+    add_event("attack.completed", "completed", {"sampleCount": len(attack_result["samples"])})
     defense_results = [
         defend(DefendRequest(sample=sample)) for sample in attack_result["samples"]
     ]
+    for index, (sample, defense) in enumerate(zip(attack_result["samples"], defense_results), start=1):
+        add_event(
+            "round.completed",
+            "completed",
+            {
+                "round": index,
+                "sample": sample,
+                "caught": defense["caught"],
+                "risks": defense["risks"],
+                "fixed": defense["fixed"],
+            },
+        )
+    add_event("defense.completed", "completed", {"roundCount": len(defense_results)})
     record = BattleRecord(
-        id=f"battle-{uuid.uuid4()}",
+        id=battle_id,
         difficulty=payload.difficulty,
         topic=payload.topic,
         status="completed",
@@ -258,14 +348,40 @@ def create_battle(payload: BattleRequest) -> BattleRecord:
         defenderOut=defense_results,
     )
     _battle_store.save(record.model_dump())
+    add_event("battle.completed", "completed", {"status": record.status})
+    for event in events:
+        _battle_store.save_event(event)
     return record
 
 
 @app.get("/battles")
 def list_battles(
-    limit: int = Query(default=50, ge=1, le=200, description="返回的最大战局数量")
+    limit: int = Query(default=50, ge=1, le=200, description="返回的最大战局数量"),
+    offset: int = Query(default=0, ge=0, le=100000, description="跳过的战局数量"),
+    difficulty: Literal["low", "mid", "high"] | None = Query(default=None),
+    status: str | None = Query(default=None, max_length=30),
+    q: str | None = Query(default=None, max_length=200, description="按主题或编号搜索"),
 ) -> list[BattleRecord]:
-    return [BattleRecord.model_validate(item) for item in _battle_store.list(limit=limit)]
+    return [
+        BattleRecord.model_validate(item)
+        for item in _battle_store.list(
+            limit=limit, offset=offset, difficulty=difficulty, status=status, query=q
+        )
+    ]
+
+
+@app.get("/battles/{battle_id}/events")
+def get_battle_events(battle_id: str) -> list[BattleEvent]:
+    if _battle_store.get(battle_id) is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    return [BattleEvent.model_validate(item) for item in _battle_store.list_events(battle_id)]
+
+
+@app.get("/battles/{battle_id}/replay")
+def replay_battle(battle_id: str) -> dict[str, Any]:
+    if _battle_store.get(battle_id) is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    return {"battleId": battle_id, "events": _battle_store.list_events(battle_id), "mode": "replay"}
 
 
 @app.get("/battles/{battle_id}")
@@ -276,7 +392,142 @@ def get_battle(battle_id: str) -> BattleRecord:
     return BattleRecord.model_validate(record)
 
 
-@app.post("/agent/attack")
+def _scores(record: dict[str, Any]) -> tuple[int, int]:
+    samples = record["attackerOut"].get("samples", [])
+    defenses = record.get("defenderOut", [])
+    severity_points = {"low": 10, "medium": 20, "high": 30}
+    attacker_score = sum(severity_points.get(sample.get("severity", "low"), 10) for sample in samples)
+    defender_score = sum(
+        len(item.get("caught", [])) * 10 + len(item.get("fixed", [])) * 5
+        for item in defenses
+    )
+    return attacker_score, defender_score
+
+
+def _markdown_report(record: dict[str, Any], events: list[dict[str, Any]]) -> str:
+    attacker_score, defender_score = _scores(record)
+    lines = [
+        f"# 智能体攻防战报：{record['topic']}",
+        "",
+        f"- 战局编号：`{record['id']}`",
+        f"- 难度：{record['difficulty']}",
+        f"- 状态：{record['status']}",
+        f"- 创建时间：{record['createdAt']}",
+        f"- 攻击方得分：{attacker_score}",
+        f"- 防守方得分：{defender_score}",
+        "",
+        "## 对抗过程",
+        "",
+    ]
+    samples = record["attackerOut"].get("samples", [])
+    defenses = record.get("defenderOut", [])
+    for index, sample in enumerate(samples, start=1):
+        defense = defenses[index - 1] if index - 1 < len(defenses) else {}
+        lines.extend(
+            [
+                f"### 第 {index} 轮：{sample.get('type', 'unknown')} / {sample.get('severity', 'unknown')}",
+                f"- 主题：{sample.get('topic', record['topic'])}",
+                f"- 攻击内容：{sample.get('content', '')}",
+                f"- 发现问题：{', '.join(item.get('reason', '') for item in defense.get('caught', [])) or '无'}",
+                f"- 风险：{', '.join(item.get('reason', '') for item in defense.get('risks', [])) or '无'}",
+                f"- 修复动作：{', '.join(item.get('action', '') for item in defense.get('fixed', [])) or '无'}",
+                "",
+            ]
+        )
+    lines.extend(["## 事件记录", ""])
+    for event in events:
+        lines.append(f"- `{event['sequence']}` {event['type']}：{event['createdAt']}")
+    return "\n".join(lines) + "\n"
+
+
+@app.get("/battles/{battle_id}/report")
+@app.get("/reports/{battle_id}")
+def battle_report(
+    battle_id: str,
+    format: Literal["json", "markdown"] = Query(default="json"),
+) -> Any:
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    events = _battle_store.list_events(battle_id)
+    if format == "markdown":
+        return PlainTextResponse(
+            _markdown_report(record, events),
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{battle_id}.md"'},
+        )
+    attacker_score, defender_score = _scores(record)
+    return {
+        "battle": record,
+        "events": events,
+        "scores": {"attacker": attacker_score, "defender": defender_score},
+    }
+
+
+@app.get("/leaderboard")
+def leaderboard() -> dict[str, Any]:
+    attacker_score = defender_score = 0
+    rounds = 0
+    for record in _battle_store.list(limit=100000):
+        attack_points, defend_points = _scores(record)
+        attacker_score += attack_points
+        defender_score += defend_points
+        rounds += len(record["attackerOut"].get("samples", []))
+    return {
+        "items": [
+            {"agent": "attacker", "score": attacker_score, "rounds": rounds},
+            {"agent": "defender", "score": defender_score, "rounds": rounds},
+        ],
+    }
+
+
+@app.get("/battles/{battle_id}/events/stream")
+async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> StreamingResponse:
+    if _battle_store.get(battle_id) is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+
+    async def generate() -> Any:
+        sent = 0
+        attempts = 0
+        while attempts < (60 if follow else 1):
+            events = _battle_store.list_events(battle_id)
+            for event in events[sent:]:
+                yield f"id: {event['id']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                sent += 1
+            if not follow or sent >= len(events) and sent > 0:
+                if not follow:
+                    break
+            attempts += 1
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.websocket("/ws/battles/{battle_id}")
+async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
+    if _battle_store.get(battle_id) is None:
+        await websocket.close(code=4404, reason="战局不存在")
+        return
+    await websocket.accept()
+    sent = 0
+    try:
+        for _ in range(60):
+            events = _battle_store.list_events(battle_id)
+            for event in events[sent:]:
+                await websocket.send_json(event)
+                sent += 1
+            if sent and sent >= len(events):
+                await websocket.send_json({"type": "stream.completed", "battleId": battle_id})
+                break
+            await asyncio.sleep(0.5)
+    except WebSocketDisconnect:
+        return
+    finally:
+        if websocket.client_state.name == "CONNECTED":
+            await websocket.close()
+
+
+@app.post("/agent/attack", dependencies=[Depends(_api_key_dependency)])
 def attack(payload: AttackRequest) -> dict[str, Any]:
     difficulty = payload.difficulty
     topic = payload.topic
@@ -296,7 +547,7 @@ def attack(payload: AttackRequest) -> dict[str, Any]:
     return {"samples": samples}
 
 
-@app.post("/agent/defend")
+@app.post("/agent/defend", dependencies=[Depends(_api_key_dependency)])
 def defend(payload: DefendRequest) -> dict[str, Any]:
     sample = payload.sample
     content = str(sample.get("content", "")).lower()
@@ -364,7 +615,7 @@ async def _aip_start(command: TaskCommand, task: TaskResult | None) -> TaskResul
 _aip_handlers = CommandHandlers(on_start=_aip_start)
 
 
-@app.post("/rpc")
+@app.post("/rpc", dependencies=[Depends(_api_key_dependency)])
 async def rpc(request: Request) -> dict[str, Any]:
     """JSON-RPC endpoint supporting both AIP ``rpc`` and simple agent methods."""
     body = await request.json()
