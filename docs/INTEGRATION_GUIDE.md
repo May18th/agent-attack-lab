@@ -266,6 +266,16 @@ cloudflared tunnel --url http://127.0.0.1:5173
 
 使用新输出的公网地址；不要继续使用已经失效的旧地址。
 
+### Tunnel 显示健康但路线为 0
+
+健康只代表连接器在线，不代表已经配置公网主机名。当前项目应使用名为 `agent-attack-lab` 的命名 Tunnel，并存在以下路由：
+
+~~~text
+api.kcwx.online -> http://127.0.0.1:8787
+~~~
+
+如果控制台显示的是其他名称、其他账号或“路线 0”，不要把它当作本项目后端 Tunnel，也不要重复创建 DNS。以 `https://api.kcwx.online/health` 的实际响应为准。
+
 ### 公网后端打不开、502 或 SSL 握手失败
 
 先访问 https://api.kcwx.online/health。不要使用旧 Quick Tunnel 地址，也不要重复创建 DNS 记录。后端电脑必须保持服务和命名 Tunnel 运行。
