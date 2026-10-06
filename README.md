@@ -25,7 +25,7 @@ D:\梧桐
 
 不要把源码、临时日志、虚拟环境或数据库放到项目根目录；前后端文件分别放入对应目录。
 
-协作边界详见 `docs/COLLABORATION_BOUNDARIES.md`。
+协作边界详见 `docs/COLLABORATION_BOUNDARIES.md`；前后端联调、启动和排障详见 `docs/INTEGRATION_GUIDE.md`。
 
 ## 后端启动
 
@@ -53,7 +53,7 @@ uv sync
 VITE_AGENT_API=http://127.0.0.1:8787
 ```
 
-远程联调地址以 `docs/TEAM_HANDOFF.md` 中当前记录为准。
+远程联调统一使用 `https://api.kcwx.online`，完整步骤见 `docs/INTEGRATION_GUIDE.md`。
 
 第一版主流程使用 `POST /battles`，展示 `attackerOut.samples` 和 `defenderOut`。
 

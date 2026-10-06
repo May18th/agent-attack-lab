@@ -12,13 +12,7 @@
 http://127.0.0.1:8787
 ```
 
-临时公网地址：
-
-```text
-https://radius-thumb-ago-headquarters.trycloudflare.com
-```
-
-稳定公网地址（完成 DNS 委派后）：
+稳定公网地址（当前可用）：
 
 ```text
 https://api.kcwx.online
@@ -53,17 +47,13 @@ POST /rpc
 VITE_AGENT_API=http://127.0.0.1:8787
 ```
 
-远程联调时可以改为：
+远程联调时使用：
 
 ```env
-VITE_AGENT_API=https://radius-thumb-ago-headquarters.trycloudflare.com
+VITE_AGENT_API=https://api.kcwx.online
 ```
 
-当前前端公网页面：
-
-```text
-https://platinum-require-instruction-bet.trycloudflare.com
-```
+当前前端公网页面由队友 Quick Tunnel 的终端输出决定，地址会随重启变化。
 
 ## 当前暂不作为验收项的功能
 

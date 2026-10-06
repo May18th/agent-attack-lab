@@ -18,25 +18,13 @@ AIC、CAI、ACS、mTLS 证书和平台审核由后端负责人处理，前端不
 http://127.0.0.1:8787
 ```
 
-临时公网地址（当前已验证）：
-
-```text
-https://radius-thumb-ago-headquarters.trycloudflare.com
-```
-
-稳定公网 API（完成 DNS 委派后使用）：
+稳定公网 API（当前可用）：
 
 ```text
 https://api.kcwx.online
 ```
 
-当前前端公网地址（由队友 Tunnel 提供）：
-
-```text
-https://platinum-require-instruction-bet.trycloudflare.com
-```
-
-前端公网地址仅用于打开队友页面；后端 API 仍使用上面的后端地址。
+前端公网地址由队友运行 Quick Tunnel 后以终端输出为准，地址会随重启变化。前端页面地址仅用于打开队友页面；前端 API 仍使用上面的稳定后端地址。
 
 前端本地开发优先使用本地地址；远程联调前先确认公网地址和 `/health` 可访问。公网地址依赖 Cloudflare Tunnel，服务停止后会暂时无法访问。
 
@@ -243,10 +231,10 @@ Content-Type: application/json
 VITE_AGENT_API=http://127.0.0.1:8787
 ```
 
-远程联调时：
+远程联调时统一使用：
 
 ```env
-VITE_AGENT_API=https://radius-thumb-ago-headquarters.trycloudflare.com
+VITE_AGENT_API=https://api.kcwx.online
 ```
 
 调用示例：

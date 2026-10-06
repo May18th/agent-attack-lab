@@ -27,7 +27,7 @@ Quick Tunnel 每次启动都会生成新地址，关闭进程后地址失效，�
 https://api.kcwx.online
 ```
 
-`kcwx.online` 仍需在注册商处完成 Cloudflare NS 委派：
+`kcwx.online` 已完成 Cloudflare NS 委派，当前可直接使用：
 
 ```text
 mimi.ns.cloudflare.com

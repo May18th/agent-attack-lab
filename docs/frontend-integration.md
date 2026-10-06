@@ -8,11 +8,10 @@
 
 本地开发：`http://127.0.0.1:8787`
 
-临时后端公网：`https://radius-thumb-ago-headquarters.trycloudflare.com`（当前已验证 `/health` 返回 200）。
-稳定后端公网：`https://api.kcwx.online`（需等待 `kcwx.online` 完成 Cloudflare NS 委派）。
-临时前端公网：`https://platinum-require-instruction-bet.trycloudflare.com`。
+稳定后端公网：`https://api.kcwx.online`（当前 `/health` 已验证返回 200）。
+临时前端公网：由队友运行 Quick Tunnel 后以终端输出为准，地址会随重启变化。
 
-公网地址依赖 Cloudflare Tunnel 进程，服务重启时地址暂不变。前端开发优先使用本地地址；平台联调再使用公网地址。
+后端稳定地址依赖命名 Cloudflare Tunnel 进程；前端临时地址依赖队友的 Quick Tunnel。前端远程联调统一使用 `https://api.kcwx.online` 作为 API 地址。
 
 ## REST 接口
 
@@ -147,5 +146,5 @@ export async function detectSample(sample: Record<string, unknown>) {
 1. 前端通过 `.env.local` 设置 `VITE_AGENT_API=http://127.0.0.1:8787`，不要把地址写死在组件中。
 2. 提交前端代码时附带使用的 API 路径和请求样例；后端字段变更先同步，不直接改字段名。
 3. 页面至少覆盖加载中、成功、空结果和 HTTP 422/500 错误状态。
-4. 本地服务启动：在后端项目目录执行 `./start.ps1`；接口文档在 `/docs`。
+4. 本地服务启动：在后端项目目录执行 `./start.ps1`；接口文档在 `/docs`。完整排障步骤见 `docs/INTEGRATION_GUIDE.md`。
 5. 如果前端部署到非本机域名，需要在后端启动前设置 `AGENT_CORS_ORIGINS`，例如 `https://frontend.example.com`；多个来源用英文逗号分隔。
