@@ -15,6 +15,14 @@
 
 队友的 trycloudflare.com 地址属于临时前端地址，会随 Quick Tunnel 重启而变化。页面地址和 API 地址不能混用：页面可以使用队友的临时地址，前端请求必须指向 https://api.kcwx.online。
 
+当前后端 DNS 路由由 Cloudflare 管理：
+
+~~~text
+api.kcwx.online CNAME abe90b02-7329-4488-8d1e-aa3e91725b37.cfargotunnel.com
+~~~
+
+不要把 DNS 指向其他 Tunnel ID，也不要在阿里云注册商 DNS 中重复创建这条记录。
+
 ## 2. 分工边界
 
 ### 前端负责
