@@ -173,7 +173,7 @@ cd "D:\梧桐\backend"
 | BE-11 | 待评估 | 当前 `/health` 已返回服务状态；更详细指标不阻塞第一版 |
 | BE-12 | 后续 | 统一请求日志关联，等实时功能确定后实施 |
 | BE-13 | 后续 | arbiter 扩展边界暂不实现 |
-| BE-14 | 待补 | 公网服务运行手册，前端恢复后与演示材料一起冻结 |
+| BE-14 | 已完成 | `docs/DEPLOYMENT.md` 已提供公网服务、Quick Tunnel、稳定 Tunnel 和数据库配置说明 |
 
 ### 前端 P0
 
@@ -188,6 +188,6 @@ cd "D:\梧桐\backend"
 - FE-14 至 FE-16：安全展示、响应式布局和前端测试，等待前端源码恢复后验收。
 - WebSocket、arbiter、score、round、correlationId、事件时间线属于 P2，不阻塞第一版。
 
-### 当前唯一阻塞项
+### 当前阶段
 
-GitHub `main` 分支目前仍没有真正的前端源码。队友提交包含 `package.json`、`src/` 和 `index.html` 的项目后，进入 N1-N6 联调验收。
+GitHub `main` 分支已经包含 `frontend/frontend-ui` 的前端源码。当前进入 N1-N6 联调验收：队友拉取最新代码后，确认环境变量、主流程、异常状态、响应式布局和前端测试。
