@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import asyncio
 import time
@@ -27,6 +28,9 @@ from acps_sdk.aip.aip_rpc_server import (
     handle_rpc_request,
 )
 from agent_attack_lab.storage import BattleStore
+
+
+logger = logging.getLogger("agent_attack_lab")
 
 app = FastAPI(
     title="智能体攻防实验室 Agent 服务",
@@ -108,13 +112,46 @@ _request_errors = 0
 _api_key = os.getenv("AGENT_API_KEY", "").strip()
 
 
+def _request_id(request: Request) -> str:
+    """Reuse a safe caller ID when supplied, otherwise create one locally."""
+    candidate = request.headers.get("x-request-id", "").strip()
+    if candidate and len(candidate) <= 128 and all(
+        char.isalnum() or char in "-_.:" for char in candidate
+    ):
+        return candidate
+    return f"req-{uuid.uuid4()}"
+
+
 @app.middleware("http")
 async def collect_request_metrics(request: Request, call_next: Any) -> Any:
     global _request_count, _request_errors
+    request_id = _request_id(request)
+    request.state.request_id = request_id
+    started = time.perf_counter()
     _request_count += 1
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        _request_errors += 1
+        logger.exception(
+            "request_failed request_id=%s method=%s path=%s",
+            request_id,
+            request.method,
+            request.url.path,
+        )
+        raise
     if response.status_code >= 400:
         _request_errors += 1
+    duration_ms = round((time.perf_counter() - started) * 1000, 2)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "request_completed request_id=%s method=%s path=%s status=%s duration_ms=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
     return response
 
 
@@ -356,8 +393,20 @@ def dashboard() -> str:
 
 
 @app.get("/health", summary="服务健康检查", tags=["核心接口"])
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "智能体攻防实验室"}
+def health(request: Request) -> dict[str, Any]:
+    storage_status = "ok"
+    try:
+        _battle_store.count()
+    except Exception:
+        storage_status = "error"
+    return {
+        "status": "ok" if storage_status == "ok" else "degraded",
+        "service": "智能体攻防实验室",
+        "version": app.version,
+        "uptimeSeconds": round(time.monotonic() - _started_at, 2),
+        "storage": storage_status,
+        "requestId": request.state.request_id,
+    }
 
 
 @app.get("/metrics", include_in_schema=False)

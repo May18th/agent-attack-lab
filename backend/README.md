@@ -49,6 +49,8 @@ uv run pytest -q
 - `GET /leaderboard`：按攻击方、防守方累计得分统计排行榜。
 - `GET /metrics`：查看运行时间、请求数、错误数、战局数和事件数。
 
+`GET /health` 会返回服务版本、运行时间、存储状态和 `requestId`。所有响应都会带 `X-Request-ID`；公网排障时请保留该值。
+
 部署到公网时可设置 `AGENT_API_KEY`。设置后，`POST /battles`、`POST /agent/*` 和 `POST /rpc` 必须携带 `X-API-Key` 请求头；本地未设置时保持免密开发模式。
 
 异步实时战局：

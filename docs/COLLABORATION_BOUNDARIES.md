@@ -170,8 +170,8 @@ cd "D:\梧桐\backend"
 | 编号 | 状态 | 说明 |
 |---|---|---|
 | BE-10 | 已完成 | `GET /battles?limit=1..200` 已提供 |
-| BE-11 | 待评估 | 当前 `/health` 已返回服务状态；更详细指标不阻塞第一版 |
-| BE-12 | 后续 | 统一请求日志关联，等实时功能确定后实施 |
+| BE-11 | 已完成 | `/health` 返回版本、运行时间、存储状态和 requestId |
+| BE-12 | 已完成 | 所有响应带 `X-Request-ID`，日志记录请求方法、路径、状态和耗时 |
 | BE-13 | 后续 | arbiter 扩展边界暂不实现 |
 | BE-14 | 已完成 | `docs/DEPLOYMENT.md` 已提供公网服务、Quick Tunnel、稳定 Tunnel 和数据库配置说明 |
 

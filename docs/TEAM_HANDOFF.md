@@ -108,9 +108,15 @@ GET /health
 ```json
 {
   "status": "ok",
-  "service": "智能体攻防实验室"
+  "service": "智能体攻防实验室",
+  "version": "1.0.0",
+  "uptimeSeconds": 123.45,
+  "storage": "ok",
+  "requestId": "test-health-1"
 }
 ```
+
+所有 HTTP 响应都会带 `X-Request-ID` 响应头。联调报错时请一并记录该值，便于后端从日志中定位请求。
 
 ### 攻击样本生成
 

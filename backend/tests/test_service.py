@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from agent_attack_lab.storage import BattleStore
+import agent_attack_lab.service as service
 
 from agent_attack_lab.service import app
 
@@ -8,10 +9,14 @@ client = TestClient(app)
 
 
 def test_health_and_index() -> None:
-    assert client.get("/health").json() == {
-        "status": "ok",
-        "service": "智能体攻防实验室",
-    }
+    response = client.get("/health", headers={"X-Request-ID": "test-health-1"})
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "智能体攻防实验室"
+    assert body["version"] == "1.0.0"
+    assert body["storage"] == "ok"
+    assert body["requestId"] == "test-health-1"
+    assert response.headers["X-Request-ID"] == "test-health-1"
     index = client.get("/")
     assert index.status_code == 200
     assert "/agent/attack" in index.json()["endpoints"]
@@ -160,3 +165,31 @@ def test_aip_rpc_start_returns_task_result() -> None:
     assert body["result"]["taskId"] == "task-rpc-test"
     assert body["result"]["status"]["state"] == "awaiting-completion"
     assert body["result"]["products"][0]["dataItems"][0]["data"]["samples"][-1]["type"] == "vuln"
+
+
+def test_api_key_protects_agent_routes(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_api_key", "test-secret")
+    without_key = client.post(
+        "/agent/attack", json={"difficulty": "low", "topic": "安全测试"}
+    )
+    assert without_key.status_code == 401
+    with_key = client.post(
+        "/agent/attack",
+        headers={"X-API-Key": "test-secret"},
+        json={"difficulty": "low", "topic": "安全测试"},
+    )
+    assert with_key.status_code == 200
+
+
+def test_cors_preflight_allows_api_key_header() -> None:
+    response = client.options(
+        "/battles",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "x-api-key,content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+    assert "X-API-Key" in response.headers["Access-Control-Allow-Headers"]
