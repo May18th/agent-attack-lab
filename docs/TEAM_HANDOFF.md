@@ -21,7 +21,7 @@ http://127.0.0.1:8787
 临时公网地址（当前已验证）：
 
 ```text
-https://spice-mil-src-seat.trycloudflare.com
+https://radius-thumb-ago-headquarters.trycloudflare.com
 ```
 
 当前前端公网地址（由队友 Tunnel 提供）：
@@ -234,7 +234,7 @@ VITE_AGENT_API=http://127.0.0.1:8787
 远程联调时：
 
 ```env
-VITE_AGENT_API=https://spice-mil-src-seat.trycloudflare.com
+VITE_AGENT_API=https://radius-thumb-ago-headquarters.trycloudflare.com
 ```
 
 调用示例：

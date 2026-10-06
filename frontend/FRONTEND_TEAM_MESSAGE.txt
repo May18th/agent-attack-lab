@@ -15,7 +15,7 @@ http://127.0.0.1:8787
 临时公网地址：
 
 ```text
-https://spice-mil-src-seat.trycloudflare.com
+https://radius-thumb-ago-headquarters.trycloudflare.com
 ```
 
 ## 当前可用接口
@@ -50,7 +50,7 @@ VITE_AGENT_API=http://127.0.0.1:8787
 远程联调时可以改为：
 
 ```env
-VITE_AGENT_API=https://spice-mil-src-seat.trycloudflare.com
+VITE_AGENT_API=https://radius-thumb-ago-headquarters.trycloudflare.com
 ```
 
 ## 当前暂不作为验收项的功能
