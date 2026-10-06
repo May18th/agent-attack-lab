@@ -7,6 +7,7 @@ export default defineConfig({
     allowedHosts: [
       'wiring-intimate-trees-mike.trycloudflare.com',
       '6586b7f3.r16.cpolar.top',
+      '.trycloudflare.com',
     ],
   },
 })
