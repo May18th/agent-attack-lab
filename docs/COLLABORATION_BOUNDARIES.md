@@ -173,7 +173,7 @@ cd "D:\梧桐\backend"
 | BE-11 | 已完成 | `/health` 返回版本、运行时间、存储状态和 requestId |
 | BE-12 | 已完成 | 所有响应带 `X-Request-ID`，日志记录请求方法、路径、状态和耗时 |
 | BE-13 | 后续 | arbiter 扩展边界暂不实现 |
-| BE-14 | 已完成 | `docs/DEPLOYMENT.md` 已提供公网服务、Quick Tunnel、稳定 Tunnel 和数据库配置说明 |
+| BE-14 | 已完成 | `docs/DEPLOYMENT.md` 已提供公网服务、Quick Tunnel、稳定 Tunnel、限流和备份说明 |
 
 ### 前端 P0
 

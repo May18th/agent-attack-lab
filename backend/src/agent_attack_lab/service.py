@@ -6,7 +6,9 @@ import os
 import asyncio
 import time
 import uuid
+from collections import defaultdict, deque
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -109,7 +111,22 @@ _battle_store = BattleStore()
 _started_at = time.monotonic()
 _request_count = 0
 _request_errors = 0
+_request_total_duration_ms = 0.0
+_request_max_duration_ms = 0.0
+_rate_limited_count = 0
 _api_key = os.getenv("AGENT_API_KEY", "").strip()
+
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+_rate_limit_per_minute = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 60)
+_rate_windows: dict[str, deque[float]] = defaultdict(deque)
+_rate_lock = Lock()
 
 
 def _request_id(request: Request) -> str:
@@ -124,7 +141,7 @@ def _request_id(request: Request) -> str:
 
 @app.middleware("http")
 async def collect_request_metrics(request: Request, call_next: Any) -> Any:
-    global _request_count, _request_errors
+    global _request_count, _request_errors, _request_total_duration_ms, _request_max_duration_ms
     request_id = _request_id(request)
     request.state.request_id = request_id
     started = time.perf_counter()
@@ -132,6 +149,9 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
     try:
         response = await call_next(request)
     except Exception:
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        _request_total_duration_ms += duration_ms
+        _request_max_duration_ms = max(_request_max_duration_ms, duration_ms)
         _request_errors += 1
         logger.exception(
             "request_failed request_id=%s method=%s path=%s",
@@ -143,6 +163,8 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
     if response.status_code >= 400:
         _request_errors += 1
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
+    _request_total_duration_ms += duration_ms
+    _request_max_duration_ms = max(_request_max_duration_ms, duration_ms)
     response.headers["X-Request-ID"] = request_id
     logger.info(
         "request_completed request_id=%s method=%s path=%s status=%s duration_ms=%s",
@@ -163,6 +185,29 @@ def _check_api_key(request: Request) -> None:
 
 def _api_key_dependency(request: Request) -> None:
     _check_api_key(request)
+
+
+def _rate_limit_dependency(request: Request) -> None:
+    """Apply a small in-process window limit to mutating agent endpoints."""
+    global _rate_limited_count
+    if _rate_limit_per_minute <= 0:
+        return
+    client_key = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    cutoff = now - 60
+    with _rate_lock:
+        window = _rate_windows[client_key]
+        while window and window[0] <= cutoff:
+            window.popleft()
+        if len(window) >= _rate_limit_per_minute:
+            _rate_limited_count += 1
+            retry_after = max(1, int(60 - (now - window[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="请求过于频繁，请稍后重试",
+                headers={"Retry-After": str(retry_after)},
+            )
+        window.append(now)
 
 
 def _event(battle_id: str, sequence: int, event_type: str, status: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -411,11 +456,16 @@ def health(request: Request) -> dict[str, Any]:
 
 @app.get("/metrics", include_in_schema=False)
 def metrics() -> dict[str, Any]:
+    average_latency = _request_total_duration_ms / _request_count if _request_count else 0
     return {
         "service": "智能体攻防实验室",
         "uptimeSeconds": round(time.monotonic() - _started_at, 2),
         "requests": _request_count,
         "errors": _request_errors,
+        "averageLatencyMs": round(average_latency, 2),
+        "maxLatencyMs": round(_request_max_duration_ms, 2),
+        "rateLimited": _rate_limited_count,
+        "rateLimitPerMinute": _rate_limit_per_minute,
         "battles": _battle_store.count(),
         "events": _battle_store.count_events(),
     }
@@ -423,6 +473,7 @@ def metrics() -> dict[str, Any]:
 
 @app.post(
     "/battles",
+    dependencies=[Depends(_rate_limit_dependency)],
     status_code=201,
     summary="创建一场攻防战局",
     description="输入测试主题和难度，返回完整的攻击样本与防守结果。添加 background=true 可启用分阶段实时执行。",
@@ -697,7 +748,11 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
             await websocket.close()
 
 
-@app.post("/agent/attack", dependencies=[Depends(_api_key_dependency)], include_in_schema=False)
+@app.post(
+    "/agent/attack",
+    dependencies=[Depends(_api_key_dependency), Depends(_rate_limit_dependency)],
+    include_in_schema=False,
+)
 def attack(payload: AttackRequest) -> dict[str, Any]:
     difficulty = payload.difficulty
     topic = payload.topic
@@ -717,7 +772,11 @@ def attack(payload: AttackRequest) -> dict[str, Any]:
     return {"samples": samples}
 
 
-@app.post("/agent/defend", dependencies=[Depends(_api_key_dependency)], include_in_schema=False)
+@app.post(
+    "/agent/defend",
+    dependencies=[Depends(_api_key_dependency), Depends(_rate_limit_dependency)],
+    include_in_schema=False,
+)
 def defend(payload: DefendRequest) -> dict[str, Any]:
     sample = payload.sample
     content = str(sample.get("content", "")).lower()
@@ -785,7 +844,11 @@ async def _aip_start(command: TaskCommand, task: TaskResult | None) -> TaskResul
 _aip_handlers = CommandHandlers(on_start=_aip_start)
 
 
-@app.post("/rpc", dependencies=[Depends(_api_key_dependency)], include_in_schema=False)
+@app.post(
+    "/rpc",
+    dependencies=[Depends(_api_key_dependency), Depends(_rate_limit_dependency)],
+    include_in_schema=False,
+)
 async def rpc(request: Request) -> dict[str, Any]:
     """JSON-RPC endpoint supporting both AIP ``rpc`` and simple agent methods."""
     body = await request.json()

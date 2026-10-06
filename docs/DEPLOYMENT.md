@@ -43,3 +43,21 @@ uv sync
 ```
 
 数据库连接串不提交到仓库。未设置 `AGENT_BATTLE_DATABASE_URL` 时继续使用 `.data/battles.sqlite3`。
+
+## 限流和备份
+
+写入接口默认按客户端地址限制为每分钟 60 次，可用环境变量调整：
+
+```powershell
+$env:AGENT_RATE_LIMIT_PER_MINUTE = "60"
+```
+
+SQLite 开发库可以使用脚本备份。恢复前先停止后端，恢复脚本默认拒绝覆盖已有文件：
+
+```powershell
+cd "D:\梧桐\backend"
+.\backup.ps1
+.\restore.ps1 -BackupPath ".data\backups\你的备份文件.sqlite3" -Force
+```
+
+上述脚本仅适用于 SQLite。使用 PostgreSQL 时请使用 `pg_dump`/`pg_restore`，不要把 PostgreSQL 连接串当作 SQLite 路径传给脚本。

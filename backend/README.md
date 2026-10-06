@@ -51,6 +51,18 @@ uv run pytest -q
 
 `GET /health` 会返回服务版本、运行时间、存储状态和 `requestId`。所有响应都会带 `X-Request-ID`；公网排障时请保留该值。
 
+写入接口默认启用单进程限流：每个客户端每分钟最多 60 次。可通过 `AGENT_RATE_LIMIT_PER_MINUTE` 调整，设置为 `0` 关闭。超限返回 `429` 和 `Retry-After`。
+
+SQLite 备份与恢复：
+
+```powershell
+cd "D:\梧桐\backend"
+.\backup.ps1
+.\restore.ps1 -BackupPath ".data\backups\battles-20261006-120000.sqlite3" -Force
+```
+
+恢复前先停止后端服务；不传 `-Force` 时不会覆盖已有数据库。
+
 部署到公网时可设置 `AGENT_API_KEY`。设置后，`POST /battles`、`POST /agent/*` 和 `POST /rpc` 必须携带 `X-API-Key` 请求头；本地未设置时保持免密开发模式。
 
 异步实时战局：

@@ -193,3 +193,13 @@ def test_cors_preflight_allows_api_key_header() -> None:
     assert response.status_code == 200
     assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
     assert "X-API-Key" in response.headers["Access-Control-Allow-Headers"]
+
+
+def test_rate_limit_returns_retry_after(monkeypatch) -> None:
+    service._rate_windows.clear()
+    monkeypatch.setattr(service, "_rate_limit_per_minute", 1)
+    first = client.post("/agent/attack", json={"difficulty": "low", "topic": "限流测试"})
+    second = client.post("/agent/attack", json={"difficulty": "low", "topic": "限流测试"})
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.headers["Retry-After"].isdigit()
