@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -85,7 +85,7 @@ class BattleRecord(BaseModel):
     id: str
     difficulty: Literal["low", "mid", "high"]
     topic: str
-    status: Literal["completed"]
+    status: Literal["pending", "running", "completed", "failed"]
     createdAt: str
     attackerOut: dict[str, Any]
     defenderOut: list[dict[str, Any]]
@@ -138,6 +138,58 @@ def _event(battle_id: str, sequence: int, event_type: str, status: str, data: di
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
+
+
+async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
+    """Run a battle in stages so clients can observe its event stream."""
+    record = _battle_store.get(battle_id)
+    if record is None:
+        return
+    events = _battle_store.list_events(battle_id)
+    sequence = max((event["sequence"] for event in events), default=0) + 1
+
+    def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
+        nonlocal sequence
+        event = _event(battle_id, sequence, event_type, status, data)
+        sequence += 1
+        _battle_store.save_event(event)
+
+    try:
+        record["status"] = "running"
+        _battle_store.save(record)
+        add_event("attack.started", "running", {"topic": payload.topic})
+        await asyncio.sleep(0.35)
+        attack_result = attack(AttackRequest.model_validate(payload.model_dump()))
+        record["attackerOut"] = attack_result
+        _battle_store.save(record)
+        add_event("attack.completed", "completed", {"sampleCount": len(attack_result["samples"])})
+
+        defender_results: list[dict[str, Any]] = []
+        for index, sample in enumerate(attack_result["samples"], start=1):
+            await asyncio.sleep(0.35)
+            defense = defend(DefendRequest(sample=sample))
+            defender_results.append(defense)
+            record["defenderOut"] = defender_results
+            _battle_store.save(record)
+            add_event(
+                "round.completed",
+                "completed",
+                {
+                    "round": index,
+                    "sample": sample,
+                    "caught": defense["caught"],
+                    "risks": defense["risks"],
+                    "fixed": defense["fixed"],
+                },
+            )
+        add_event("defense.completed", "completed", {"roundCount": len(defender_results)})
+        record["status"] = "completed"
+        _battle_store.save(record)
+        add_event("battle.completed", "completed", {"status": record["status"]})
+    except Exception as exc:
+        record["status"] = "failed"
+        _battle_store.save(record)
+        add_event("battle.failed", "failed", {"error": str(exc)})
 
 
 @app.get("/", include_in_schema=False)
@@ -324,12 +376,41 @@ def metrics() -> dict[str, Any]:
     "/battles",
     status_code=201,
     summary="创建一场攻防战局",
-    description="输入测试主题和难度，返回完整的攻击样本与防守结果。",
+    description="输入测试主题和难度，返回完整的攻击样本与防守结果。添加 background=true 可启用分阶段实时执行。",
     tags=["战局接口"],
 )
-def create_battle(payload: BattleRequest, request: Request) -> BattleRecord:
+def create_battle(
+    payload: BattleRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    background: bool = Query(default=False, description="是否后台异步执行"),
+) -> BattleRecord:
     _check_api_key(request)
     battle_id = f"battle-{uuid.uuid4()}"
+    created_at = datetime.now(timezone.utc).isoformat()
+    if background:
+        record = BattleRecord(
+            id=battle_id,
+            difficulty=payload.difficulty,
+            topic=payload.topic,
+            status="pending",
+            createdAt=created_at,
+            attackerOut={"samples": []},
+            defenderOut=[],
+        )
+        _battle_store.save(record.model_dump())
+        _battle_store.save_event(
+            _event(
+                battle_id,
+                1,
+                "battle.created",
+                "pending",
+                {"topic": payload.topic, "difficulty": payload.difficulty},
+            )
+        )
+        background_tasks.add_task(_run_battle_async, battle_id, payload)
+        return record
+
     events: list[dict[str, Any]] = []
     sequence = 1
 
@@ -363,7 +444,7 @@ def create_battle(payload: BattleRequest, request: Request) -> BattleRecord:
         difficulty=payload.difficulty,
         topic=payload.topic,
         status="completed",
-        createdAt=datetime.now(timezone.utc).isoformat(),
+        createdAt=created_at,
         attackerOut=attack_result,
         defenderOut=defense_results,
     )
@@ -556,7 +637,7 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
             for event in events[sent:]:
                 await websocket.send_json(event)
                 sent += 1
-            if sent and sent >= len(events):
+            if events and events[-1]["type"] in {"battle.completed", "battle.failed"} and sent >= len(events):
                 await websocket.send_json({"type": "stream.completed", "battleId": battle_id})
                 break
             await asyncio.sleep(0.5)

@@ -51,6 +51,14 @@ uv run pytest -q
 
 部署到公网时可设置 `AGENT_API_KEY`。设置后，`POST /battles`、`POST /agent/*` 和 `POST /rpc` 必须携带 `X-API-Key` 请求头；本地未设置时保持免密开发模式。
 
+异步实时战局：
+
+```powershell
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8787/battles?background=true' -ContentType 'application/json' -Body '{"difficulty":"high","topic":"提示注入"}'
+```
+
+该模式先返回 `pending/running` 战局，随后通过事件接口、SSE 或 WebSocket 更新到 `completed`。稳定公网隧道和 PostgreSQL 配置见 `docs/DEPLOYMENT.md`。
+
 战局默认保存到 `.data/battles.sqlite3`，服务重启后仍保留。需要指定其他数据库路径时设置环境变量：
 
 ```powershell

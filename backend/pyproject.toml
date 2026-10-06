@@ -11,6 +11,7 @@ dependencies = [
     "acps-sdk>=2.1.0",
     "fastapi>=0.110",
     "httpx>=0.27",
+    "psycopg[binary]>=3.2",
     "pytest>=8.0",
     "uvicorn>=0.29",
 ]

@@ -56,6 +56,20 @@ def test_battle_runs_attack_and_defense() -> None:
     assert any(item["id"] == body["id"] for item in client.get("/battles").json())
 
 
+def test_background_battle_persists_staged_events() -> None:
+    response = client.post(
+        "/battles?background=true",
+        json={"difficulty": "mid", "topic": "异步战局"},
+    )
+    assert response.status_code == 201
+    battle_id = response.json()["id"]
+    detail = client.get(f"/battles/{battle_id}").json()
+    assert detail["status"] == "completed"
+    events = client.get(f"/battles/{battle_id}/events").json()
+    assert events[0]["type"] == "battle.created"
+    assert events[-1]["type"] == "battle.completed"
+
+
 def test_battle_list_limit_is_validated() -> None:
     assert client.get("/battles?limit=0").status_code == 422
     assert client.get("/battles?limit=201").status_code == 422

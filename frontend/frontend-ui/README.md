@@ -13,6 +13,8 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 本地开发时 Vite 会把 `/health`、`/battles`、`/reports` 等请求代理到 `http://127.0.0.1:8787`。
 
+创建战局使用后台异步模式，页面会自动刷新战局状态和事件时间线，直到显示“已完成”或“失败”。
+
 跨电脑或公网部署时，设置 `VITE_AGENT_API` 为后端公网地址，例如：
 
 ```powershell
