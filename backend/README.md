@@ -41,6 +41,8 @@ uv run pytest -q
 ## 对抗过程能力
 
 - `GET /battles?limit=50&offset=0&difficulty=high&q=SQL`：分页、难度和关键词筛选。
+- `X-Total-Count` 响应头：返回当前筛选条件下的总战局数；跨域前端可以读取，用于准确计算分页。
+- `GET /dashboard/summary`：汇总已保存战局、样本、规则命中和风险记录，并返回本地规则库中不同模拟用例编号的数量。
 - `GET /battles/{battle_id}/events`：读取持久化事件时间线。
 - `GET /battles/{battle_id}/replay`：按事件顺序获取回放数据。
 - `GET /battles/{battle_id}/events/stream?follow=true`：SSE 事件流。
@@ -74,7 +76,42 @@ SQLite 开发库默认启用 WAL 和 5 秒忙等待，并为时间、难度和�
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8787/battles?background=true' -ContentType 'application/json' -Body '{"difficulty":"high","topic":"提示注入"}'
 ```
 
-该模式先返回 `pending` 战局，后台按阶段执行并通过事件接口、SSE 或 WebSocket 更新到 `completed`。服务重启时会恢复尚未结束的战局；失败后可调用重试接口。后台页面使用 SSE 实时显示事件并在完成后更新战况。
+该模式先返回 `pending` 战局，后台按阶段执行并通过事件接口、SSE 或 WebSocket 更新到 `completed`。服务重启时会恢复尚未结束的战局；失败后可调用重试接口。后台页面使用 SSE 显示四阶段进度，按回合并排展示攻击样本与防守分析；历史战局支持播放/暂停、上一步/下一步、拖动进度和调整速度。历史统计从全部已保存战局汇总，只展示实际计数，不推断准确率或拦截率；模拟样本和 ACP 协议调用会明确标识。未配置独立 Agent 时使用本地规则；配置了独立 ACP Agent 后按角色调用远端，并在后台显示调用来源。部署环境变量、AIP 输入/输出契约及验收流程见 [`docs/ACP_AGENT_INTEGRATION.md`](../docs/ACP_AGENT_INTEGRATION.md)。
+
+### 修复建议与验收
+
+防守结果除规则证据外，还会给出按规则分类的修复代码示例、隔离测试步骤、通过标准和失败标准。多租户示例使用 SQLAlchemy 同时约束订单 ID 与登录会话中的租户 ID；SQL 注入示例使用 ORM 表达式绑定参数；提示注入示例要求在服务端工具层执行用户授权。以上是通用参考，不是对目标项目的自动修复；页面会标注“建议，未执行”，真实目标仍需由项目负责人在获授权环境中验证。
+
+### 本机独立 ACP Agent
+
+攻击和防守 Agent 是两个独立运行的 AIP v2 `/rpc` 服务，共用项目里的确定性样本生成与检测逻辑；它们不是外部大模型，也不代表已经通过平台注册或签发 AIC/CAI。启动后只监听本机回环地址：
+
+```powershell
+cd "D:\梧桐\backend"
+.\start-agents.ps1
+```
+
+服务地址为 `http://127.0.0.1:8788/rpc`（攻击）和 `http://127.0.0.1:8789/rpc`（防守）。在启动后端的同一个 PowerShell 窗口配置并重启后端，战局编排就会调用这两个服务：
+
+```powershell
+$env:AGENT_ATTACKER_RPC_URL = "http://127.0.0.1:8788/rpc"
+$env:AGENT_DEFENDER_RPC_URL = "http://127.0.0.1:8789/rpc"
+```
+
+若本机代理环境的 `NO_PROXY` 使用分号分隔，`httpx` 可能无法解析；当前 PowerShell 会话可设为逗号分隔后再启动后端：
+
+```powershell
+$env:NO_PROXY = "localhost,127.0.0.1,::1"
+$env:no_proxy = "localhost,127.0.0.1,::1"
+```
+
+检查两个服务的 `/health` 后，可在同一窗口运行 `.\restart.ps1` 重启后端。结束本机 Agent 服务：
+
+```powershell
+.\stop-agents.ps1
+```
+
+默认端口分别为 8788 和 8789，可用 `-AttackerPort`、`-DefenderPort` 修改；端口必须不同。公网部署前还需要分别部署并配置稳定 HTTPS 地址及平台要求的真实身份/认证材料，不能直接把上述 `127.0.0.1` 地址交给平台或队友。
 
 事件记录默认限制为 32 KB；超限样本会截短并添加 `dataTruncated` 标记，可通过 `AGENT_EVENT_DATA_MAX_BYTES` 调整，最小值为 1 KB。
 

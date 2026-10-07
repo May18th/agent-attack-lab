@@ -278,15 +278,85 @@ class BattleStore:
             ).fetchall()
         return [self._to_event(row) for row in rows]
 
-    def count(self) -> int:
+    def count(
+        self,
+        difficulty: str | None = None,
+        status: str | None = None,
+        query: str | None = None,
+    ) -> int:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if difficulty:
+            clauses.append("difficulty = ?")
+            params.append(difficulty)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if query:
+            clauses.append("(topic LIKE ? OR id LIKE ?)")
+            pattern = f"%{query}%"
+            params.extend([pattern, pattern])
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        placeholder = "%s" if self._is_postgres else "?"
+        where = where.replace("?", placeholder)
         with self._lock:
-            row = self._connection.execute("SELECT COUNT(*) AS total FROM battles").fetchone()
+            row = self._connection.execute(
+                f"SELECT COUNT(*) AS total FROM battles {where}", params
+            ).fetchone()
         return int(row["total"])
 
     def count_events(self) -> int:
         with self._lock:
             row = self._connection.execute("SELECT COUNT(*) AS total FROM battle_events").fetchone()
         return int(row["total"])
+
+    def dashboard_summary(self) -> dict[str, int]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT status, difficulty, attacker_out, defender_out FROM battles"
+            ).fetchall()
+
+        summary = {
+            "totalBattles": len(rows),
+            "completedBattles": 0,
+            "failedBattles": 0,
+            "highDifficultyBattles": 0,
+            "sampleCount": 0,
+            "ruleHitCount": 0,
+            "riskCount": 0,
+            "recommendationCount": 0,
+            "simulationSampleCount": 0,
+            "acpCallBattles": 0,
+        }
+        for row in rows:
+            if row["status"] == "completed":
+                summary["completedBattles"] += 1
+            elif row["status"] == "failed":
+                summary["failedBattles"] += 1
+            if row["difficulty"] == "high":
+                summary["highDifficultyBattles"] += 1
+
+            attacker_out = json.loads(row["attacker_out"])
+            samples = attacker_out.get("samples", [])
+            defenses = json.loads(row["defender_out"])
+            summary["sampleCount"] += len(samples)
+            summary["simulationSampleCount"] += sum(
+                sample.get("simulation") is True for sample in samples
+            )
+            summary["ruleHitCount"] += sum(
+                len(defense.get("caught", [])) for defense in defenses
+            )
+            summary["riskCount"] += sum(
+                len(defense.get("risks", [])) for defense in defenses
+            )
+            summary["recommendationCount"] += sum(
+                len(defense.get("fixed", [])) for defense in defenses
+            )
+            if attacker_out.get("agentSource") == "acp" or str(attacker_out.get("agentSource", "")).startswith("acp-") or any(
+                defense.get("agentSource") == "acp" or str(defense.get("agentSource", "")).startswith("acp-") for defense in defenses
+            ):
+                summary["acpCallBattles"] += 1
+        return summary
 
     def close(self) -> None:
         if self._pool is not None:

@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.storage import BattleStore
 import agent_attack_lab.service as service
 
@@ -32,12 +33,53 @@ def test_dashboard_is_chinese_html() -> None:
     assert "开始新战局" in response.text
     assert "防守检测" in response.text
     assert "round-list" in response.text
+    assert '<li class="event-placeholder">创建战局后显示攻击和防守进度' in response.text
+    assert ".event-log .event-placeholder { display: block; }" in response.text
+    assert 'id="live-flow" class="live-flow"' in response.text
+    assert 'id="attacker-card" class="agent-card attacker"' in response.text
+    assert 'id="defender-card" class="agent-card defender"' in response.text
+    assert 'aria-label="攻击与防守数据流"' in response.text
+    assert "查看原始样本 JSON" in response.text
+    assert "查看原始防守响应 JSON" in response.text
+    assert "规则命中（样本证据）" in response.text
+    assert "命中片段：" in response.text
+    assert "修复方向与验收（建议，未执行）" in response.text
+    assert "查看修复示例与验收标准（建议，未执行）" in response.text
+    assert "function resultList(items, field, emptyText)" in response.text
+    assert "通过标准：" in response.text
+    assert "失败标准：" in response.text
+    assert "function applyEvidenceLabels(battle)" in response.text
+    assert 'id="agent-source-label"' in response.text
+    assert 'id="verification-summary"' in response.text
+    assert 'id="replay-controls"' in response.text
+    assert 'id="replay-range"' in response.text
+    assert 'id="replay-toggle"' in response.text
+    assert "按回合查看攻防交互" in response.text
+    assert 'pair.className = "dialog-pair"' in response.text
+    assert 'column.className = "dialog-side " + side' in response.text
+    assert 'data-battle-id=' in response.text
+    assert "function renderDashboardSummary(summary)" in response.text
+    assert 'fetch("/dashboard/summary"' in response.text
+    assert "new URLSearchParams(window.location.search)" in response.text
+    assert "acp-llm" in response.text
+    assert "acp-rule-fallback" in response.text
+    assert "全部已保存战局" in response.text
+    assert "不含准确率推断" in response.text
+    assert "独立 ACP Agent" in response.text
+    assert "function appendAttackerMessage(event)" in response.text
+    assert "function appendDefenderResponse(event)" in response.text
+    assert "function updateLiveFlow(event)" in response.text
+    assert "await refreshBattle(battleId)" in response.text
+    assert "event-enter" in response.text
     assert 'innerHTML = `<div class=\\"battle-head\\"' in response.text
     assert response.text.count("function renderBattle(battle)") == 1
     assert "${samples.length}" in response.text
-    assert "低（Low）" in response.text
-    assert "缺陷（Defect）" in response.text
-    assert "发现问题（Findings）" in response.text
+    assert 'label for="low">低</label>' in response.text
+    assert 'defect: "缺陷"' in response.text
+    assert "发现问题（Findings）" not in response.text
+    assert "演示环境使用本地模拟用例；真实 Agent 结果会标明来源" in response.text
+    assert "Battle console" not in response.text
+    assert "Checking service" not in response.text
     assert "OpenAPI JSON" not in response.text
 
 
@@ -47,6 +89,15 @@ def test_attack_by_difficulty() -> None:
     body = response.json()
     assert [sample["type"] for sample in body["samples"]] == ["defect", "violation", "vuln"]
     assert all(sample["topic"] == "SQL 注入" for sample in body["samples"])
+    assert all(sample["simulation"] is True for sample in body["samples"])
+    assert all(sample["scenario"] and sample["objective"] for sample in body["samples"])
+    assert [sample["testCaseId"] for sample in body["samples"]] == [
+        "TENANT-ISOLATION-001",
+        "PROMPT-BOUNDARY-001",
+        "SQLI-PARAMETER-001",
+    ]
+    assert "ORD-2048" in body["samples"][0]["content"]
+    assert "customer_id" in body["samples"][2]["content"]
 
 
 def test_attack_rejects_unknown_difficulty() -> None:
@@ -69,6 +120,32 @@ def test_battle_runs_attack_and_defense() -> None:
     assert any(item["id"] == body["id"] for item in client.get("/battles").json())
 
 
+def test_battle_records_independent_agent_sources(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
+    monkeypatch.delenv("AGENT_DEFENDER_RPC_URL", raising=False)
+
+    async def remote_attack(_payload):
+        return {"samples": [{"type": "defect", "content": "remote sample"}], "agentMode": "llm"}
+
+    async def local_defend(_payload):
+        return None
+
+    monkeypatch.setattr(service, "call_attacker", remote_attack)
+    monkeypatch.setattr(service, "call_defender", local_defend)
+
+    response = client.post("/battles", json={"difficulty": "low", "topic": "agent source test"})
+
+    assert response.status_code == 201
+    battle = response.json()
+    assert battle["attackerOut"]["agentSource"] == "acp-llm"
+    assert battle["defenderOut"][0]["agentSource"] == "local-rule"
+    events = client.get(f"/battles/{battle['id']}/events").json()
+    attack_completed = next(item for item in events if item["type"] == "attack.completed")
+    defense_round = next(item for item in events if item["type"] == "round.completed")
+    assert attack_completed["data"]["attackerSource"] == "acp-llm"
+    assert defense_round["data"]["defenderSource"] == "local-rule"
+
+
 def test_background_battle_persists_staged_events() -> None:
     response = client.post(
         "/battles?background=true",
@@ -79,13 +156,55 @@ def test_background_battle_persists_staged_events() -> None:
     detail = client.get(f"/battles/{battle_id}").json()
     assert detail["status"] == "completed"
     events = client.get(f"/battles/{battle_id}/events").json()
-    assert events[0]["type"] == "battle.created"
-    assert events[-1]["type"] == "battle.completed"
+    expected_types = ["battle.created", "attack.started"]
+    expected_types.extend(["attack.sample.generated"] * len(detail["attackerOut"]["samples"]))
+    expected_types.append("attack.completed")
+    for _ in detail["attackerOut"]["samples"]:
+        expected_types.extend(["round.started", "round.completed"])
+    expected_types.extend(["defense.completed", "battle.completed"])
+    assert [event["type"] for event in events] == expected_types
+    generated = [event for event in events if event["type"] == "attack.sample.generated"]
+    defended = [event for event in events if event["type"] == "round.completed"]
+    assert all("sample" in event["data"] for event in generated)
+    assert all({"caught", "risks", "fixed"}.issubset(event["data"]) for event in defended)
+    assert all("verificationStatus" in event["data"] for event in defended)
+    assert all("scopeNotice" in event["data"] for event in defended)
+    assert all(
+        {"example", "verificationSteps", "passCriteria", "failCriteria"}.issubset(item)
+        for event in defended
+        for item in event["data"]["fixed"]
+    )
+    assert all(
+        "ruleId" in finding
+        for event in defended
+        for finding in event["data"]["caught"]
+    )
 
 
 def test_battle_list_limit_is_validated() -> None:
     assert client.get("/battles?limit=0").status_code == 422
     assert client.get("/battles?limit=201").status_code == 422
+
+
+def test_battle_list_returns_filtered_total_for_pagination(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "battle-list-count.sqlite3"))
+    for index in range(3):
+        store.save({
+            "id": f"battle-page-{index}",
+            "difficulty": "low",
+            "topic": f"分页搜索 {index}",
+            "status": "completed",
+            "createdAt": f"2026-10-07T00:00:0{index}+00:00",
+            "attackerOut": {"samples": []},
+            "defenderOut": [],
+        })
+    monkeypatch.setattr(service, "_battle_store", store)
+
+    response = client.get("/battles?limit=1&offset=1&q=分页搜索")
+    assert response.status_code == 200
+    assert response.headers["X-Total-Count"] == "3"
+    assert len(response.json()) == 1
+    assert response.json()[0]["id"] == "battle-page-1"
 
 
 def test_battle_events_report_filters_and_leaderboard() -> None:
@@ -126,6 +245,94 @@ def test_battle_store_persists_records(tmp_path) -> None:
     second_store = BattleStore(str(database))
     assert second_store.get("battle-persisted") == record
     assert first_store._connection.execute("SELECT version FROM schema_migrations").fetchone()[0] == 1
+
+
+def test_battle_store_dashboard_summary_aggregates_saved_outputs(tmp_path) -> None:
+    store = BattleStore(str(tmp_path / "dashboard-summary.sqlite3"))
+    store.save({
+        "id": "battle-summary",
+        "difficulty": "high",
+        "topic": "摘要测试",
+        "status": "completed",
+        "createdAt": "2026-10-07T00:00:00+00:00",
+        "attackerOut": {
+            "agentSource": "acp",
+            "samples": [{"simulation": True}, {"simulation": False}],
+        },
+        "defenderOut": [
+            {"caught": [{"ruleId": "LAB-1"}], "risks": [{"reason": "r"}], "fixed": [{"action": "f"}]},
+            {"caught": [], "risks": [], "fixed": []},
+        ],
+    })
+
+    assert store.dashboard_summary() == {
+        "totalBattles": 1,
+        "completedBattles": 1,
+        "failedBattles": 0,
+        "highDifficultyBattles": 1,
+        "sampleCount": 2,
+        "ruleHitCount": 1,
+        "riskCount": 1,
+        "recommendationCount": 1,
+        "simulationSampleCount": 1,
+        "acpCallBattles": 1,
+    }
+
+
+def test_dashboard_summary_uses_saved_battle_data(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "dashboard-route.sqlite3"))
+    store.save({
+        "id": "battle-dashboard-route",
+        "difficulty": "high",
+        "topic": "后台摘要接口测试",
+        "status": "completed",
+        "createdAt": "2026-10-07T00:00:00+00:00",
+        "attackerOut": {"agentSource": "acp", "samples": [{"simulation": True}]},
+        "defenderOut": [{"caught": [{"ruleId": "LAB-1"}], "risks": [], "fixed": []}],
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+
+    assert client.get("/dashboard/summary").json() == {
+        "totalBattles": 1,
+        "completedBattles": 1,
+        "failedBattles": 0,
+        "highDifficultyBattles": 1,
+        "sampleCount": 1,
+        "ruleHitCount": 1,
+        "riskCount": 0,
+        "recommendationCount": 0,
+        "simulationSampleCount": 1,
+        "acpCallBattles": 1,
+        "ruleLibraryCaseCount": 3,
+        "owaspLlmRuleCount": 10,
+    }
+
+
+def test_dashboard_summary_exposes_distinct_real_counts_in_openapi(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "dashboard-distinct-counts.sqlite3"))
+    store.save({
+        "id": "battle-distinct-counts",
+        "difficulty": "high",
+        "topic": "统计口径测试",
+        "status": "completed",
+        "createdAt": "2026-10-07T00:00:00+00:00",
+        "attackerOut": {"samples": [{}, {}, {}]},
+        "defenderOut": [
+            {"caught": [{"ruleId": "LAB-1"}], "risks": [{"reason": "r1"}, {"reason": "r2"}], "fixed": []},
+            {"caught": [], "risks": [], "fixed": []},
+            {"caught": [], "risks": [], "fixed": []},
+        ],
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+
+    response = client.get("/dashboard/summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sampleCount"] == 3
+    assert body["ruleHitCount"] == 1
+    assert body["riskCount"] == 2
+    assert len({body["sampleCount"], body["ruleHitCount"], body["riskCount"]}) == 3
+    assert "/dashboard/summary" in client.get("/openapi.json").json()["paths"]
 
 
 def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(tmp_path, monkeypatch) -> None:
@@ -214,6 +421,7 @@ def test_read_routes_can_be_protected_together(monkeypatch) -> None:
         f"/battles/{battle_id}/replay",
         f"/reports/{battle_id}",
         "/leaderboard",
+        "/dashboard/summary",
     ):
         assert client.get(path).status_code == 401
         assert client.get(path, headers={"X-API-Key": "read-secret"}).status_code == 200
@@ -265,6 +473,50 @@ def test_defend_returns_contract_fields() -> None:
     assert response.status_code == 200
     assert set(response.json()) == {"caught", "risks", "fixed"}
     assert response.json()["caught"][0]["type"] == "violation"
+
+
+def test_defender_requires_content_evidence_not_declared_type() -> None:
+    unsupported = defend(DefendRequest(sample={"type": "vuln", "content": "ordinary safe text"}))
+    assert unsupported["caught"] == []
+    assert unsupported["risks"] == []
+    assert unsupported["fixed"] == []
+    assert "真实目标未验证" in unsupported["verificationStatus"]
+
+    sample = attack(AttackRequest(difficulty="high", topic="SQL 注入"))["samples"][2]
+    result = defend(DefendRequest(sample=sample))
+    finding = result["caught"][0]
+    assert finding["ruleId"] == "LAB-SQLI-001"
+    assert finding["sourceField"] == "sample.content"
+    assert "customer_id" in finding["matchedText"]
+    assert "未验证目标系统" in result["risks"][0]["basis"]
+    assert "未修改目标系统" in result["fixed"][0]["status"]
+
+
+def test_each_sample_rule_has_actionable_remediation_and_acceptance_criteria() -> None:
+    samples = attack(AttackRequest(difficulty="high", topic="可执行建议"))["samples"]
+    expected = {
+        "LAB-TENANT-001": ("Order.tenant_id", "跨租户订单返回统一的 404 或 403"),
+        "LAB-PROMPT-001": ("ticket.tenant_id", "有权的正常请求仍成功"),
+        "LAB-SQLI-001": ("Order.customer_id == customer_id", "不改变查询范围"),
+    }
+
+    findings = {}
+    for sample in samples:
+        result = defend(DefendRequest(sample=sample))
+        finding = result["caught"][0]
+        recommendation = result["fixed"][0]
+        findings[finding["ruleId"]] = recommendation
+        assert recommendation["status"] == "建议验证；未修改目标系统"
+        assert recommendation["example"]["code"]
+        assert len(recommendation["verificationSteps"]) >= 2
+        assert recommendation["passCriteria"]
+        assert recommendation["failCriteria"]
+
+    assert set(findings) == set(expected)
+    for rule_id, (code_marker, pass_marker) in expected.items():
+        recommendation = findings[rule_id]
+        assert code_marker in recommendation["example"]["code"]
+        assert pass_marker in recommendation["passCriteria"]
 
 
 def test_aip_rpc_start_returns_task_result() -> None:
@@ -334,6 +586,9 @@ def test_cors_preflight_allows_api_key_header() -> None:
     assert response.status_code == 200
     assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
     assert "X-API-Key" in response.headers["Access-Control-Allow-Headers"]
+
+    page = client.get("/battles?limit=1", headers={"Origin": "http://localhost:5173"})
+    assert "X-Total-Count" in page.headers["Access-Control-Expose-Headers"]
 
 
 def test_cors_preflight_allows_quick_tunnel_frontend() -> None:

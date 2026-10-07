@@ -1,5 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$EnvLoader = Join-Path $ProjectRoot 'scripts\load-env.ps1'
+if (Test-Path -LiteralPath $EnvLoader) { & $EnvLoader -ProjectRoot $ProjectRoot }
 $Python = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $Python)) {
     $Python = Join-Path (Split-Path -Parent $ProjectRoot) '.venv\Scripts\python.exe'
@@ -9,6 +11,15 @@ $Port = 8787
 if (-not (Test-Path -LiteralPath $Python)) {
     throw 'Virtual environment not found. Run uv sync first.'
 }
+
+if ([string]::IsNullOrWhiteSpace($env:AGENT_ATTACKER_RPC_URL)) {
+    $env:AGENT_ATTACKER_RPC_URL = 'http://127.0.0.1:8788/rpc'
+}
+if ([string]::IsNullOrWhiteSpace($env:AGENT_DEFENDER_RPC_URL)) {
+    $env:AGENT_DEFENDER_RPC_URL = 'http://127.0.0.1:8789/rpc'
+}
+& (Join-Path $ProjectRoot 'stop-agents.ps1')
+& (Join-Path $ProjectRoot 'start-agents.ps1')
 
 $oldProcesses = Get-CimInstance Win32_Process | Where-Object {
     ($_.CommandLine -like '*agent_attack_lab.service:app*') -and
@@ -31,4 +42,4 @@ Start-Process -FilePath $Python -ArgumentList @(
 ) -WorkingDirectory $ProjectRoot -WindowStyle Hidden `
     -RedirectStandardOutput $StandardOutput -RedirectStandardError $StandardError
 
-Write-Host "Service started at http://127.0.0.1:$Port"
+Write-Host "Service started at http://127.0.0.1:$Port (AIP agents wired)"

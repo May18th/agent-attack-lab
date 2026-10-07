@@ -4,12 +4,35 @@
 
 > 更新时间：2026-10-07。完成后请在 GitHub Issue 或提交说明中回填结果。
 
-### 当前阻塞（后端负责人处理）
+### Dashboard 修复状态
 
-本机 FastAPI、前端工程和自动化测试已通过。覆盖 `*.kcwx.online/*` 的旧 Worker 路由已删除，当前 `api.kcwx.online` 可能在 Tunnel 重载前短暂返回 503；后端负责人需在后端电脑以管理员身份重启 Cloudflared 服务，再进行公网验收。前端队友不要修改 DNS，也不需要登录后端 Cloudflare 账号。
+- [x] 统计摘要读取后端独立聚合的规则库用例、已保存样本、规则命中、风险记录和 ACP 调用场次数；口径说明明确。当前真实历史数据中后三项碰巧均为 131，未做人为改数。
+- [x] `?topic=...&difficulty=...` 打开时预填表单，无参数时保留默认主题与难度。
+- [x] 历史记录按服务端 `limit/offset` 分页，搜索使用后端 `q` 和筛选总数响应头 `X-Total-Count`。
+- [x] 选择历史战局后 URL 写入 `?battle_id=...`，刷新后恢复该战局。
+- [x] 统计用例库规模与历史保存样本数分开说明；ACP 调用场次解释为成功调用独立 Agent 的战局数，不代表真实目标验证。
+
+本轮本地验证：后端 40 项、前端 15 项测试通过；前端 `npm run build`、`npm run lint` 通过；桌面和 390px 手机视口截图通过。尚未替代队友在公网后端上的 low/mid/high 远程联调回执。
+
+### 新增同步：`agentSource` 来源枚举
+
+后端战局响应的 `attackerOut.agentSource` / `defenderOut.agentSource` 扩展为三种值。若 5173 Vite 前端消费或展示该字段，请按以下映射兼容；不要把未知值默认显示为「本地规则」：
+
+| 值 | 建议中文显示 | 含义 |
+|---|---|---|
+| `acp-llm` | 独立 Agent（模型生成） | 独立 ACP Agent 调用模型成功 |
+| `acp-rule-fallback` | 独立 Agent（规则兜底） | ACP Agent 可调用，但模型失败或输出无效，Agent 内部回退规则 |
+| `local-rule` | 本地规则引擎 | 未配置/未调用独立 ACP Agent，由主服务本地规则处理 |
+
+若字段缺失或收到未知值，请显示「来源未知」并保留原值用于排查，不要冒称模型生成。此项只要求前端消费字段时更新类型和标签映射；不要求修改页面流程或后端代码。
+
+### 公网状态（后端负责人处理）
+
+2026-10-07 本轮检查中，`https://api.kcwx.online/health` 曾返回 Cloudflare 502/530，随后恢复 HTTP 200；本机后台始终返回 200。公网依赖后端主机和 Cloudflare Tunnel，存在短时波动；每次远程联调前请重查 `/health`，失败时先暂停远程验收。队友如需先开发，可把 `VITE_AGENT_API` 指向自己的本地后端；不要修改 DNS，也不需要登录后端 Cloudflare 账号。复测失败时记录状态码、时间和响应头并回报后端负责人。
 
 | 顺序 | 待办 | 操作 | 完成标准 |
 |---|---|---|---|
+| 0 | 兼容 `agentSource` 三态 | 若页面展示来源，更新 TS 类型、标签映射及未知值处理 | 三种来源均显示正确中文；未知值显示「来源未知」；未冒称 LLM |
 | 1 | 拉取最新代码 | `git pull origin main` | 已包含最新 `vite.config.ts` 和联调文档 |
 | 2 | 确认目录 | 进入 `frontend/frontend-ui` | 当前目录存在 `package.json` |
 | 3 | 配置后端地址 | `.env.local` 写入 `VITE_AGENT_API=https://api.kcwx.online` | 不使用旧 Quick Tunnel 后端地址 |
