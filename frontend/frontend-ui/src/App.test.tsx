@@ -35,10 +35,11 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
+    expect(screen.getByText('缺陷（Defect） · 低（Low）')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /已有战局/ }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles/battle-test'), expect.anything()))
     fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始攻防' }))
+    fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('请输入测试主题')
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/battles'), expect.objectContaining({ method: 'POST' }))
@@ -49,7 +50,7 @@ describe('App', () => {
     render(<App />)
     await screen.findByRole('heading', { name: '已有战局', level: 2 })
     fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '新战局' } })
-    fireEvent.click(screen.getByRole('button', { name: '开始攻防' }))
+    fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
 
     await waitFor(() => expect(screen.getByText('战局创建完成')).toBeInTheDocument())
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles'), expect.objectContaining({ method: 'POST' }))

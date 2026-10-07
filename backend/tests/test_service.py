@@ -33,6 +33,9 @@ def test_dashboard_is_chinese_html() -> None:
     assert "innerHTML = '<div class=\\\"battle-head\\\"" in response.text
     assert "function renderBattle(battle)" in response.text
     assert "${samples.length}" in response.text
+    assert "低（Low）" in response.text
+    assert "缺陷（Defect）" in response.text
+    assert "发现问题（Findings）" in response.text
     assert "OpenAPI JSON" not in response.text
 
 
