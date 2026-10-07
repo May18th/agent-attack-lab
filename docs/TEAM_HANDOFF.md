@@ -18,13 +18,15 @@ AIC、CAI、ACS、mTLS 证书和平台审核由后端负责人处理，前端不
 http://127.0.0.1:8787
 ```
 
-稳定公网 API（当前可用）：
+稳定公网 API（配置地址；当前需先完成 Tunnel 服务重启）：
 
 ```text
 https://api.kcwx.online
 ```
 
 前端公网地址由队友运行 Quick Tunnel 后以终端输出为准，地址会随重启变化。前端页面地址仅用于打开队友页面；前端 API 仍使用上面的稳定后端地址。
+
+当前公网验收状态：`https://api.kcwx.online/health` 暂时返回 HTTP 503。项目 Tunnel 配置和 DNS 已确认正确，覆盖域名的旧 Worker 路由已删除；后端电脑需以管理员身份重启 Cloudflared 服务后再验收。详见 `docs/INTEGRATION_GUIDE.md`。
 
 前端本地开发优先使用本地地址；远程联调前先确认公网地址和 `/health` 可访问。公网地址依赖 Cloudflare Tunnel，服务停止后会暂时无法访问。
 

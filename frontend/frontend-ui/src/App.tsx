@@ -43,6 +43,8 @@ function App() {
   }, [loadBattleDetail])
 
   const checkHealth = useCallback(async () => {
+    // Health checks are explicit external synchronization, including retry clicks.
+    // oxlint-disable-next-line react/set-state-in-effect
     setStatus('loading')
     try {
       await api<{ status: string }>('/health')
@@ -53,6 +55,8 @@ function App() {
   }, [])
 
   useEffect(() => {
+    // Async initialization intentionally updates remote health state after mount.
+    // oxlint-disable-next-line react/set-state-in-effect
     void checkHealth()
     // Async initialization intentionally updates remote-data state after mount.
     // oxlint-disable-next-line react/set-state-in-effect
