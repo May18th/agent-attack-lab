@@ -15,10 +15,14 @@
 
 队友的 trycloudflare.com 地址属于临时前端地址，会随 Quick Tunnel 重启而变化。页面地址和 API 地址不能混用：页面可以使用队友的临时地址，前端请求必须指向 https://api.kcwx.online。
 
+### 公网验收注意
+
+本机 FastAPI 的 `/health` 和 `POST /battles` 已验证正常。若公网地址返回 `Hello world`、HTML 或其他非 JSON 内容，说明权威 DNS/Tunnel 仍指向其他服务。请先核对 Cloudflare 登录账号和 Tunnel 名称，不要让前端修改 DNS；公网返回本项目 JSON 后再进行页面验收。
+
 当前后端 DNS 路由由 Cloudflare 管理：
 
 ~~~text
-api.kcwx.online CNAME 6e5a79dd-807c-4dd5-a970-1ef94fe794dc.cfargotunnel.com
+api.kcwx.online CNAME abe90b02-7329-4488-8d1e-aa3e91725b37.cfargotunnel.com
 ~~~
 
 不要把 DNS 指向其他 Tunnel ID，也不要在阿里云注册商 DNS 中重复创建这条记录。
@@ -306,13 +310,19 @@ api.kcwx.online -> http://127.0.0.1:8787
 
 ### CORS 错误
 
-前端正式域名不在允许来源时，后端启动前设置：
+当前后端默认允许本地前端，以及 Cloudflare Quick Tunnel 的 `https://*.trycloudflare.com` 来源。前端正式域名不在允许来源时，后端启动前设置：
 
 ~~~powershell
 $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 ~~~
 
 多个来源使用英文逗号分隔，然后重启后端。临时 Quick Tunnel 地址变化时，优先让前端调用稳定后端域名并确认浏览器实际 Origin。
+
+如需关闭临时域名匹配或改成更严格的规则，可设置：
+
+~~~powershell
+$env:AGENT_CORS_ORIGIN_REGEX="^https://你的前端域名$"
+~~~
 
 ## 9. Git 协作规范
 
@@ -365,3 +375,4 @@ git push origin main
 11. 当前问题及 X-Request-ID：
 12. 需要后端配合：
 ~~~
+

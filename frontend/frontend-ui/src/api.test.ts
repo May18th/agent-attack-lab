@@ -28,5 +28,18 @@ describe('api error handling', () => {
 
     await expect(api('/health')).rejects.toMatchObject({ status: 0, message: '无法连接后端服务，请检查 API 地址和服务状态' })
   })
+
+  it('turns a successful non-JSON response into a clear error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('Hello world', {
+      status: 200,
+      headers: { 'Content-Type': 'text/plain', 'X-Request-ID': 'request-html' },
+    })))
+
+    await expect(api('/health')).rejects.toMatchObject({
+      status: 200,
+      requestId: 'request-html',
+      message: '后端返回了无效响应',
+    })
+  })
 })
 

@@ -59,9 +59,14 @@ _configured_origins = {
     for origin in os.getenv("AGENT_CORS_ORIGINS", "").split(",")
     if origin.strip()
 }
+_cors_origin_regex = os.getenv(
+    "AGENT_CORS_ORIGIN_REGEX",
+    r"^https://[a-z0-9-]+\.trycloudflare\.com$",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=sorted(_configured_origins or _default_origins),
+    allow_origin_regex=_cors_origin_regex,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
@@ -882,3 +887,4 @@ async def rpc(request: Request) -> dict[str, Any]:
             "error": {"code": -32602, "message": "Invalid params", "data": str(exc)},
         }
     return {"jsonrpc": "2.0", "id": parsed_request.id, "result": result}
+

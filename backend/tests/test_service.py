@@ -195,6 +195,19 @@ def test_cors_preflight_allows_api_key_header() -> None:
     assert "X-API-Key" in response.headers["Access-Control-Allow-Headers"]
 
 
+def test_cors_preflight_allows_quick_tunnel_frontend() -> None:
+    response = client.options(
+        "/battles",
+        headers={
+            "Origin": "https://demo-front-end.trycloudflare.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["Access-Control-Allow-Origin"] == "https://demo-front-end.trycloudflare.com"
+
+
 def test_rate_limit_returns_retry_after(monkeypatch) -> None:
     service._rate_windows.clear()
     monkeypatch.setattr(service, "_rate_limit_per_minute", 1)

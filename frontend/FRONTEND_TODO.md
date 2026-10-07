@@ -4,6 +4,10 @@
 
 > 更新时间：2026-10-07。完成后请在 GitHub Issue 或提交说明中回填结果。
 
+### 当前阻塞（后端负责人处理）
+
+本机 FastAPI 已通过本地联调，但 `https://api.kcwx.online` 当前返回 `Hello world`，不是本项目 JSON。Cloudflare 控制台截图显示的账号和 Tunnel ID 与项目记录不一致。前端队友不要修改 DNS；后端负责人需在实际权威 Cloudflare 账号确认 `api.kcwx.online` 指向 `agent-attack-lab` 后，再进行公网验收。
+
 | 顺序 | 待办 | 操作 | 完成标准 |
 |---|---|---|---|
 | 1 | 拉取最新代码 | `git pull origin main` | 已包含最新 `vite.config.ts` 和联调文档 |

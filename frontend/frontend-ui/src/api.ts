@@ -61,7 +61,15 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     throw new ApiError(response.status, errorMessage(response.status, detail), response.headers.get('X-Request-ID') ?? undefined)
   }
 
-  return response.json() as Promise<T>
+  try {
+    return await response.json() as T
+  } catch {
+    throw new ApiError(
+      response.status,
+      '后端返回了无效响应',
+      response.headers.get('X-Request-ID') ?? undefined,
+    )
+  }
 }
 
 export function errorMessage(status: number, detail?: string): string {
