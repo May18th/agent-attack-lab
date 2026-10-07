@@ -18,6 +18,9 @@ __pycache__/
 backend/acs-*.json
 backend/attack-agent-acs.json
 
+# Codex local handoff state
+codex/
+
 # Local editor and OS files
 .vscode/
 .idea/

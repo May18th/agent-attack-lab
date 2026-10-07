@@ -19,6 +19,12 @@
 
 本机 FastAPI 的 `/health` 和 `POST /battles` 已验证正常。若公网地址返回 `Hello world`、HTML 或其他非 JSON 内容，说明权威 DNS/Tunnel 仍指向其他服务。请先核对 Cloudflare 登录账号和 Tunnel 名称，不要让前端修改 DNS；公网返回本项目 JSON 后再进行页面验收。
 
+当前现场状态：已确认 `agent-attack-lab` Tunnel（ID：`abe90b02-7329-4488-8d1e-aa3e91725b37`）属于项目 Cloudflare 账号，配置为 `api.kcwx.online -> http://127.0.0.1:8787`；覆盖 `*.kcwx.online/*` 的旧 Worker 路由已删除。若删除后暂时返回 503，需要在后端电脑以管理员身份重启 Cloudflared 服务，再重新检查 `/health`。
+
+~~~powershell
+Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -Command "Restart-Service Cloudflared"'
+~~~
+
 当前后端 DNS 路由由 Cloudflare 管理：
 
 ~~~text

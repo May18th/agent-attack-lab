@@ -6,7 +6,7 @@
 
 ### 当前阻塞（后端负责人处理）
 
-本机 FastAPI 已通过本地联调，但 `https://api.kcwx.online` 当前返回 `Hello world`，不是本项目 JSON。Cloudflare 控制台截图显示的账号和 Tunnel ID 与项目记录不一致。前端队友不要修改 DNS；后端负责人需在实际权威 Cloudflare 账号确认 `api.kcwx.online` 指向 `agent-attack-lab` 后，再进行公网验收。
+本机 FastAPI、前端工程和自动化测试已通过。覆盖 `*.kcwx.online/*` 的旧 Worker 路由已删除，当前 `api.kcwx.online` 可能在 Tunnel 重载前短暂返回 503；后端负责人需在后端电脑以管理员身份重启 Cloudflared 服务，再进行公网验收。前端队友不要修改 DNS，也不需要登录后端 Cloudflare 账号。
 
 | 顺序 | 待办 | 操作 | 完成标准 |
 |---|---|---|---|
