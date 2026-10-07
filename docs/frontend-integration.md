@@ -8,10 +8,10 @@
 
 本地开发：`http://127.0.0.1:8787`
 
-稳定后端公网：`https://api.kcwx.online`（当前 `/health` 已验证返回 200）。
-临时前端公网：由队友运行 Quick Tunnel 后以终端输出为准，地址会随重启变化。
+计划后端公网：`https://api.yuanyiagentzhandui.cn`（尚未完成 Zone、DNS、Tunnel、CORS 和浏览器鉴权验收，不可当作可用地址）。
+前端公网地址由队友选择托管并完成域名 HTTPS 后提供。
 
-后端稳定地址依赖命名 Cloudflare Tunnel 进程；前端临时地址依赖队友的 Quick Tunnel。前端远程联调统一使用 `https://api.kcwx.online` 作为 API 地址。
+后端公网地址依赖队友域名下的 Cloudflare Zone 和 Tunnel。`kcwx.online` 已从本项目退役，远程联调需等新 API 地址验收通过后再配置。
 
 ## REST 接口
 

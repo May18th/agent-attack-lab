@@ -43,3 +43,11 @@ Start-Process -FilePath $Python -ArgumentList @(
     -RedirectStandardOutput $StandardOutput -RedirectStandardError $StandardError
 
 Write-Host "Service started at http://127.0.0.1:$Port (AIP agents wired)"
+
+# 2026-10-08: 公网 Agent 隧道（attacker/defender.kechuang2026.cn）随主服务一并拉起。
+$AgentsTunnelScript = Join-Path $ProjectRoot 'start-agents-tunnel.ps1'
+if (Test-Path -LiteralPath $AgentsTunnelScript) {
+    & $AgentsTunnelScript
+} else {
+    Write-Host "start-agents-tunnel.ps1 not found; skipping agents tunnel."
+}

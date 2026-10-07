@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import json
 import inspect
+import logging
+import os
 import uuid
 from collections.abc import Callable
 from typing import Any
+
+from fastapi import FastAPI, HTTPException, Request
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 from acps_sdk.aip import (
     Product,
@@ -94,6 +100,9 @@ def create_agent_app(
 
     @app.post("/rpc")
     async def rpc(request: Request) -> dict[str, Any]:
+        api_key = os.getenv("AGENT_RPC_API_KEY", "").strip()
+        if api_key and request.headers.get("x-api-key") != api_key:
+            raise HTTPException(status_code=401, detail="invalid or missing X-API-Key")
         response = await handle_rpc_request(request, handlers)
         return response.model_dump(by_alias=True, exclude_none=True)
 

@@ -1,73 +1,51 @@
-# 前端交接后端联调清单
+# 前后端联调交接
 
-更新时间：2026-10-07
+更新时间：2026-10-08
 
-## 1. 当前结论
+## 当前状态
 
-前端本地功能和本地前后端联调已完成。当前唯一阻塞项是公网 Cloudflare Tunnel 尚未恢复，`https://api.kcwx.online` 仍返回 HTTP 503。
+- 队友截图回执：前端本地测试、lint、build 及同机 5175 → 8787 联调通过；low/mid/high 创建战局成功。
+- 公网尚未验收。队友管理的新域名为 `yuanyiagentzhandui.cn`，需完成 Cloudflare Zone、DNS、前端 HTTPS、后端 Tunnel、CORS 和鉴权。
+- 计划 API：`https://api.yuanyiagentzhandui.cn`。验收完成前不可配置为已用地址。
+- `kcwx.online` 是用户原有域名，已从本项目退役，不得作为 API、备用地址或 Tunnel 配置。
 
-## 2. 需要后端处理
+## 后端浏览器会话接口
 
-### 2.1 重启命名 Tunnel
+后端提供单密码登录会话，避免把 `AGENT_API_KEY` 编译到 Vite：
 
-请在后端电脑以管理员身份执行：
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `POST` | `/auth/session` | JSON `{"password":"..."}` 登录，服务端设置 HttpOnly Cookie |
+| `GET` | `/auth/session` | 返回 `enabled` 与 `authenticated` |
+| `DELETE` | `/auth/session` | 退出并撤销当前会话 |
 
-```powershell
-Restart-Service Cloudflared
-```
+前端需给登录请求和后续 API 请求设置 `credentials: "include"`，SSE `EventSource` 设置 `withCredentials: true`。前端不能接收或保存 `AGENT_API_KEY`。`/agent/*`、`/rpc`、`/metrics` 不接受浏览器会话，仍由服务端 API Key 保护。
 
-确认命名 Tunnel `agent-attack-lab` 仍将以下域名转发到本机后端：
+会话默认 8 小时，最长 24 小时；服务重启会使会话失效。当前会话存于单进程内存，不适用于多 worker/多实例部署。登录限流为每客户端 IP 5 次/5 分钟；会话写请求要求 `Origin` 在后端允许来源中。
 
-```text
-api.kcwx.online -> http://127.0.0.1:8787
-```
+## 后端部署配置
 
-不要重复创建 DNS 记录，也不要修改前端的 DNS 配置。
-
-### 2.2 公网接口验收
-
-Tunnel 恢复后，请依次验证：
-
-- `GET https://api.kcwx.online/health` 返回 HTTP 200；
-- `POST /battles` 使用 `low`、`mid`、`high` 分别创建战局；
-- 返回内容包含 `attackerOut`、`defenderOut` 和 `status`；
-- 记录失败请求的 `X-Request-ID`，用于后端日志定位。
-
-## 3. 前端联调配置
-
-前端使用以下 API 地址：
+后端负责人在服务器本地 `.env` 设置，不要把实际密码发到聊天或提交 GitHub：
 
 ```env
-VITE_AGENT_API=https://api.kcwx.online
+AGENT_API_KEY=<服务端生成的高强度随机密钥>
+AGENT_BROWSER_PASSWORD=<浏览器登录密码>
+AGENT_PROTECT_READS=1
+AGENT_BROWSER_COOKIE_SECURE=1
+AGENT_BROWSER_COOKIE_SAMESITE=lax
+AGENT_CORS_ORIGINS=https://yuanyiagentzhandui.cn
 ```
 
-前端不会使用 `api.orangecc.cc`，也不会修改 DNS、Tunnel、数据库、证书或后端接口字段。
+Cookie 使用 HTTPS。若前端最终使用 `www` 或其他 Origin，将确切 Origin 逗号分隔加入 `AGENT_CORS_ORIGINS`，不要放宽为任意来源。启用浏览器登录时，服务端要求同时配置 `AGENT_API_KEY` 并关闭 Quick Tunnel 通配 CORS。后端重启后测试登录 Cookie、浏览器 API 和读保护。
 
-## 4. 前端已完成
+本地 HTTP 联调若启用登录，前端和 API 使用同一主机名，例如 `localhost:5173` 与 `localhost:8787`，并仅在本机将 `AGENT_BROWSER_COOKIE_SECURE=0`。不要混用 `localhost` 和 `127.0.0.1`。
 
-- FE-01 至 FE-09：工程、环境变量、API 客户端、表单、主流程、结果展示和异常处理；
-- FE-11 至 FE-16：历史列表、详情恢复、健康状态、安全文本展示、响应式布局和测试；
-- 加载状态、历史列表加载状态和健康检查失败后的点击重试；
-- 本地前端测试：`8 passed`；
-- 本地前端 `npm run build`：通过；
-- 本地后端 `GET /health`：HTTP 200；
-- 本地 `POST /battles`：HTTP 201，攻击样本和防守结果均正常返回。
+## 公网验收
 
-## 5. 待公网恢复后复核
+队友确认域名托管完成并开放所需 Zone 权限后，后端负责人配置 `api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787`。验收顺序：
 
-- FE-10 公网首轮联调；
-- 页面创建 `low`、`mid`、`high` 三种难度战局；
-- 页面显示 `attackerOut.samples`；
-- 页面显示 `defenderOut.caught`、`risks`、`fixed`；
-- 历史列表和战局详情恢复；
-- 空主题、超长主题、重复点击、网络失败和 5xx 提示；
-- 记录最终公网地址、提交版本和 `X-Request-ID`。
-
-## 6. 暂不纳入本轮联调
-
-以下内容属于 P2 后续扩展，不阻塞当前版本：
-
-- WebSocket；
-- arbiter；
-- score、round、correlationId；
-- 实时事件时间线。
+1. HTTPS 页面与 `GET /health` 均可访问。
+2. 未登录访问战局 REST 读写接口为 `401`；正确登录后 Cookie 访问成功。
+3. 非允许 Origin 的会话写请求被拒绝；浏览器预检返回精确的 CORS Origin 和 `Access-Control-Allow-Credentials: true`。
+4. `low`、`mid`、`high` 战局创建、历史列表、详情和 SSE 均通过。
+5. `/metrics`、`/rpc` 与 `/agent/*` 未被浏览器会话开放；记录提交版本及失败请求 `X-Request-ID`。

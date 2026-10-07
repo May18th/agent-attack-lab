@@ -489,44 +489,6 @@ def defend(payload: DefendRequest) -> dict[str, Any]:
             "failCriteria": "出现未授权数据披露、工具执行、资源消耗或不安全输出处理。",
         })
 
-    existing_categories = {item.get("owaspCategory") for item in caught}
-    for finding in classify_owasp_llm_text(decoded):
-        if finding["id"] in existing_categories:
-            continue
-        rule_id = f"OWASP-{finding['id']}-LOCAL"
-        caught.append({
-            "type": "violation",
-            "ruleId": rule_id,
-            "owaspCategory": finding["id"],
-            "owaspTitle": finding["title"],
-            "reason": f"样本文本命中 {finding['id']} {finding['title']} 的本地规则线索；这不构成目标漏洞结论。",
-            "sourceField": "sample.content",
-            "matchMethod": "独立 OWASP 分类规则的确定性文本特征",
-            "evidence": "仅依据提交文本中的匹配片段进行分类，未调用目标模型、工具或数据源。",
-            "matchedText": [finding["evidence"]],
-        })
-        risks.append({
-            "level": "medium",
-            "reason": f"如果真实系统存在 {finding['title']} 对应的实现缺陷，可能产生安全影响；尚未验证。",
-            "basis": f"样本文本命中 {finding['id']} 线索；未验证目标系统",
-        })
-        fixed.append({
-            "action": f"按 OWASP {finding['id']} {finding['title']} 检查实际模型、工具和数据访问边界。",
-            "status": "建议验证；未修改目标系统",
-            "example": {
-                "title": "验证边界建议",
-                "language": "Text",
-                "code": "在隔离、获授权的测试环境中验证；由服务端执行权限和资源限制，不以模型文本判断授权。",
-            },
-            "verificationSteps": [
-                "确认测试环境、输入样本和数据均已获授权且不连接生产资源。",
-                f"按 {finding['id']} 类别检查实际处理链路，并记录可复现的输入、输出和服务端证据。",
-                "验证正常请求仍可完成，且未授权行为被服务端拒绝。",
-            ],
-            "passCriteria": "隔离测试中未观察到该类别对应的未授权行为，并保留可复核证据。",
-            "failCriteria": "出现未授权数据披露、工具执行、资源消耗或不安全输出处理。",
-        })
-
     return {
         "caught": caught,
         "risks": risks,

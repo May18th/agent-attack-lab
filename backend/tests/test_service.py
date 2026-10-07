@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict, deque
 import asyncio
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.storage import BattleStore
@@ -63,6 +64,9 @@ def test_dashboard_is_chinese_html() -> None:
     assert "new URLSearchParams(window.location.search)" in response.text
     assert "acp-llm" in response.text
     assert "acp-rule-fallback" in response.text
+    assert '"local-rule": "主服务 · 本地规则"' in response.text
+    assert '"未识别来源 · " + value' in response.text
+    assert 'escapeHtml(isSimulation ? "本地模拟" : attackerSource)' in response.text
     assert "全部已保存战局" in response.text
     assert "不含准确率推断" in response.text
     assert "独立 ACP Agent" in response.text
@@ -81,6 +85,24 @@ def test_dashboard_is_chinese_html() -> None:
     assert "Battle console" not in response.text
     assert "Checking service" not in response.text
     assert "OpenAPI JSON" not in response.text
+
+
+def test_dashboard_prefills_query_params_and_escapes_topic() -> None:
+    for difficulty in ("low", "mid", "high"):
+        response = client.get(
+            "/dashboard",
+            params={"topic": '<script>alert("xss")</script>', "difficulty": difficulty},
+        )
+        assert response.status_code == 200
+        assert 'value="&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;"' in response.text
+        for option in ("low", "mid", "high"):
+            checked = f'id="{option}" name="difficulty" value="{option}" type="radio" checked'
+            assert (checked in response.text) is (option == difficulty)
+        assert "<script>alert(\"xss\")</script>" not in response.text
+
+    default_response = client.get("/dashboard")
+    assert 'value="通用安全测试"' in default_response.text
+    assert 'id="mid" name="difficulty" value="mid" type="radio" checked' in default_response.text
 
 
 def test_attack_by_difficulty() -> None:
@@ -427,6 +449,110 @@ def test_read_routes_can_be_protected_together(monkeypatch) -> None:
         assert client.get(path, headers={"X-API-Key": "read-secret"}).status_code == 200
 
 
+def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(service, "_api_key", "server-only-secret")
+    browser_password = "一段足够长的登录密码"
+    monkeypatch.setattr(service, "_browser_password", browser_password)
+    monkeypatch.setattr(service, "_browser_cookie_secure", False)
+    monkeypatch.setattr(service, "_protect_read_routes", False)
+    monkeypatch.setattr(service, "_browser_sessions", {})
+    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    browser = TestClient(service.app)
+    origin = "http://localhost:5173"
+
+    denied = browser.post(
+        "/auth/session",
+        json={"password": "wrong"},
+        headers={"Origin": origin},
+    )
+    assert denied.status_code == 401
+    assert browser.post("/battles", json={"topic": "未登录"}).status_code == 401
+
+    login = browser.post(
+        "/auth/session",
+        json={"password": browser_password},
+        headers={"Origin": origin},
+    )
+    assert login.status_code == 200
+    assert "httponly" in login.headers["set-cookie"].lower()
+    assert "server-only-secret" not in login.headers["set-cookie"]
+    assert browser.get("/auth/session").json() == {"enabled": True, "authenticated": True}
+
+    created = browser.post(
+        "/battles",
+        json={"difficulty": "low", "topic": "浏览器会话测试"},
+        headers={"Origin": origin},
+    )
+    assert created.status_code == 201
+    assert browser.get("/battles", headers={"Origin": origin}).status_code == 200
+
+    csrf = browser.post(
+        "/battles",
+        json={"topic": "跨站请求"},
+        headers={"Origin": "https://attacker.example"},
+    )
+    assert csrf.status_code == 403
+    assert browser.post(
+        "/agent/attack",
+        json={"difficulty": "low", "topic": "内部路由"},
+        headers={"Origin": origin},
+    ).status_code == 401
+
+    logout = browser.delete("/auth/session", headers={"Origin": origin})
+    assert logout.status_code == 200
+    assert browser.get("/battles", headers={"Origin": origin}).status_code == 401
+
+
+def test_browser_login_requires_configured_password_and_trusted_origin(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_browser_password", "browser-secret")
+    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    untrusted = client.post(
+        "/auth/session",
+        json={"password": "browser-secret"},
+        headers={"Origin": "https://attacker.example"},
+    )
+    assert untrusted.status_code == 403
+    assert not service._browser_origin_allowed("https://demo-front-end.trycloudflare.com")
+
+    monkeypatch.setattr(service, "_browser_password", "")
+    disabled = client.post("/auth/session", json={"password": "anything"})
+    assert disabled.status_code == 503
+
+
+def test_browser_login_rate_limit_returns_retry_after(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_browser_password", "browser-secret")
+    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    browser = TestClient(service.app)
+    for _ in range(5):
+        response = browser.post("/auth/session", json={"password": "wrong"})
+        assert response.status_code == 401
+    limited = browser.post("/auth/session", json={"password": "wrong"})
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) > 0
+
+
+def test_browser_login_limit_uses_cloudflare_ip_only_from_loopback() -> None:
+    from starlette.requests import Request
+
+    def make_request(peer: str) -> Request:
+        return Request({
+            "type": "http",
+            "method": "POST",
+            "path": "/auth/session",
+            "headers": [(b"cf-connecting-ip", b"203.0.113.9")],
+            "client": (peer, 12345),
+            "server": ("127.0.0.1", 8787),
+            "scheme": "http",
+            "query_string": b"",
+            "http_version": "1.1",
+        })
+
+    assert service._browser_client_ip(make_request("127.0.0.1")) == "203.0.113.9"
+    assert service._browser_client_ip(make_request("198.51.100.4")) == "198.51.100.4"
+
+
 def test_follow_sse_stream_emits_complete_event_history() -> None:
     response = client.post("/battles", json={"difficulty": "low", "topic": "SSE 测试"})
     battle_id = response.json()["id"]
@@ -585,10 +711,21 @@ def test_cors_preflight_allows_api_key_header() -> None:
     )
     assert response.status_code == 200
     assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+    assert response.headers["Access-Control-Allow-Credentials"] == "true"
     assert "X-API-Key" in response.headers["Access-Control-Allow-Headers"]
 
     page = client.get("/battles?limit=1", headers={"Origin": "http://localhost:5173"})
     assert "X-Total-Count" in page.headers["Access-Control-Expose-Headers"]
+
+    logout = client.options(
+        "/auth/session",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "DELETE",
+        },
+    )
+    assert logout.status_code == 200
+    assert "DELETE" in logout.headers["Access-Control-Allow-Methods"]
 
 
 def test_cors_preflight_allows_quick_tunnel_frontend() -> None:

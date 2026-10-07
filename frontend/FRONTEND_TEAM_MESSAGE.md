@@ -12,11 +12,13 @@
 http://127.0.0.1:8787
 ```
 
-稳定公网地址（当前可用）：
+计划公网地址（尚未验收，不要提前配置）：
 
 ```text
-https://api.kcwx.online
+https://api.yuanyiagentzhandui.cn
 ```
+
+`kcwx.online` 已从本项目退役。等后端负责人确认队友域名下 API 可用后，再配置远程联调地址。
 
 ## 当前可用接口
 
@@ -47,10 +49,10 @@ POST /rpc
 VITE_AGENT_API=http://127.0.0.1:8787
 ```
 
-远程联调时使用：
+远程联调时，待后端负责人确认新域名 API 已通过验收后再使用：
 
 ```env
-VITE_AGENT_API=https://api.kcwx.online
+VITE_AGENT_API=https://api.yuanyiagentzhandui.cn
 ```
 
 当前前端公网页面由队友 Quick Tunnel 的终端输出决定，地址会随重启变化。

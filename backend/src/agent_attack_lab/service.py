@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
+import ipaddress
 import json
 import logging
 import os
-import asyncio
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 from datetime import datetime, timezone
+from html import escape as escape_html
 from pathlib import Path
 from threading import Lock
 from typing import Any, Literal
@@ -68,16 +73,22 @@ _configured_origins = {
     for origin in os.getenv("AGENT_CORS_ORIGINS", "").split(",")
     if origin.strip()
 }
+_cors_origins = _configured_origins or _default_origins
 _cors_origin_regex = os.getenv(
     "AGENT_CORS_ORIGIN_REGEX",
     r"^https://[a-z0-9-]+\.trycloudflare\.com$",
 )
+_browser_auth_configured = bool(os.getenv("AGENT_BROWSER_PASSWORD", ""))
+if _browser_auth_configured and "*" in _cors_origins:
+    raise RuntimeError("启用浏览器会话时 AGENT_CORS_ORIGINS 必须使用精确来源")
+if _browser_auth_configured and not os.getenv("AGENT_API_KEY", "").strip():
+    raise RuntimeError("启用浏览器会话时必须同时配置服务端 AGENT_API_KEY")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=sorted(_configured_origins or _default_origins),
-    allow_origin_regex=_cors_origin_regex,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_origins=sorted(_cors_origins),
+    allow_origin_regex=None if _browser_auth_configured else _cors_origin_regex,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
     expose_headers=["X-Total-Count"],
 )
@@ -97,6 +108,10 @@ class JsonRpcRequest(BaseModel):
 class BattleRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
+
+
+class BrowserLoginRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=256)
 
 
 class BattleRecord(BaseModel):
@@ -139,6 +154,25 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
     except ValueError:
         return default
 
+
+_browser_password = os.getenv("AGENT_BROWSER_PASSWORD", "")
+_browser_session_ttl_seconds = min(
+    max(_env_int("AGENT_BROWSER_SESSION_TTL_SECONDS", 28800, minimum=300), 300),
+    86400,
+)
+_browser_cookie_name = "agent_browser_session"
+_browser_cookie_secure = os.getenv("AGENT_BROWSER_COOKIE_SECURE", "1").strip().lower() not in {
+    "0", "false", "no"
+}
+_browser_cookie_samesite = os.getenv("AGENT_BROWSER_COOKIE_SAMESITE", "lax").strip().lower()
+if _browser_cookie_samesite not in {"lax", "strict", "none"}:
+    _browser_cookie_samesite = "lax"
+if _browser_cookie_samesite == "none" and not _browser_cookie_secure:
+    raise RuntimeError("SameSite=None 浏览器会话 Cookie 必须启用 Secure")
+_browser_sessions: dict[str, float] = {}
+_browser_sessions_lock = Lock()
+_browser_login_attempts: dict[str, deque[float]] = defaultdict(deque)
+_browser_login_lock = Lock()
 
 _rate_limit_per_minute = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 60)
 _event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=1024)
@@ -196,8 +230,108 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
 
 def _check_api_key(request: Request) -> None:
     """Enable a simple deployment-time API key without affecting local development."""
-    if _api_key and request.headers.get("x-api-key") != _api_key:
+    supplied = request.headers.get("x-api-key", "")
+    if _api_key and not hmac.compare_digest(supplied.encode("utf-8"), _api_key.encode("utf-8")):
         raise HTTPException(status_code=401, detail="缺少或无效的 API 密钥")
+    if not _api_key and _browser_password:
+        raise HTTPException(status_code=401, detail="服务端 API 密钥未配置")
+
+
+def _browser_origin_allowed(origin: str) -> bool:
+    return origin in _cors_origins
+
+
+def _browser_session_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _has_browser_session(request: Request) -> bool:
+    token = request.cookies.get(_browser_cookie_name, "")
+    if not token:
+        return False
+    digest = _browser_session_digest(token)
+    now = time.monotonic()
+    with _browser_sessions_lock:
+        expires_at = _browser_sessions.get(digest)
+        if expires_at is None:
+            return False
+        if expires_at <= now:
+            _browser_sessions.pop(digest, None)
+            return False
+        return True
+
+
+def _issue_browser_session() -> str:
+    token = secrets.token_urlsafe(32)
+    now = time.monotonic()
+    with _browser_sessions_lock:
+        expired = [key for key, deadline in _browser_sessions.items() if deadline <= now]
+        for key in expired:
+            _browser_sessions.pop(key, None)
+        if len(_browser_sessions) >= 10000:
+            raise HTTPException(status_code=503, detail="浏览器会话容量已满")
+        _browser_sessions[_browser_session_digest(token)] = now + _browser_session_ttl_seconds
+    return token
+
+
+def _revoke_browser_session(request: Request) -> None:
+    token = request.cookies.get(_browser_cookie_name, "")
+    if token:
+        with _browser_sessions_lock:
+            _browser_sessions.pop(_browser_session_digest(token), None)
+
+
+def _check_browser_session_origin(request: Request) -> None:
+    origin = request.headers.get("origin", "")
+    if not origin or not _browser_origin_allowed(origin):
+        raise HTTPException(status_code=403, detail="浏览器来源未获允许")
+
+
+def _check_browser_or_api_auth(request: Request) -> None:
+    supplied_api_key = request.headers.get("x-api-key", "")
+    if _api_key and hmac.compare_digest(
+        supplied_api_key.encode("utf-8"), _api_key.encode("utf-8")
+    ):
+        return
+    if _browser_password and _has_browser_session(request):
+        _check_browser_session_origin(request)
+        return
+    if not _api_key and not _browser_password:
+        return
+    raise HTTPException(status_code=401, detail="需要有效的 API 密钥或浏览器登录会话")
+
+
+def _browser_client_ip(request: Request) -> str:
+    peer_host = request.client.host if request.client else "unknown"
+    try:
+        peer_is_loopback = ipaddress.ip_address(peer_host).is_loopback
+    except ValueError:
+        peer_is_loopback = False
+    forwarded_ip = request.headers.get("cf-connecting-ip", "").strip()
+    if peer_is_loopback and forwarded_ip:
+        try:
+            return str(ipaddress.ip_address(forwarded_ip))
+        except ValueError:
+            pass
+    return peer_host
+
+
+def _browser_login_rate_limit(request: Request) -> None:
+    client_key = _browser_client_ip(request)
+    now = time.monotonic()
+    cutoff = now - 300
+    with _browser_login_lock:
+        attempts = _browser_login_attempts[client_key]
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if len(attempts) >= 5:
+            retry_after = max(1, int(300 - (now - attempts[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="登录尝试过多，请稍后重试",
+                headers={"Retry-After": str(retry_after)},
+            )
+        attempts.append(now)
 
 
 def _api_key_dependency(request: Request) -> None:
@@ -205,8 +339,8 @@ def _api_key_dependency(request: Request) -> None:
 
 
 def _read_auth_dependency(request: Request) -> None:
-    if _protect_read_routes:
-        _check_api_key(request)
+    if _protect_read_routes or _browser_password:
+        _check_browser_or_api_auth(request)
 
 
 def _rate_limit_dependency(request: Request) -> None:
@@ -438,6 +572,8 @@ def dashboard(
     topic: str | None = Query(default=None, max_length=200),
     difficulty: Literal["low", "mid", "high"] | None = Query(default=None),
 ) -> str:
+    topic_value = escape_html(topic or "通用安全测试", quote=True)
+    selected_difficulty = difficulty or "mid"
     return """<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -751,8 +887,8 @@ def dashboard(
         <div class="panel">
           <div class="panel-title"><h2>开始新战局</h2><span>攻防编排</span></div>
           <form id="battle-form">
-            <div class="field"><label for="topic">测试主题</label><input id="topic" name="topic" type="text" maxlength="200" value="通用安全测试" required></div>
-            <div class="field"><label>对抗难度</label><div class="choices"><div><input id="low" name="difficulty" value="low" type="radio"><label for="low">低</label></div><div><input id="mid" name="difficulty" value="mid" type="radio" checked><label for="mid">中</label></div><div><input id="high" name="difficulty" value="high" type="radio"><label for="high">高</label></div></div></div>
+            <div class="field"><label for="topic">测试主题</label><input id="topic" name="topic" type="text" maxlength="200" value="__INITIAL_TOPIC__" required></div>
+            <div class="field"><label>对抗难度</label><div class="choices"><div><input id="low" name="difficulty" value="low" type="radio" __LOW_CHECKED__><label for="low">低</label></div><div><input id="mid" name="difficulty" value="mid" type="radio" __MID_CHECKED__><label for="mid">中</label></div><div><input id="high" name="difficulty" value="high" type="radio" __HIGH_CHECKED__><label for="high">高</label></div></div></div>
             <button id="start" type="submit">开始攻防</button><p class="hint">完成后将在右侧显示攻击样本、风险依据和处置建议。演示环境使用本地模拟用例；真实 Agent 结果会标明来源。</p>
           </form>
         </div>
@@ -1268,12 +1404,13 @@ def dashboard(
     }
     function difficulty(value) { return ({low: "低", mid: "中", high: "高", medium: "中"})[value] || value; }
     function agentSourceLabel(value) {
-      return ({
+      var labels = {
         "acp-llm": "独立 ACP Agent · 大模型",
         "acp-rule-fallback": "独立 ACP Agent · 本地规则兜底",
         "acp-pending": "独立 ACP Agent · 来源待确认",
         "local-rule": "主服务 · 本地规则",
-      })[value] || "来源未知";
+      };
+      return labels[value] || (typeof value === "string" && value ? "未识别来源 · " + value : "来源未知");
     }
     function sampleType(value) { return ({defect: "缺陷", violation: "违规", vuln: "漏洞"})[value] || value; }
     function statusLabel(value) { return ({pending: "等待中", running: "进行中", completed: "已完成", failed: "失败", recommended: "建议"})[value] || value; }
@@ -1324,7 +1461,7 @@ def dashboard(
         var state = defense.verificationStatus ? "检测完成 · 目标未验证" : battle.status === "failed" ? "战局失败" : "等待检测";
         return `<article class="round"><div class="round-head"><span class="round-number">第 ${index + 1} 轮</span><span class="round-type">${escapeHtml(sampleType(sample.type))} · ${escapeHtml(difficulty(sample.severity))}</span><span class="round-state">${state}</span></div><div class="round-grid"><div class="attack-box"><h3>攻击方 · 样本生成</h3><div><b>场景：</b>${escapeHtml(sample.scenario || "未提供")}</div><div><b>检查目标：</b>${escapeHtml(sample.objective || "未提供")}</div><div><b>主题：</b>${escapeHtml(sample.topic)}</div><div><b>测试输入：</b></div><div class="round-content">${escapeHtml(sample.content)}</div></div><div class="defend-box"><h3>防守方 · 检测与处置</h3><div class="result-label">规则命中（样本证据）</div><ul class="result-list">${resultList(defense.caught, "reason", "未命中当前规则")}</ul><div class="result-label">条件性风险</div><ul class="result-list">${resultList(defense.risks, "reason", "无额外风险记录")}</ul><div class="result-label">修复方向与验收（建议，未执行）</div><ul class="result-list">${resultList(defense.fixed, "action", "暂无建议")}</ul></div></div></article>`;
       }).join("") || '<div class="empty">本轮没有生成样本（No samples generated）</div>';
-      var sourceLabel = isSimulation ? "本地模拟" : attackerSource;
+      var sourceLabel = escapeHtml(isSimulation ? "本地模拟" : attackerSource);
       $("result").innerHTML = `<div class="battle-head"><strong>${escapeHtml(battle.topic)} · ${difficulty(battle.difficulty)}难度</strong><span>${sourceLabel} · ${escapeHtml(statusLabel(battle.status))} · ${formatTime(battle.createdAt)}</span></div><div class="flow"><div class="flow-step"><i>1</i><b>战局创建</b><small>接收主题与难度</small></div><div class="flow-step"><i>2</i><b>攻击生成</b><small>输出 ${samples.length} 个样本</small></div><div class="flow-step"><i>3</i><b>规则分析</b><small>检查提交样本文本</small></div><div class="flow-step"><i>4</i><b>结果汇总</b><small>提出 ${fixedCount} 项验证建议</small></div></div><div class="battle-summary"><div class="summary-item"><b>${samples.length}</b><span>样本数</span></div><div class="summary-item"><b>${caughtCount}</b><span>规则命中</span></div><div class="summary-item"><b>${riskCount}</b><span>条件性风险</span></div><div class="summary-item"><b>${fixedCount}</b><span>验证建议</span></div></div><details class="round-details"><summary>查看逐轮证据详情（${samples.length} 轮）</summary><div class="round-list">${rounds}</div></details>`;
       applyEvidenceLabels(battle);
     }
@@ -1423,7 +1560,7 @@ def dashboard(
     loadDashboardSummary();
   </script>
 </body>
-</html>""".replace('$("result").innerHTML = "', '$("result").innerHTML = \'').replace('</div>";\n', '</div>\';\n').replace('class="battle-head"', 'class=\\"battle-head\\"').replace('class="flow"', 'class=\\"flow\\"').replace('class="flow-step"', 'class=\\"flow-step\\"').replace('class="battle-summary"', 'class=\\"battle-summary\\"').replace('class="summary-item"', 'class=\\"summary-item\\"').replace('class="round-list"', 'class=\\"round-list\\"').replace(',""":"&quot;",', ',\\"":"&quot;",')
+</html>""".replace('$("result").innerHTML = "', '$("result").innerHTML = \'').replace('</div>";\n', '</div>\';\n').replace('class="battle-head"', 'class=\\"battle-head\\"').replace('class="flow"', 'class=\\"flow\\"').replace('class="flow-step"', 'class=\\"flow-step\\"').replace('class="battle-summary"', 'class=\\"battle-summary\\"').replace('class="summary-item"', 'class=\\"summary-item\\"').replace('class="round-list"', 'class=\\"round-list\\"').replace(',""":"&quot;",', ',\\"":"&quot;",').replace("__INITIAL_TOPIC__", topic_value).replace("__LOW_CHECKED__", "checked" if selected_difficulty == "low" else "").replace("__MID_CHECKED__", "checked" if selected_difficulty == "mid" else "").replace("__HIGH_CHECKED__", "checked" if selected_difficulty == "high" else "")
 
 
 @app.get("/health", summary="服务健康检查", tags=["核心接口"])
@@ -1441,6 +1578,66 @@ def health(request: Request) -> dict[str, Any]:
         "storage": storage_status,
         "requestId": request.state.request_id,
     }
+
+
+@app.get("/auth/session", summary="查询浏览器登录状态", tags=["浏览器鉴权"])
+def browser_session_status(request: Request, response: Response) -> dict[str, bool]:
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "enabled": bool(_browser_password),
+        "authenticated": bool(_browser_password) and _has_browser_session(request),
+    }
+
+
+@app.post(
+    "/auth/session",
+    dependencies=[Depends(_browser_login_rate_limit)],
+    summary="创建浏览器登录会话",
+    tags=["浏览器鉴权"],
+)
+def create_browser_session(
+    payload: BrowserLoginRequest,
+    request: Request,
+    response: Response,
+) -> dict[str, Any]:
+    if not _browser_password:
+        raise HTTPException(status_code=503, detail="浏览器登录尚未启用")
+    origin = request.headers.get("origin", "")
+    if origin and not _browser_origin_allowed(origin):
+        raise HTTPException(status_code=403, detail="浏览器来源未获允许")
+    if not hmac.compare_digest(
+        payload.password.encode("utf-8"), _browser_password.encode("utf-8")
+    ):
+        raise HTTPException(status_code=401, detail="登录密码错误")
+    token = _issue_browser_session()
+    response.set_cookie(
+        key=_browser_cookie_name,
+        value=token,
+        max_age=_browser_session_ttl_seconds,
+        httponly=True,
+        secure=_browser_cookie_secure,
+        samesite=_browser_cookie_samesite,
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": True, "expiresInSeconds": _browser_session_ttl_seconds}
+
+
+@app.delete("/auth/session", summary="退出浏览器登录", tags=["浏览器鉴权"])
+def delete_browser_session(request: Request, response: Response) -> dict[str, bool]:
+    origin = request.headers.get("origin", "")
+    if origin and not _browser_origin_allowed(origin):
+        raise HTTPException(status_code=403, detail="浏览器来源未获允许")
+    _revoke_browser_session(request)
+    response.delete_cookie(
+        key=_browser_cookie_name,
+        httponly=True,
+        secure=_browser_cookie_secure,
+        samesite=_browser_cookie_samesite,
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": False}
 
 
 @app.get("/metrics", include_in_schema=False, dependencies=[Depends(_api_key_dependency)])
@@ -1492,7 +1689,7 @@ async def create_battle(
     background_tasks: BackgroundTasks,
     background: bool = Query(default=False, description="是否后台异步执行"),
 ) -> BattleRecord:
-    _check_api_key(request)
+    _check_browser_or_api_auth(request)
     battle_id = f"battle-{uuid.uuid4()}"
     created_at = datetime.now(timezone.utc).isoformat()
     if background:
@@ -1614,7 +1811,7 @@ def retry_battle(
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> BattleRecord:
-    _check_api_key(request)
+    _check_browser_or_api_auth(request)
     record = _battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")

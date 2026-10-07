@@ -34,7 +34,6 @@ def _endpoint() -> str:
 async def complete_json(
     system_prompt: str,
     user_payload: dict[str, Any],
-    response_schema: dict[str, Any],
 ) -> dict[str, Any]:
     if not is_configured():
         raise LLMError("model is not configured")
@@ -42,11 +41,8 @@ async def complete_json(
     body = {
         "model": os.environ["AGENT_LLM_MODEL"].strip(),
         "temperature": 0.2,
-        "max_tokens": int(os.getenv("AGENT_LLM_MAX_TOKENS", "1800")),
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "agent_response", "strict": True, "schema": response_schema},
-        },
+        "max_tokens": int(os.getenv("AGENT_LLM_MAX_TOKENS", "4000")),
+        "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},

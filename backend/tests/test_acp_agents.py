@@ -128,6 +128,31 @@ def test_defender_requires_complete_contract(monkeypatch: pytest.MonkeyPatch) ->
     assert json.loads(fake_client.request["user_input"]) == {"sample": {"content": "test"}}
 
 
+def test_unknown_agent_source_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = "partner-agent-v3"
+    fake_client = FakeAipClient(task_result({
+        "samples": [],
+        "agentMode": "experimental",
+        "agentSource": source,
+    }))
+    monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
+    monkeypatch.setattr(acp_agents, "AipRpcClient", lambda **_: fake_client)
+
+    result = asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "test"}))
+
+    assert result is not None
+    assert result["agentSource"] == source
+
+
+def test_unknown_agent_mode_is_not_reported_as_rule_fallback() -> None:
+    result = acp_agents._validate_result("attacker", {
+        "samples": [],
+        "agentMode": "experimental",
+    })
+
+    assert result["agentSource"] == "acp-unknown:experimental"
+
+
 def test_remote_failure_does_not_fall_back_to_local(monkeypatch: pytest.MonkeyPatch) -> None:
     class BrokenClient(FakeAipClient):
         async def start_task(self, *, session_id: str, user_input: str) -> TaskResult:

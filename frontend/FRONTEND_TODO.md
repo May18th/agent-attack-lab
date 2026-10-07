@@ -29,11 +29,13 @@ VITE_AGENT_API=https://api.yuanyiagentzhandui.cn
 
 5. 重新启动前端并验收：网页可通过 HTTPS 打开，能读取 `/health`、`/dashboard/summary`、创建和查询战局；记录前端地址、API 地址、Git 提交版本和失败请求的 `X-Request-ID`。
 
+6. 若公网启用浏览器登录，在页面增加密码登录/退出状态；登录请求调用 `POST /auth/session`，启动时调用 `GET /auth/session`，退出调用 `DELETE /auth/session`。所有需要登录的 API fetch 设置 `credentials: "include"`；不要在 `VITE_*` 中配置后端 API Key。EventSource 使用 `withCredentials: true`。本地 HTTP 联调时前后端 API 使用同一主机名 `localhost`，API 地址可设为 `http://localhost:8787`。
+
 **后端负责人（8787 服务）**
 
 1. 先取得队友域名所属 Cloudflare Zone 的必要权限。Tunnel 与目标 DNS 记录必须由同一 Cloudflare 账户管理；现有其他账户的 Tunnel 不能直接替代。
 2. 将 `api.yuanyiagentzhandui.cn` 的 Tunnel Connector 运行在后端主机，并转发到 `http://127.0.0.1:8787`。仅转发 `/rpc` 不足以支持当前网页；前端实际调用 `/health`、`/dashboard/summary`、`/battles` 和 `/battles/{battle_id}`。
-3. 上线前核对公开路由、`AGENT_API_KEY`、`AGENT_PROTECT_READS`、限流和 CORS。不得把后端 API Key 放入 Vite 前端变量；若当前鉴权设置会让浏览器请求得到 401，先设计不暴露密钥的访问方案再开放网页 API。
+3. 上线前核对公开路由、`AGENT_API_KEY`、`AGENT_PROTECT_READS`、限流和 CORS。不得把后端 API Key 放入 Vite 前端变量；浏览器使用后端 `/auth/session` 会话接口，具体方式见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
 4. 默认不公开 `/metrics`、`/docs`、`/openapi.json`、内部 Agent 管理接口和后台管理页面。若平台只需要 RPC，单独确认 `/rpc` 的鉴权、证书要求和验收方式。
 5. 确认最终前端 Origin 后，将其精确加入后端 CORS 白名单；不要使用过宽的通配来源。
 

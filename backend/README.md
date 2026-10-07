@@ -68,6 +68,14 @@ cd "D:\梧桐\backend"
 
 部署到公网时可设置 `AGENT_API_KEY`。设置后，`POST /battles`、`POST /agent/*`、`POST /rpc` 和内部统计接口 `GET /metrics` 必须携带 `X-API-Key` 请求头；本地未设置时保持免密开发模式。
 
+### 浏览器登录会话
+
+公开 Vite 前端不能保存 `AGENT_API_KEY`。需要浏览器直接访问 API 时，在后端同时配置 `AGENT_BROWSER_PASSWORD` 和 `AGENT_API_KEY`，前端通过 `POST /auth/session` 提交登录密码，服务端返回 `HttpOnly` 会话 Cookie。会话认证仅适用于战局 REST 读写接口；`/agent/*`、`/rpc` 和 `/metrics` 仍要求服务端 `X-API-Key`。配置浏览器密码后，战局读写接口自动要求 API Key 或有效浏览器会话。
+
+登录接口为 `POST /auth/session`（JSON：`{"password":"..."}`），`GET /auth/session` 查询状态，`DELETE /auth/session` 退出。会话默认 8 小时、最多 24 小时，服务进程重启后失效；当前会话保存在单进程内存中，多 worker/多实例部署前需改用共享会话存储。登录每个客户端 IP 最多 5 次/5 分钟；会话写请求要求 `Origin` 命中 CORS 允许来源。
+
+浏览器请求必须启用 `credentials: "include"`。公网设置精确的 `AGENT_CORS_ORIGINS=https://<前端域名>`，使用 HTTPS，并保持 `AGENT_BROWSER_COOKIE_SECURE=1`、`AGENT_BROWSER_COOKIE_SAMESITE=lax`。启用浏览器登录后会关闭 Quick Tunnel 通配正则；登录 Origin 必须精确匹配白名单。本地 HTTP 开发可设置 `AGENT_BROWSER_COOKIE_SECURE=0`，并让前后端使用同一主机名，例如前端 `localhost:5173`、API `localhost:8787`；不要混用 `localhost` 和 `127.0.0.1`。登录密码与 API Key 仅写在后端 `.env`，不要放入 `VITE_*` 或提交到 GitHub。
+
 SQLite 开发库默认启用 WAL 和 5 秒忙等待，并为时间、难度和状态筛选建立索引，以降低并发读写时的锁冲突。
 
 异步实时战局：
@@ -111,13 +119,19 @@ $env:no_proxy = "localhost,127.0.0.1,::1"
 .\stop-agents.ps1
 ```
 
+### 配置 DeepSeek 大模型
+
+独立 Agent 使用 OpenAI Chat Completions 兼容接口。DeepSeek 配置示例位于 `.env.example`；复制为 `.env`，只在本机填写 `AGENT_LLM_API_KEY`。`.env` 已加入 Git 忽略规则，不要把密钥发到聊天或提交到仓库。启动/重启脚本会自动读取该文件，并启动 8788/8789 两个 Agent。
+
+当前实现请求 JSON Object，再由 Agent 本地校验返回结构；模型调用失败或输出不符合 Agent 契约时会标记并降级到本地规则。配置更新后运行 `.\restart.ps1`，并确认两个 Agent 的健康状态及战局来源标签。具体环境变量见 `.env.example`。
+
 默认端口分别为 8788 和 8789，可用 `-AttackerPort`、`-DefenderPort` 修改；端口必须不同。公网部署前还需要分别部署并配置稳定 HTTPS 地址及平台要求的真实身份/认证材料，不能直接把上述 `127.0.0.1` 地址交给平台或队友。
 
 事件记录默认限制为 32 KB；超限样本会截短并添加 `dataTruncated` 标记，可通过 `AGENT_EVENT_DATA_MAX_BYTES` 调整，最小值为 1 KB。
 
-设置 `AGENT_PROTECT_READS=1` 后，战局列表/详情、事件、回放、战报、排行榜和 SSE 接口都需要 `X-API-Key`。本地默认关闭。启用时，浏览器页面也必须能安全提供该密钥，因此不要将服务端密钥直接写进公开前端代码。
+设置 `AGENT_PROTECT_READS=1` 后，战局列表/详情、事件、回放、战报、排行榜和 SSE 接口需要服务端 API Key 或有效浏览器会话（已配置 `AGENT_BROWSER_PASSWORD` 时）。本地默认关闭。不要将服务端密钥直接写进公开前端代码。
 
-SQLite 会记录 `schema_migrations` 基线版本并以幂等 DDL 自动补齐当前表和索引。Alembic 版本迁移位于 `backend/alembic/`，执行 `uv run alembic upgrade head`。PostgreSQL 使用 psycopg 连接池，最大连接数可通过 `AGENT_DB_POOL_MAX_SIZE` 调整。详见 `docs/DEPLOYMENT.md`。
+SQLite 会记录 `schema_migrations` 基线版本并以幂等 DDL 自动补齐当前表和索引。Alembic 版本迁移位于 `backend/alembic/`，执行 `uv run alembic upgrade head`。PostgreSQL 使用 psycopg 连接池，MySQL 使用 SQLAlchemy/PyMySQL 连接池；最大连接数可通过 `AGENT_DB_POOL_MAX_SIZE` 调整。MySQL 连接配置和目标实例验收步骤见 `docs/DEPLOYMENT.md`。
 
 战局默认保存到 `.data/battles.sqlite3`，服务重启后仍保留。需要指定其他数据库路径时设置环境变量：
 

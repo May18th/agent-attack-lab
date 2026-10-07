@@ -18,13 +18,13 @@ AIC、CAI、ACS、mTLS 证书和平台审核由后端负责人处理，前端不
 http://127.0.0.1:8787
 ```
 
-稳定公网 API（配置地址）：
+计划公网 API（尚未验收）：
 
 ```text
-https://api.kcwx.online
+https://api.yuanyiagentzhandui.cn
 ```
 
-前端公网地址由队友运行 Quick Tunnel 后以终端输出为准，地址会随重启变化。前端页面地址仅用于打开队友页面；前端 API 仍使用上面的稳定后端地址。
+`yuanyiagentzhandui.cn` 由队友管理，须先完成 Cloudflare Zone、DNS、Tunnel、CORS 和浏览器鉴权验收。原有 `kcwx.online` 已从本项目退役，不作为前端 API、备用地址或 Tunnel 配置。
 
 2026-10-07 本轮检查中，公网健康接口先后出现 Cloudflare HTTP 502/530，之后本机服务重启后恢复 HTTP 200；本机 `/health` 和 `/dashboard` 也返回 HTTP 200。该波动说明一次成功不代表 Tunnel 长期稳定。开始远程联调前请重新请求 `/health`；若不是 200，先暂停远程联调并按 `docs/INTEGRATION_GUIDE.md` 排查。Cloudflared 服务显示 Running 本身不代表 Tunnel 到本机端口链路可用。
 
@@ -291,10 +291,10 @@ Content-Type: application/json
 VITE_AGENT_API=http://127.0.0.1:8787
 ```
 
-远程联调时统一使用：
+远程联调时，待后端负责人确认队友域名 API 已验收后使用：
 
 ```env
-VITE_AGENT_API=https://api.kcwx.online
+VITE_AGENT_API=https://api.yuanyiagentzhandui.cn
 ```
 
 调用示例：
@@ -340,6 +340,6 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 4. 前端不需要运行或修改 AIC、ACS、CAI 和 mTLS 文件。
 5. 发送代码时不要包含 `.venv`；源码、`pyproject.toml`、`uv.lock` 和本交接文件即可。
 
-如果后端设置了 `AGENT_API_KEY`，前端写入接口需要通过 `X-API-Key` 发送密钥；内部 `GET /metrics` 也受同一密钥保护。密钥不要提交到 GitHub。
+公开浏览器前端不获取 `AGENT_API_KEY`。后端启用 `AGENT_BROWSER_PASSWORD` 后，前端使用 `/auth/session` 登录会话并设置 `credentials: "include"`；EventSource 使用 `withCredentials: true`。`/agent/*`、`/rpc`、`/metrics` 仍只接受服务端 API Key；详见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
 
-后台 `/dashboard` 的异步对抗已接入 SSE 时间线。读接口鉴权默认关闭；打开 `AGENT_PROTECT_READS=1` 后，浏览器前端也需鉴权，不能把服务端密钥硬编码到公开前端包中。
+后台 `/dashboard` 的异步对抗已接入 SSE 时间线。公开部署须配置 `AGENT_API_KEY`、`AGENT_BROWSER_PASSWORD` 和 `AGENT_PROTECT_READS=1`；不得把服务端密钥硬编码到公开前端包中。

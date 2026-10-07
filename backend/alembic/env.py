@@ -18,6 +18,8 @@ if database_url.startswith("postgres://"):
     database_url = "postgresql+psycopg://" + database_url.removeprefix("postgres://")
 elif database_url.startswith("postgresql://"):
     database_url = "postgresql+psycopg://" + database_url.removeprefix("postgresql://")
+elif database_url.startswith("mysql://"):
+    database_url = "mysql+pymysql://" + database_url.removeprefix("mysql://")
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 target_metadata = None

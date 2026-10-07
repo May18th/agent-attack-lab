@@ -55,7 +55,7 @@ uv sync
 VITE_AGENT_API=http://127.0.0.1:8787
 ```
 
-远程联调统一使用 `https://api.kcwx.online`，完整步骤见 `docs/INTEGRATION_GUIDE.md`。
+远程联调计划使用队友新域名 `https://api.yuanyiagentzhandui.cn`；Cloudflare Zone、DNS、Tunnel 和浏览器鉴权尚未验收完成前，不要将其当作可用地址。原有 `kcwx.online` 已从本项目退役。完整步骤见 `docs/INTEGRATION_GUIDE.md`。
 
 第一版主流程使用 `POST /battles`，展示 `attackerOut.samples` 和 `defenderOut`。
 
