@@ -55,5 +55,17 @@ describe('App', () => {
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles'), expect.objectContaining({ method: 'POST' }))
     expect(screen.getByRole('heading', { name: '新战局' })).toBeInTheDocument()
   })
+
+  it('shows a retryable health state when the health check fails', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).endsWith('/health')) return Promise.reject(new TypeError('offline'))
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: /服务连接失败/ })).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/health'), expect.anything())
+  })
 })
 
