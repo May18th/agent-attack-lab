@@ -30,6 +30,7 @@ def test_dashboard_is_chinese_html() -> None:
     assert "开始新战局" in response.text
     assert "防守检测" in response.text
     assert "round-list" in response.text
+    assert "innerHTML = '<div class=\\\"battle-head\\\"" in response.text
     assert "OpenAPI JSON" not in response.text
 
 

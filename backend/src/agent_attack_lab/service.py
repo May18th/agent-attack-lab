@@ -403,7 +403,7 @@ def dashboard() -> str:
   </main>
   <script>
     var $ = function (id) { return document.getElementById(id); };
-    function escapeHtml(value) { return String(value).replace(/[&<>\"']/g, function (char) { return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"})[char]; }); }
+    function escapeHtml(value) { return String(value).replace(/[&<>\"']/g, function (char) { return ({"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"&#039;"})[char]; }); }
     function formatTime(value) { return value ? new Date(value).toLocaleString("zh-CN", {hour12: false}) : "--"; }
     function difficulty(value) { return ({low: "低", mid: "中", high: "高"})[value] || value; }
     function resultList(items, field, emptyText) { if (!items || !items.length) return '<li class="muted">' + escapeHtml(emptyText) + '</li>'; return items.map(function (item) { var value = item[field] || item.reason || item.action || item.level || "结果"; var suffix = item.status ? " · " + item.status : ""; return '<li>' + escapeHtml(value + suffix) + '</li>'; }).join(""); }
@@ -445,7 +445,7 @@ def dashboard() -> str:
     loadHistory();
   </script>
 </body>
-</html>"""
+</html>""".replace('$("result").innerHTML = "', '$("result").innerHTML = \'').replace('</div>";\n', '</div>\';\n').replace('class="battle-head"', 'class=\\"battle-head\\"').replace('class="flow"', 'class=\\"flow\\"').replace('class="flow-step"', 'class=\\"flow-step\\"').replace('class="battle-summary"', 'class=\\"battle-summary\\"').replace('class="summary-item"', 'class=\\"summary-item\\"').replace('class="round-list"', 'class=\\"round-list\\"').replace(',""":"&quot;",', ',\\"":"&quot;",')
 
 
 @app.get("/health", summary="服务健康检查", tags=["核心接口"])
