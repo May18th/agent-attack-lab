@@ -8,8 +8,8 @@ const battle = {
   topic: '已有战局',
   status: 'completed',
   createdAt: '2026-10-07T00:00:00Z',
-  attackerOut: { samples: [{ type: 'defect', topic: '已有战局', severity: 'low', content: 'sample' }] },
-  defenderOut: [{ caught: [], risks: [], fixed: [] }],
+  attackerOut: { agentSource: 'acp-llm', samples: [{ type: 'defect', topic: '已有战局', severity: 'low', content: 'sample' }] },
+  defenderOut: [{ agentSource: 'acp-rule-fallback', caught: [], risks: [], fixed: [] }],
 }
 
 afterEach(() => {
@@ -36,6 +36,8 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
     expect(screen.getByText('缺陷（Defect） · 低（Low）')).toBeInTheDocument()
+    expect(screen.getByText('攻击来源：独立 Agent（模型生成）')).toBeInTheDocument()
+    expect(screen.getByText('防守来源：独立 Agent（规则兜底）')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /已有战局/ }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles/battle-test'), expect.anything()))
     fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '' } })
