@@ -23,6 +23,7 @@ class _Connection:
         self._calls = calls
 
     def exec_driver_sql(self, statement: str, parameters: Any = ()) -> _Result:
+        assert not isinstance(parameters, list)
         self._calls.append((statement, parameters))
         if statement.startswith("SHOW INDEX"):
             return _Result([])

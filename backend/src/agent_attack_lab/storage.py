@@ -44,7 +44,8 @@ class _SqlAlchemyConnection:
 
     def execute(self, statement: str, parameters: Any = ()) -> _PooledResult:
         with self._engine.begin() as connection:
-            result = connection.exec_driver_sql(statement, parameters)
+            driver_parameters = tuple(parameters) if isinstance(parameters, list) else parameters
+            result = connection.exec_driver_sql(statement, driver_parameters)
             rows = [dict(row) for row in result.mappings()] if result.returns_rows else []
         return _PooledResult(rows)
 
