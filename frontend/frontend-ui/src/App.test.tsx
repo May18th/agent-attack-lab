@@ -17,13 +17,18 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function installFetchMock() {
+function installFetchMock(source: string = 'acp-llm', defenseSource: string = 'acp-rule-fallback') {
+  const sourceBattle = {
+    ...battle,
+    attackerOut: { ...battle.attackerOut, agentSource: source },
+    defenderOut: [{ ...battle.defenderOut[0], agentSource: defenseSource }],
+  }
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     if (url.endsWith('/health')) return Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
-    if (url.includes('/battles?limit=50')) return Promise.resolve(new Response(JSON.stringify([battle]), { status: 200 }))
-    if (init?.method === 'POST') return Promise.resolve(new Response(JSON.stringify({ ...battle, topic: '新战局' }), { status: 201 }))
-    return Promise.resolve(new Response(JSON.stringify(battle), { status: 200 }))
+    if (url.includes('/battles?limit=50')) return Promise.resolve(new Response(JSON.stringify([sourceBattle]), { status: 200 }))
+    if (init?.method === 'POST') return Promise.resolve(new Response(JSON.stringify({ ...sourceBattle, topic: '新战局' }), { status: 201 }))
+    return Promise.resolve(new Response(JSON.stringify(sourceBattle), { status: 200 }))
   })
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
@@ -69,6 +74,14 @@ describe('App', () => {
 
     expect(await screen.findByRole('button', { name: /服务连接失败/ })).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/health'), expect.anything())
+  })
+
+  it('keeps unknown agent sources visible instead of mislabeling them', async () => {
+    installFetchMock('future-agent', 'future-agent')
+    render(<App />)
+
+    expect(await screen.findByText('攻击来源：来源未知（future-agent）')).toBeInTheDocument()
+    expect(screen.getByText('防守来源：来源未知（future-agent）')).toBeInTheDocument()
   })
 })
 
