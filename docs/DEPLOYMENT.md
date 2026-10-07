@@ -67,6 +67,8 @@ uv sync
 $env:AGENT_RATE_LIMIT_PER_MINUTE = "60"
 ```
 
+如果设置了 `AGENT_API_KEY`，内部指标接口 `GET /metrics` 也需要携带 `X-API-Key`。SQLite 开发库会自动启用 WAL、忙等待和常用筛选索引；生产多实例部署仍建议使用 PostgreSQL。
+
 SQLite 开发库可以使用脚本备份。恢复前先停止后端，恢复脚本默认拒绝覆盖已有文件：
 
 ```powershell

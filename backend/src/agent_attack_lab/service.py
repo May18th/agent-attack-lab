@@ -486,16 +486,6 @@ def dashboard() -> str:
       $("history").innerHTML = items.length ? items.slice(0, 8).map(function (item) { return "<tr><td>" + escapeHtml(item.topic) + "</td><td>" + difficulty(item.difficulty) + "</td><td>" + escapeHtml(statusLabel(item.status)) + "</td><td>" + formatTime(item.createdAt) + "</td></tr>"; }).join("") : '<tr><td colspan="4" class="empty">暂无历史战局（No battle history）</td></tr>';
     }
     function renderBattle(battle) {
-      $("battle-id").textContent = battle.id;
-      var samples = battle.attackerOut.samples || [];
-      var defenses = battle.defenderOut || [];
-      var caughtCount = defenses.reduce(function (sum, item) { return sum + (item.caught || []).length; }, 0);
-      var riskCount = defenses.reduce(function (sum, item) { return sum + (item.risks || []).length; }, 0);
-      var fixedCount = defenses.reduce(function (sum, item) { return sum + (item.fixed || []).length; }, 0);
-      var rounds = samples.map(function (sample, index) { var defense = defenses[index] || {}; return '<article class="round"><div class="round-head"><span class="round-number">第 ' + (index + 1) + ' 轮（Round ' + (index + 1) + '）</span><span class="round-type">' + escapeHtml(sampleType(sample.type)) + ' · ' + escapeHtml(difficulty(sample.severity)) + '</span><span class="round-state">已完成（Completed）</span></div><div class="round-grid"><div class="attack-box"><h3>攻击方 · 样本生成（Attacker · Sample generation）</h3><div><b>主题（Topic）：</b>' + escapeHtml(sample.topic) + '</div><div><b>原始样本（Raw sample）：</b></div><div class="round-content">' + escapeHtml(sample.content) + '</div></div><div class="defend-box"><h3>防守方 · 检测与修复（Defender · Detection & remediation）</h3><div class="result-label">发现问题（Findings）</div><ul class="result-list">' + resultList(defense.caught, "reason", "未发现问题（No findings）") + '</ul><div class="result-label">风险评估（Risk assessment）</div><ul class="result-list">' + resultList(defense.risks, "reason", "无额外风险（No additional risks）") + '</ul><div class="result-label">修复动作（Remediation）</div><ul class="result-list">' + resultList(defense.fixed, "action", "无需修复（No remediation needed）") + '</ul></div></div></article>'; }).join("") || '<div class="empty">本轮没有生成样本（No samples generated）</div>';
-      $("result").innerHTML = "<div class=\"battle-head\"><strong>" + escapeHtml(battle.topic) + " · " + difficulty(battle.difficulty) + "难度（Difficulty）</strong><span>" + escapeHtml(statusLabel(battle.status)) + " · " + formatTime(battle.createdAt) + "</span></div><div class=\"flow\"><div class=\"flow-step\"><i>1</i><b>战局创建（Create）</b><small>接收主题与难度（Topic and difficulty）</small></div><div class=\"flow-step\"><i>2</i><b>攻击生成（Attack）</b><small>输出 " + samples.length + " 个样本（samples）</small></div><div class=\"flow-step\"><i>3</i><b>防守检测（Detect）</b><small>识别 " + caughtCount + " 项问题（findings）</small></div><div class=\"flow-step\"><i>4</i><b>修复建议（Remediate）</b><small>输出 " + fixedCount + " 项动作（actions）</small></div></div><div class=\"battle-summary\"><div class=\"summary-item\"><b>" + samples.length + "</b><span>攻击样本（Attack samples）</span></div><div class=\"summary-item\"><b>" + caughtCount + "</b><span>发现问题（Findings）</span></div><div class=\"summary-item\"><b>" + riskCount + "</b><span>风险项（Risks）</span></div><div class=\"summary-item\"><b>" + fixedCount + "</b><span>修复动作（Remediations）</span></div></div><div class=\"round-list\">" + rounds + "</div>";
-    }
-    function renderBattle(battle) {
       var samples = battle.attackerOut.samples || [];
       var defenses = battle.defenderOut || [];
       var caughtCount = defenses.reduce(function (sum, item) { return sum + (item.caught || []).length; }, 0);
@@ -549,7 +539,7 @@ def health(request: Request) -> dict[str, Any]:
     }
 
 
-@app.get("/metrics", include_in_schema=False)
+@app.get("/metrics", include_in_schema=False, dependencies=[Depends(_api_key_dependency)])
 def metrics() -> dict[str, Any]:
     average_latency = _request_total_duration_ms / _request_count if _request_count else 0
     return {

@@ -30,8 +30,8 @@ def test_dashboard_is_chinese_html() -> None:
     assert "开始新战局" in response.text
     assert "防守检测" in response.text
     assert "round-list" in response.text
-    assert "innerHTML = '<div class=\\\"battle-head\\\"" in response.text
-    assert "function renderBattle(battle)" in response.text
+    assert 'innerHTML = `<div class=\\"battle-head\\"' in response.text
+    assert response.text.count("function renderBattle(battle)") == 1
     assert "${samples.length}" in response.text
     assert "低（Low）" in response.text
     assert "缺陷（Defect）" in response.text
@@ -185,6 +185,13 @@ def test_api_key_protects_agent_routes(monkeypatch) -> None:
         json={"difficulty": "low", "topic": "安全测试"},
     )
     assert with_key.status_code == 200
+
+
+def test_api_key_protects_metrics(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_api_key", "test-secret")
+    assert client.get("/metrics").status_code == 401
+    response = client.get("/metrics", headers={"X-API-Key": "test-secret"})
+    assert response.status_code == 200
 
 
 def test_cors_preflight_allows_api_key_header() -> None:

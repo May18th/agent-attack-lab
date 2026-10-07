@@ -34,9 +34,12 @@ class BattleStore:
             if configured_path != ":memory:":
                 Path(configured_path).parent.mkdir(parents=True, exist_ok=True)
             self._connection = sqlite3.connect(
-                configured_path, check_same_thread=False
+                configured_path, check_same_thread=False, timeout=5.0
             )
             self._connection.row_factory = sqlite3.Row
+            self._connection.execute("PRAGMA busy_timeout = 5000")
+            if configured_path != ":memory:":
+                self._connection.execute("PRAGMA journal_mode = WAL")
         if not self._is_postgres:
             self._initialize_sqlite_schema()
         else:
@@ -73,6 +76,15 @@ class BattleStore:
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_battle_events_battle ON battle_events (battle_id, sequence)"
         )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_battles_created ON battles (created_at DESC)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_battles_difficulty_created ON battles (difficulty, created_at DESC)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_battles_status_created ON battles (status, created_at DESC)"
+        )
         self._connection.commit()
 
     def _initialize_postgres_schema(self) -> None:
@@ -105,6 +117,15 @@ class BattleStore:
         )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_battle_events_battle ON battle_events (battle_id, sequence)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_battles_created ON battles (created_at DESC)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_battles_difficulty_created ON battles (difficulty, created_at DESC)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_battles_status_created ON battles (status, created_at DESC)"
         )
         self._connection.commit()
 

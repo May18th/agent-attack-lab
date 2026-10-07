@@ -281,3 +281,5 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 3. 页面需要处理加载中、成功、空结果和 HTTP `422`/`5xx` 状态。
 4. 前端不需要运行或修改 AIC、ACS、CAI 和 mTLS 文件。
 5. 发送代码时不要包含 `.venv`；源码、`pyproject.toml`、`uv.lock` 和本交接文件即可。
+
+如果后端设置了 `AGENT_API_KEY`，前端写入接口需要通过 `X-API-Key` 发送密钥；内部 `GET /metrics` 也受同一密钥保护。密钥不要提交到 GitHub。

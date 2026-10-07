@@ -63,7 +63,9 @@ cd "D:\梧桐\backend"
 
 恢复前先停止后端服务；不传 `-Force` 时不会覆盖已有数据库。
 
-部署到公网时可设置 `AGENT_API_KEY`。设置后，`POST /battles`、`POST /agent/*` 和 `POST /rpc` 必须携带 `X-API-Key` 请求头；本地未设置时保持免密开发模式。
+部署到公网时可设置 `AGENT_API_KEY`。设置后，`POST /battles`、`POST /agent/*`、`POST /rpc` 和内部统计接口 `GET /metrics` 必须携带 `X-API-Key` 请求头；本地未设置时保持免密开发模式。
+
+SQLite 开发库默认启用 WAL 和 5 秒忙等待，并为时间、难度和状态筛选建立索引，以降低并发读写时的锁冲突。
 
 异步实时战局：
 
