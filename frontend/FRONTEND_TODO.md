@@ -1,5 +1,66 @@
 # 前端待办清单
 
+## 新增待办：队友域名前后端上线
+
+更新时间：2026-10-08。队友提供的域名为 `yuanyiagentzhandui.cn`。该域名属于队友；当前尚未确认 Cloudflare Zone、网站托管和公网 DNS 已配置完成。以下为上线前待办，不代表公网服务已可用。
+
+本节是当前域名安排的唯一有效指令，优先于本文后续 2026-10-07 的历史公网地址说明。项目使用队友新域名；本人原有域名不属于本项目，不配置、不迁移、不作为备用地址。
+
+### 建议地址分工
+
+| 用途 | 建议地址 | 负责事项 |
+|---|---|---|
+| 前端网页 | `https://yuanyiagentzhandui.cn`（或队友确认的 `www` 地址） | 队友选择并部署前端托管，配置域名和 HTTPS；本机 `localhost:5173` 仅用于本地开发 |
+| 网页后端 API | `https://api.yuanyiagentzhandui.cn` | 后端负责人在该域名所属 Cloudflare 账户中配置 Tunnel，连接后端主机的 `127.0.0.1:8787` |
+| 平台 RPC（如需） | `https://api.yuanyiagentzhandui.cn/rpc` | 与网页 REST API 分开验收；不得因只开放 `/rpc` 而误以为前端已联通 |
+
+### 按负责人执行
+
+**队友（域名及前端）**
+
+1. 确认 `yuanyiagentzhandui.cn` 已添加到其 Cloudflare 账户并处于 Active 状态；确认前端托管方式（现有托管平台、Cloudflare Pages/Workers 等）及最终网页源站地址。
+2. 配置根域名或约定的 `www` 子域名指向前端托管并启用 HTTPS。
+3. 将域名 Zone 管理权限授予后端负责人，或与后端负责人协同在同一个 Cloudflare 账户内创建后端 Tunnel。不要在聊天、仓库或 `.env` 示例中发送 API Token、Tunnel Token、私钥。
+4. 等后端负责人确认 API 已公网验收且给出正式地址后，再在前端 `.env.local` 配置：
+
+```env
+VITE_AGENT_API=https://api.yuanyiagentzhandui.cn
+```
+
+5. 重新启动前端并验收：网页可通过 HTTPS 打开，能读取 `/health`、`/dashboard/summary`、创建和查询战局；记录前端地址、API 地址、Git 提交版本和失败请求的 `X-Request-ID`。
+
+**后端负责人（8787 服务）**
+
+1. 先取得队友域名所属 Cloudflare Zone 的必要权限。Tunnel 与目标 DNS 记录必须由同一 Cloudflare 账户管理；现有其他账户的 Tunnel 不能直接替代。
+2. 将 `api.yuanyiagentzhandui.cn` 的 Tunnel Connector 运行在后端主机，并转发到 `http://127.0.0.1:8787`。仅转发 `/rpc` 不足以支持当前网页；前端实际调用 `/health`、`/dashboard/summary`、`/battles` 和 `/battles/{battle_id}`。
+3. 上线前核对公开路由、`AGENT_API_KEY`、`AGENT_PROTECT_READS`、限流和 CORS。不得把后端 API Key 放入 Vite 前端变量；若当前鉴权设置会让浏览器请求得到 401，先设计不暴露密钥的访问方案再开放网页 API。
+4. 默认不公开 `/metrics`、`/docs`、`/openapi.json`、内部 Agent 管理接口和后台管理页面。若平台只需要 RPC，单独确认 `/rpc` 的鉴权、证书要求和验收方式。
+5. 确认最终前端 Origin 后，将其精确加入后端 CORS 白名单；不要使用过宽的通配来源。
+
+### 切换和验收边界
+
+- 新地址验收通过前，使用本机后端进行本地开发；跨电脑远程联调须等待队友域名下的 API 完成验收，不要临时改用本人原有域名。
+- 不要修改或删除本人原有域名、旧 DNS、旧 Tunnel；它们不属于本项目，可能有其他用途。
+- 公网 DNS 目前尚未确认有可用的网站记录。注册了域名不等于前端网站和后端 API 已上线。
+- 只有前端 HTTPS 页面、浏览器 CORS、鉴权、`low/mid/high` 创建战局、历史列表和详情均通过，才回填“前后端公网联调完成”。
+
+### 队友回执
+
+```text
+域名前后端部署回执：
+
+1. Cloudflare Zone 状态及管理账户确认：
+2. 前端托管平台及最终 HTTPS 地址：
+3. 后端 API HTTPS 地址：
+4. 前端 VITE_AGENT_API：
+5. /health 与 /dashboard/summary：
+6. 创建 low/mid/high 战局：
+7. 历史列表和详情：
+8. 浏览器 CORS/鉴权结果：
+9. Git 提交版本：
+10. 未解决问题及 X-Request-ID：
+```
+
 ## 当前优先待办（请先完成）
 
 > 更新时间：2026-10-07。完成后请在 GitHub Issue 或提交说明中回填结果。
@@ -28,14 +89,14 @@
 
 ### 公网状态（后端负责人处理）
 
-2026-10-07 本轮检查中，`https://api.kcwx.online/health` 曾返回 Cloudflare 502/530，随后恢复 HTTP 200；本机后台始终返回 200。公网依赖后端主机和 Cloudflare Tunnel，存在短时波动；每次远程联调前请重查 `/health`，失败时先暂停远程验收。队友如需先开发，可把 `VITE_AGENT_API` 指向自己的本地后端；不要修改 DNS，也不需要登录后端 Cloudflare 账号。复测失败时记录状态码、时间和响应头并回报后端负责人。
+2026-10-08 确认队友的新域名尚未完成托管、DNS 和后端 API 配置。跨电脑远程联调暂缓；本地开发时仅在前后端同机运行的情况下将 `VITE_AGENT_API` 指向 `http://127.0.0.1:8787`。新域名 API 上线后，每次远程联调前先检查 `/health`，失败时暂停验收并记录状态码、时间、响应头和 `X-Request-ID`。
 
 | 顺序 | 待办 | 操作 | 完成标准 |
 |---|---|---|---|
 | 0 | 兼容 `agentSource` 三态 | 若页面展示来源，更新 TS 类型、标签映射及未知值处理 | 三种来源均显示正确中文；未知值显示「来源未知」；未冒称 LLM |
 | 1 | 拉取最新代码 | `git pull origin main` | 已包含最新 `vite.config.ts` 和联调文档 |
 | 2 | 确认目录 | 进入 `frontend/frontend-ui` | 当前目录存在 `package.json` |
-| 3 | 配置后端地址 | `.env.local` 写入 `VITE_AGENT_API=https://api.kcwx.online` | 不使用旧 Quick Tunnel 后端地址 |
+| 3 | 配置后端地址 | 同机本地开发使用 `http://127.0.0.1:8787`；远程联调等待后端负责人确认新域名 API 已验收后配置 | 不使用本人原有域名；不得提前填写未验收地址 |
 | 4 | 安装并启动前端 | `npm install`；`npm run dev -- --host 0.0.0.0` | `http://localhost:5173` 可打开 |
 | 5 | 启动前端公网 Tunnel | `cloudflared tunnel --url http://127.0.0.1:5173` | 生成新的 `https://*.trycloudflare.com` 地址 |
 | 6 | 完成主流程联调 | 分别测试 `low`、`mid`、`high` | 页面显示攻击样本、caught、risks、fixed |
@@ -48,7 +109,8 @@
 git pull origin main
 cd frontend\frontend-ui
 npm install
-Set-Content .env.local "VITE_AGENT_API=https://api.kcwx.online"
+# 仅当后端也运行在本机时使用此地址；跨电脑联调等待新公网 API 验收完成
+Set-Content .env.local "VITE_AGENT_API=http://127.0.0.1:8787"
 npm run dev -- --host 0.0.0.0
 ```
 
@@ -63,9 +125,9 @@ cloudflared tunnel --url http://127.0.0.1:5173
 
 ### 固定联调约定
 
-- 后端 API 固定使用：`https://api.kcwx.online`。
+- 后端 API 正式地址待队友域名下的 Tunnel 配置和公网验收完成后公布；当前跨电脑联调暂停。
 - 前端页面临时地址以队友 Tunnel 终端输出为准，旧地址失效后不要继续使用。
-- 不需要队友登录我的 Cloudflare 账号，也不需要 Tunnel 凭据、API Token、数据库或证书。
+- 域名属于队友，DNS/Tunnel 操作须在域名所属 Cloudflare 账户进行；不需要向前端队友发送 Tunnel 凭据、API Token、数据库或证书。
 - `api.orangecc.cc` 是外部 AI 网关，不能配置为 `VITE_AGENT_API`。
 - Vite 报 `Blocked request` 时先 `git pull origin main`，再重启 Vite；不要改 DNS。
 
