@@ -27,6 +27,8 @@ D:\梧桐
 
 协作边界详见 `docs/COLLABORATION_BOUNDARIES.md`；前后端联调、启动和排障详见 `docs/INTEGRATION_GUIDE.md`。
 
+前端队友当前待办详见 `frontend/FRONTEND_TODO.md`，请先完成文件顶部的“当前优先待办”。
+
 ## 后端启动
 
 ```powershell

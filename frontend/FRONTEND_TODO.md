@@ -1,5 +1,67 @@
 # 前端待办清单
 
+## 当前优先待办（请先完成）
+
+> 更新时间：2026-10-07。完成后请在 GitHub Issue 或提交说明中回填结果。
+
+| 顺序 | 待办 | 操作 | 完成标准 |
+|---|---|---|---|
+| 1 | 拉取最新代码 | `git pull origin main` | 已包含最新 `vite.config.ts` 和联调文档 |
+| 2 | 确认目录 | 进入 `frontend/frontend-ui` | 当前目录存在 `package.json` |
+| 3 | 配置后端地址 | `.env.local` 写入 `VITE_AGENT_API=https://api.kcwx.online` | 不使用旧 Quick Tunnel 后端地址 |
+| 4 | 安装并启动前端 | `npm install`；`npm run dev -- --host 0.0.0.0` | `http://localhost:5173` 可打开 |
+| 5 | 启动前端公网 Tunnel | `cloudflared tunnel --url http://127.0.0.1:5173` | 生成新的 `https://*.trycloudflare.com` 地址 |
+| 6 | 完成主流程联调 | 分别测试 `low`、`mid`、`high` | 页面显示攻击样本、caught、risks、fixed |
+| 7 | 验收异常状态 | 空主题、超长主题、重复点击、网络失败 | 页面显示中文提示，不显示堆栈 |
+| 8 | 提交联调回执 | 按本文末尾模板填写 | 包含公网前端地址和已知问题 |
+
+### 队友直接执行的命令
+
+```powershell
+git pull origin main
+cd frontend\frontend-ui
+npm install
+Set-Content .env.local "VITE_AGENT_API=https://api.kcwx.online"
+npm run dev -- --host 0.0.0.0
+```
+
+另开一个 PowerShell 窗口启动临时前端公网地址：
+
+```powershell
+cd frontend\frontend-ui
+cloudflared tunnel --url http://127.0.0.1:5173
+```
+
+把命令输出的最新 `https://*.trycloudflare.com` 地址发回。Tunnel 窗口不能关闭，否则会出现 Cloudflare `1033` 或 `530`。
+
+### 固定联调约定
+
+- 后端 API 固定使用：`https://api.kcwx.online`。
+- 前端页面临时地址以队友 Tunnel 终端输出为准，旧地址失效后不要继续使用。
+- 不需要队友登录我的 Cloudflare 账号，也不需要 Tunnel 凭据、API Token、数据库或证书。
+- `api.orangecc.cc` 是外部 AI 网关，不能配置为 `VITE_AGENT_API`。
+- Vite 报 `Blocked request` 时先 `git pull origin main`，再重启 Vite；不要改 DNS。
+
+### 前端联调回执（必须填写）
+
+```text
+前端联调回执：
+
+1. 当前提交版本：
+2. 前端本地地址：
+3. 前端公网地址：
+4. VITE_AGENT_API：
+5. low 对抗：成功/失败
+6. mid 对抗：成功/失败
+7. high 对抗：成功/失败
+8. attackerOut.samples 展示：成功/失败
+9. defenderOut（caught/risks/fixed）展示：成功/失败
+10. 历史列表和详情：成功/失败
+11. npm run lint/build：
+12. 当前问题、截图和 X-Request-ID：
+13. 需要后端配合：
+```
+
 ## P0 必须完成
 
 | 编号 | 待办 | 后端依赖 | 验收标准 |
