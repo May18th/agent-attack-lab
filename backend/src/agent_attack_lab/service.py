@@ -8,11 +8,13 @@ import time
 import uuid
 from collections import defaultdict, deque
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Lock
 from typing import Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from acps_sdk.aip import (
@@ -64,6 +66,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
 )
+
+_frontend_dist = Path(__file__).resolve().parents[3] / "frontend" / "frontend-ui" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/ui", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend-ui")
 
 
 class AttackRequest(BaseModel):

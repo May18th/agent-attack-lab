@@ -179,15 +179,20 @@ cd "D:\梧桐\backend"
 
 | 编号 | 状态 | 说明 |
 |---|---|---|
-| FE-01 至 FE-02 | 待队友提交 | 前端工程和环境变量必须进入 `frontend/` |
-| FE-03 至 FE-10 | 待联调 | API 客户端、表单、主流程、结果展示和异常状态 |
+| FE-01 至 FE-09 | 已完成 | 工程、环境变量、API 客户端、表单、主流程、结果展示和异常状态已实现 |
+| FE-10 | 本地已完成/公网待复核 | 本地前后端联调完成；公网入口当前由 Cloudflare 连接器返回 503，待后端恢复 |
 
 ### 前端 P1/P2
 
-- FE-11 至 FE-13：历史战局和健康状态，后端接口已准备好。
-- FE-14 至 FE-16：安全展示、响应式布局和前端测试，等待前端源码恢复后验收。
+- FE-11 至 FE-16：已完成，包含历史列表、详情恢复、健康状态、安全文本展示、响应式布局和前端测试。
 - WebSocket、arbiter、score、round、correlationId、事件时间线属于 P2，不阻塞第一版。
 
 ### 当前阶段
 
-GitHub `main` 分支已经包含 `frontend/frontend-ui` 的前端源码。当前进入 N1-N6 联调验收：队友拉取最新代码后，确认环境变量、主流程、异常状态、响应式布局和前端测试。
+GitHub `main` 分支已经包含 `frontend/frontend-ui` 的前端源码。前端 FE-01 至 FE-16 已完成本地验收；当前只剩公网 Tunnel 连接器恢复后复核 FE-10。
+
+### 后端联调提示
+
+- 本机后端 `http://127.0.0.1:8787/health` 当前应返回 200。
+- Cloudflare `api.kcwx.online` 当前公网请求返回 503，需后端队友检查命名 Tunnel 连接器是否连接到本机 8787，并确认只有一个有效连接器。
+- 公网恢复后请复核 `GET /health`、`POST /battles`（low/mid/high）和前端 `VITE_AGENT_API=https://api.kcwx.online`。

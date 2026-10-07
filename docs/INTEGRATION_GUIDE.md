@@ -18,7 +18,7 @@
 当前后端 DNS 路由由 Cloudflare 管理：
 
 ~~~text
-api.kcwx.online CNAME abe90b02-7329-4488-8d1e-aa3e91725b37.cfargotunnel.com
+api.kcwx.online CNAME 6e5a79dd-807c-4dd5-a970-1ef94fe794dc.cfargotunnel.com
 ~~~
 
 不要把 DNS 指向其他 Tunnel ID，也不要在阿里云注册商 DNS 中重复创建这条记录。
