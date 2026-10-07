@@ -8,8 +8,36 @@ from threading import Lock
 from typing import Any
 
 
+class _PooledResult:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self._rows = rows
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return self._rows
+
+
+class _PooledConnection:
+    """Compatibility adapter for the store's single-statement operations."""
+
+    def __init__(self, pool: Any) -> None:
+        self._pool = pool
+
+    def execute(self, statement: str, parameters: Any = ()) -> _PooledResult:
+        with self._pool.connection() as connection:
+            cursor = connection.execute(statement, parameters)
+            rows = cursor.fetchall() if cursor.description else []
+            connection.commit()
+        return _PooledResult(rows)
+
+    def commit(self) -> None:
+        return
+
+
 class BattleStore:
-    """Small SQLite store that keeps the existing API independent of ORM choice."""
+    """Store battle records in SQLite or pooled PostgreSQL connections."""
 
     def __init__(self, database_path: str | None = None) -> None:
         configured_path = database_path or os.getenv("AGENT_BATTLE_DATABASE_URL") or os.getenv(
@@ -17,19 +45,25 @@ class BattleStore:
         )
         self._is_postgres = configured_path.startswith(("postgresql://", "postgres://"))
         self._lock = Lock()
+        self._pool = None
         if self._is_postgres:
             try:
-                import psycopg
+                from psycopg_pool import ConnectionPool
                 from psycopg.rows import dict_row
             except ImportError as exc:
                 raise RuntimeError(
-                    "PostgreSQL 需要安装 psycopg[binary]，或改用 AGENT_BATTLE_DB 指定 SQLite 文件。"
+                    "PostgreSQL 需要安装 psycopg[binary,pool]，或改用 AGENT_BATTLE_DB 指定 SQLite 文件。"
                 ) from exc
-            self._connection = psycopg.connect(
-                configured_path,
-                row_factory=dict_row,
-                autocommit=False,
+            self._pool = ConnectionPool(
+                conninfo=configured_path,
+                min_size=1,
+                max_size=max(2, int(os.getenv("AGENT_DB_POOL_MAX_SIZE", "10"))),
+                timeout=10,
+                kwargs={"row_factory": dict_row},
+                open=True,
             )
+            self._pool.wait(timeout=10)
+            self._connection = _PooledConnection(self._pool)
         else:
             if configured_path != ":memory:":
                 Path(configured_path).parent.mkdir(parents=True, exist_ok=True)
@@ -47,6 +81,9 @@ class BattleStore:
 
     def _initialize_sqlite_schema(self) -> None:
         self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        self._connection.execute(
             """
             CREATE TABLE IF NOT EXISTS battles (
                 id TEXT PRIMARY KEY,
@@ -84,11 +121,17 @@ class BattleStore:
         )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_battles_status_created ON battles (status, created_at DESC)"
+        )
+        self._connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (version) VALUES (1)"
         )
         self._connection.commit()
 
     def _initialize_postgres_schema(self) -> None:
         self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        self._connection.execute(
             """
             CREATE TABLE IF NOT EXISTS battles (
                 id TEXT PRIMARY KEY,
@@ -126,6 +169,9 @@ class BattleStore:
         )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_battles_status_created ON battles (status, created_at DESC)"
+        )
+        self._connection.execute(
+            "INSERT INTO schema_migrations (version) VALUES (1) ON CONFLICT (version) DO NOTHING"
         )
         self._connection.commit()
 
@@ -241,6 +287,10 @@ class BattleStore:
         with self._lock:
             row = self._connection.execute("SELECT COUNT(*) AS total FROM battle_events").fetchone()
         return int(row["total"])
+
+    def close(self) -> None:
+        if self._pool is not None:
+            self._pool.close()
 
     @staticmethod
     def _to_record(row: sqlite3.Row) -> dict[str, Any]:

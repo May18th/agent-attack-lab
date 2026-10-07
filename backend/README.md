@@ -44,6 +44,7 @@ uv run pytest -q
 - `GET /battles/{battle_id}/events`：读取持久化事件时间线。
 - `GET /battles/{battle_id}/replay`：按事件顺序获取回放数据。
 - `GET /battles/{battle_id}/events/stream?follow=true`：SSE 事件流。
+- `POST /battles/{battle_id}/retry`：重试失败的异步战局。
 - `WS /ws/battles/{battle_id}`：WebSocket 事件推送。
 - `GET /reports/{battle_id}?format=markdown`：下载 Markdown 战报；默认返回 JSON 战报。
 - `GET /leaderboard`：按攻击方、防守方累计得分统计排行榜。
@@ -73,7 +74,13 @@ SQLite 开发库默认启用 WAL 和 5 秒忙等待，并为时间、难度和�
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8787/battles?background=true' -ContentType 'application/json' -Body '{"difficulty":"high","topic":"提示注入"}'
 ```
 
-该模式先返回 `pending/running` 战局，随后通过事件接口、SSE 或 WebSocket 更新到 `completed`。稳定公网隧道和 PostgreSQL 配置见 `docs/DEPLOYMENT.md`。
+该模式先返回 `pending` 战局，后台按阶段执行并通过事件接口、SSE 或 WebSocket 更新到 `completed`。服务重启时会恢复尚未结束的战局；失败后可调用重试接口。后台页面使用 SSE 实时显示事件并在完成后更新战况。
+
+事件记录默认限制为 32 KB；超限样本会截短并添加 `dataTruncated` 标记，可通过 `AGENT_EVENT_DATA_MAX_BYTES` 调整，最小值为 1 KB。
+
+设置 `AGENT_PROTECT_READS=1` 后，战局列表/详情、事件、回放、战报、排行榜和 SSE 接口都需要 `X-API-Key`。本地默认关闭。启用时，浏览器页面也必须能安全提供该密钥，因此不要将服务端密钥直接写进公开前端代码。
+
+SQLite 会记录 `schema_migrations` 基线版本并以幂等 DDL 自动补齐当前表和索引。Alembic 版本迁移位于 `backend/alembic/`，执行 `uv run alembic upgrade head`。PostgreSQL 使用 psycopg 连接池，最大连接数可通过 `AGENT_DB_POOL_MAX_SIZE` 调整。详见 `docs/DEPLOYMENT.md`。
 
 战局默认保存到 `.data/battles.sqlite3`，服务重启后仍保留。需要指定其他数据库路径时设置环境变量：
 

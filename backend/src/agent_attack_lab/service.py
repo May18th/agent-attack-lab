@@ -6,6 +6,7 @@ import os
 import asyncio
 import time
 import uuid
+from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -126,6 +127,10 @@ _request_total_duration_ms = 0.0
 _request_max_duration_ms = 0.0
 _rate_limited_count = 0
 _api_key = os.getenv("AGENT_API_KEY", "").strip()
+_protect_read_routes = os.getenv("AGENT_PROTECT_READS", "0").strip().lower() in {"1", "true", "yes"}
+_event_data_max_bytes = 32768
+_leaderboard_cache: tuple[float, dict[str, Any]] | None = None
+_recovery_tasks: set[asyncio.Task[Any]] = set()
 
 
 def _env_int(name: str, default: int, minimum: int = 0) -> int:
@@ -136,6 +141,7 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
 
 
 _rate_limit_per_minute = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 60)
+_event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=1024)
 _rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _rate_lock = Lock()
 
@@ -198,6 +204,11 @@ def _api_key_dependency(request: Request) -> None:
     _check_api_key(request)
 
 
+def _read_auth_dependency(request: Request) -> None:
+    if _protect_read_routes:
+        _check_api_key(request)
+
+
 def _rate_limit_dependency(request: Request) -> None:
     """Apply a small in-process window limit to mutating agent endpoints."""
     global _rate_limited_count
@@ -221,6 +232,35 @@ def _rate_limit_dependency(request: Request) -> None:
         window.append(now)
 
 
+def _invalidate_leaderboard_cache() -> None:
+    global _leaderboard_cache
+    _leaderboard_cache = None
+
+
+def _bounded_event_data(data: dict[str, Any]) -> dict[str, Any]:
+    serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    if len(serialized.encode("utf-8")) <= _event_data_max_bytes:
+        return data
+    compact = dict(data)
+    sample = compact.get("sample")
+    if isinstance(sample, dict):
+        sample_copy = dict(sample)
+        content = str(sample_copy.get("content", ""))
+        sample_copy["content"] = content[:2048]
+        sample_copy["contentTruncated"] = len(content) > 2048
+        compact["sample"] = sample_copy
+    compact["dataTruncated"] = True
+    compact["originalBytes"] = len(serialized.encode("utf-8"))
+    compact_serialized = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+    if len(compact_serialized.encode("utf-8")) <= _event_data_max_bytes:
+        return compact
+    return {
+        "dataTruncated": True,
+        "originalBytes": len(serialized.encode("utf-8")),
+        "preview": serialized[: max(1, _event_data_max_bytes // 8)],
+    }
+
+
 def _event(battle_id: str, sequence: int, event_type: str, status: str, data: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": f"event-{uuid.uuid4()}",
@@ -229,7 +269,7 @@ def _event(battle_id: str, sequence: int, event_type: str, status: str, data: di
         "type": event_type,
         "status": status,
         "createdAt": datetime.now(timezone.utc).isoformat(),
-        "data": data,
+        "data": _bounded_event_data(data),
     }
 
 
@@ -250,11 +290,13 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
     try:
         record["status"] = "running"
         _battle_store.save(record)
+        _invalidate_leaderboard_cache()
         add_event("attack.started", "running", {"topic": payload.topic})
         await asyncio.sleep(0.35)
         attack_result = attack(AttackRequest.model_validate(payload.model_dump()))
         record["attackerOut"] = attack_result
         _battle_store.save(record)
+        _invalidate_leaderboard_cache()
         add_event("attack.completed", "completed", {"sampleCount": len(attack_result["samples"])})
 
         defender_results: list[dict[str, Any]] = []
@@ -264,6 +306,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             defender_results.append(defense)
             record["defenderOut"] = defender_results
             _battle_store.save(record)
+            _invalidate_leaderboard_cache()
             add_event(
                 "round.completed",
                 "completed",
@@ -278,11 +321,40 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         add_event("defense.completed", "completed", {"roundCount": len(defender_results)})
         record["status"] = "completed"
         _battle_store.save(record)
+        _invalidate_leaderboard_cache()
         add_event("battle.completed", "completed", {"status": record["status"]})
     except Exception as exc:
         record["status"] = "failed"
         _battle_store.save(record)
+        _invalidate_leaderboard_cache()
         add_event("battle.failed", "failed", {"error": str(exc)})
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Resume persisted pending/running battles after a process restart."""
+    recovered_ids: set[str] = set()
+    for status in ("pending", "running"):
+        for record in _battle_store.list(limit=200, status=status):
+            if record["id"] in recovered_ids:
+                continue
+            recovered_ids.add(record["id"])
+            payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
+            task = asyncio.create_task(_run_battle_async(record["id"], payload))
+            _recovery_tasks.add(task)
+            task.add_done_callback(_recovery_tasks.discard)
+    try:
+        yield
+    finally:
+        pending = list(_recovery_tasks)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        _battle_store.close()
+
+
+app.router.lifespan_context = _lifespan
 
 
 @app.get("/", include_in_schema=False)
@@ -449,6 +521,30 @@ def dashboard() -> str:
     th { color: #8ea1b7; }
     a { color: #72dcca; }
     .error { color: #ffb7bd; background: #311b25; border-color: #71323e; }
+    .event-panel { margin-top: 16px; padding: 13px 15px; border: 1px solid #263950; border-radius: 9px; background: #0a1220; }
+    .event-title { display: flex; justify-content: space-between; gap: 12px; color: #dce8f4; font-size: 12px; font-weight: 700; }
+    .event-title small { color: #7f94aa; font-size: 11px; font-weight: 400; }
+    .event-log { display: grid; gap: 7px; max-height: 165px; overflow: auto; margin: 10px 0 0; padding: 0; list-style: none; }
+    .event-log li { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 9px; padding: 7px 8px; border-left: 2px solid #347fc2; background: #111e31; color: #aebed0; font-size: 11px; overflow-wrap: anywhere; }
+    .event-log time { color: #71869e; font-variant-numeric: tabular-nums; }
+    .event-log .event-done { border-left-color: #49d1b7; }
+    .event-log .event-failed { border-left-color: #ef777f; color: #ffb7bd; }
+    .panel-title { align-items: flex-start; }
+    .panel-title a { max-width: 170px; text-align: right; line-height: 1.35; }
+    .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .metric { min-width: 0; overflow: hidden; }
+    .metric b { overflow-wrap: anywhere; word-break: break-word; }
+    .metric span { overflow-wrap: anywhere; word-break: break-word; }
+    #latest { font-size: 18px; line-height: 1.25; }
+    table { table-layout: fixed; }
+    th, td { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+    td:last-child { text-align: left; }
+    th:nth-child(1), td:nth-child(1) { width: 29%; }
+    th:nth-child(2), td:nth-child(2) { width: 24%; }
+    th:nth-child(3), td:nth-child(3) { width: 29%; }
+    th:nth-child(4), td:nth-child(4) { width: 18%; }
+    @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } .topbar { padding-left: 22px; padding-right: 22px; } main { padding: 22px; } }
+    @media (max-width: 560px) { .metrics { grid-template-columns: 1fr; } .metric { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; } .metric span { margin-top: 0; text-align: right; } .flow { grid-template-columns: 1fr; } .battle-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .panel-title { display: block; } .panel-title a { display: inline-block; margin-top: 8px; text-align: left; } }
     @media (max-width: 760px) { .topbar { padding: 24px 18px 20px; } h1 { font-size: 25px; } main { padding: 18px; } .panel { padding: 18px; } }
   </style>
 </head>
@@ -467,13 +563,16 @@ def dashboard() -> str:
         </div>
         <div class="panel"><div class="panel-title"><h2>历史概览（Battle overview）</h2><a href="/docs">接口文档（API docs）</a></div><div class="metrics"><div class="metric"><b id="total">0</b><span>战局总数（Total battles）</span></div><div class="metric"><b id="high-count">0</b><span>高难度（High difficulty）</span></div><div class="metric"><b id="latest">--</b><span>最近状态（Latest status）</span></div></div><div class="table-wrap"><table><thead><tr><th>主题（Topic）</th><th>难度（Difficulty）</th><th>状态（Status）</th><th>时间（Time）</th></tr></thead><tbody id="history"><tr><td colspan="4" class="empty">暂无历史战局（No battle history）</td></tr></tbody></table></div></div>
       </section>
-      <section class="panel"><div class="panel-title"><h2>当前战况（Current battle）</h2><span id="battle-id">尚未开始（Not started）</span></div><div id="result" class="result"><div class="empty">提交主题后开始一轮攻防（Submit a topic to start）</div></div></section>
+      <section class="panel"><div class="panel-title"><h2>当前战况（Current battle）</h2><span id="battle-id">尚未开始（Not started）</span></div><div class="event-panel"><div class="event-title"><span>实时过程（Live timeline）</span><small id="event-state">等待开始（Waiting）</small></div><ol id="event-log" class="event-log"><li>创建战局后显示攻击和防守进度（Progress appears after starting a battle）</li></ol></div><div id="result" class="result"><div class="empty">提交主题后开始一轮攻防（Submit a topic to start）</div></div></section>
     </div>
   </main>
   <script>
     var $ = function (id) { return document.getElementById(id); };
     function escapeHtml(value) { return String(value).replace(/[&<>\"']/g, function (char) { return ({"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"&#039;"})[char]; }); }
     function formatTime(value) { return value ? new Date(value).toLocaleString("zh-CN", {hour12: false}) : "--"; }
+    function eventLabel(type) { return ({"battle.created":"战局已创建（Battle created）","battle.retry":"战局已重新提交（Battle retried）","attack.started":"攻击阶段开始（Attack started）","attack.completed":"攻击样本已生成（Attack samples generated）","round.completed":"本轮防守检测完成（Defense round completed）","defense.completed":"防守阶段完成（Defense completed）","battle.completed":"战局完成（Battle completed）","battle.failed":"战局失败（Battle failed）"})[type] || type; }
+    function addEvent(event) { var list = $("event-log"); var item = document.createElement("li"); item.className = event.type === "battle.failed" ? "event-failed" : event.type === "battle.completed" ? "event-done" : ""; var time = document.createElement("time"); time.textContent = formatTime(event.createdAt); var text = document.createElement("span"); var round = event.data && event.data.round ? " · 第 " + event.data.round + " 轮（Round " + event.data.round + "）" : ""; text.textContent = eventLabel(event.type) + round; item.appendChild(time); item.appendChild(text); list.appendChild(item); list.scrollTop = list.scrollHeight; $("event-state").textContent = event.status ? statusLabel(event.status) : "实时接收（Receiving）"; }
+    async function followEvents(battleId) { $("event-log").innerHTML = ""; $("event-state").textContent = "连接中（Connecting）"; try { var response = await fetch("/battles/" + encodeURIComponent(battleId) + "/events/stream?follow=true"); if (!response.ok || !response.body) throw new Error("HTTP " + response.status); var reader = response.body.getReader(); var decoder = new TextDecoder(); var buffer = ""; var lineBreak = String.fromCharCode(10); while (true) { var chunk = await reader.read(); if (chunk.done) break; buffer += decoder.decode(chunk.value, {stream: true}); var blocks = buffer.split(lineBreak + lineBreak); buffer = blocks.pop() || ""; blocks.forEach(function (block) { var line = block.split(lineBreak).find(function (entry) { return entry.indexOf("data: ") === 0; }); if (!line) return; var event = JSON.parse(line.slice(6)); addEvent(event); if (event.type === "battle.completed") { fetch("/battles/" + encodeURIComponent(battleId)).then(function (item) { return item.json(); }).then(renderBattle); $("event-state").textContent = "已完成（Completed）"; } else if (event.type === "battle.failed") { $("event-state").textContent = "失败（Failed）"; } }); } } catch (error) { $("event-state").textContent = "实时连接中断（Live connection interrupted）"; } }
     function difficulty(value) { return ({low: "低（Low）", mid: "中（Medium）", high: "高（High）"})[value] || value; }
     function sampleType(value) { return ({defect: "缺陷（Defect）", violation: "违规（Violation）", vuln: "漏洞（Vulnerability）"})[value] || value; }
     function statusLabel(value) { return ({pending: "等待中（Pending）", running: "进行中（Running）", completed: "已完成（Completed）", failed: "失败（Failed）", recommended: "建议（Recommended）"})[value] || value; }
@@ -515,7 +614,7 @@ def dashboard() -> str:
     }
     checkHealth();
     window.setInterval(checkHealth, 30000);
-    $("battle-form").addEventListener("submit", function (event) { event.preventDefault(); var button = $("start"); var topic = $("topic").value.trim(); var difficultyValue = document.querySelector("input[name=difficulty]:checked").value; if (!topic) return; button.disabled = true; button.textContent = "攻防进行中（Battle running）..."; $("result").innerHTML = '<div class="empty">正在生成攻击样本并执行防守检测（Generating samples and running detection）</div>'; fetch("/battles", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({topic: topic, difficulty: difficultyValue})}).then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); }).then(function (battle) { renderBattle(battle); loadHistory(); }).catch(function (error) { $("result").innerHTML = '<div class="error">战局创建失败（Battle creation failed）：' + escapeHtml(error.message) + '</div>'; }).finally(function () { button.disabled = false; button.textContent = "开始攻防（Start battle）"; }); });
+    $("battle-form").addEventListener("submit", function (event) { event.preventDefault(); var button = $("start"); var topic = $("topic").value.trim(); var difficultyValue = document.querySelector("input[name=difficulty]:checked").value; if (!topic) return; button.disabled = true; button.textContent = "攻防进行中（Battle running）..."; $("event-log").innerHTML = ""; $("result").innerHTML = '<div class="empty">正在准备攻防战局（Preparing battle）</div>'; fetch("/battles?background=true", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({topic: topic, difficulty: difficultyValue})}).then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); }).then(function (battle) { renderBattle(battle); loadHistory(); void followEvents(battle.id); }).catch(function (error) { $("result").innerHTML = '<div class="error">战局创建失败（Battle creation failed）：' + escapeHtml(error.message) + '</div>'; $("event-state").textContent = "创建失败（Creation failed）"; }).finally(function () { button.disabled = false; button.textContent = "开始攻防（Start battle）"; }); });
     loadHistory();
   </script>
 </body>
@@ -551,6 +650,9 @@ def metrics() -> dict[str, Any]:
         "maxLatencyMs": round(_request_max_duration_ms, 2),
         "rateLimited": _rate_limited_count,
         "rateLimitPerMinute": _rate_limit_per_minute,
+        "protectReadRoutes": _protect_read_routes,
+        "eventDataMaxBytes": _event_data_max_bytes,
+        "recoveryTasks": len(_recovery_tasks),
         "battles": _battle_store.count(),
         "events": _battle_store.count_events(),
     }
@@ -584,6 +686,7 @@ def create_battle(
             defenderOut=[],
         )
         _battle_store.save(record.model_dump())
+        _invalidate_leaderboard_cache()
         _battle_store.save_event(
             _event(
                 battle_id,
@@ -634,10 +737,50 @@ def create_battle(
         defenderOut=defense_results,
     )
     _battle_store.save(record.model_dump())
+    _invalidate_leaderboard_cache()
     add_event("battle.completed", "completed", {"status": record.status})
     for event in events:
         _battle_store.save_event(event)
     return record
+
+
+@app.post(
+    "/battles/{battle_id}/retry",
+    dependencies=[Depends(_rate_limit_dependency)],
+    status_code=202,
+    summary="重试失败战局",
+    description="将失败战局重置为等待中并重新执行；需要配置 API Key 时沿用创建战局的密钥。",
+    tags=["战局接口"],
+)
+def retry_battle(
+    battle_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> BattleRecord:
+    _check_api_key(request)
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    if record["status"] != "failed":
+        raise HTTPException(status_code=409, detail="只有失败战局可以重试")
+    record["status"] = "pending"
+    record["attackerOut"] = {"samples": []}
+    record["defenderOut"] = []
+    _battle_store.save(record)
+    _invalidate_leaderboard_cache()
+    events = _battle_store.list_events(battle_id)
+    _battle_store.save_event(
+        _event(
+            battle_id,
+            max((item["sequence"] for item in events), default=0) + 1,
+            "battle.retry",
+            "pending",
+            {"topic": record["topic"], "difficulty": record["difficulty"]},
+        )
+    )
+    payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
+    background_tasks.add_task(_run_battle_async, battle_id, payload)
+    return BattleRecord.model_validate(record)
 
 
 @app.get(
@@ -645,6 +788,7 @@ def create_battle(
     summary="查询历史战局",
     description="支持分页、难度和关键词筛选。",
     tags=["战局接口"],
+    dependencies=[Depends(_read_auth_dependency)],
 )
 def list_battles(
     limit: int = Query(default=50, ge=1, le=200, description="返回的最大战局数量"),
@@ -661,14 +805,14 @@ def list_battles(
     ]
 
 
-@app.get("/battles/{battle_id}/events", include_in_schema=False)
+@app.get("/battles/{battle_id}/events", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
 def get_battle_events(battle_id: str) -> list[BattleEvent]:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return [BattleEvent.model_validate(item) for item in _battle_store.list_events(battle_id)]
 
 
-@app.get("/battles/{battle_id}/replay", include_in_schema=False)
+@app.get("/battles/{battle_id}/replay", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
 def replay_battle(battle_id: str) -> dict[str, Any]:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
@@ -680,6 +824,7 @@ def replay_battle(battle_id: str) -> dict[str, Any]:
     summary="查询战局详情",
     description="按战局编号恢复攻击、防守和修复结果。",
     tags=["战局接口"],
+    dependencies=[Depends(_read_auth_dependency)],
 )
 def get_battle(battle_id: str) -> BattleRecord:
     record = _battle_store.get(battle_id)
@@ -736,12 +881,13 @@ def _markdown_report(record: dict[str, Any], events: list[dict[str, Any]]) -> st
     return "\n".join(lines) + "\n"
 
 
-@app.get("/battles/{battle_id}/report", include_in_schema=False)
+@app.get("/battles/{battle_id}/report", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
 @app.get(
     "/reports/{battle_id}",
     summary="查看或下载战报",
     description="默认返回 JSON；将 format 设置为 markdown 可下载 Markdown 战报。",
     tags=["战报接口"],
+    dependencies=[Depends(_read_auth_dependency)],
 )
 def battle_report(
     battle_id: str,
@@ -770,8 +916,13 @@ def battle_report(
     summary="查看攻防排行榜",
     description="返回攻击方和防守方的累计得分与对抗轮次。",
     tags=["统计接口"],
+    dependencies=[Depends(_read_auth_dependency)],
 )
 def leaderboard() -> dict[str, Any]:
+    global _leaderboard_cache
+    now = time.monotonic()
+    if _leaderboard_cache and now - _leaderboard_cache[0] < 2:
+        return _leaderboard_cache[1]
     attacker_score = defender_score = 0
     rounds = 0
     for record in _battle_store.list(limit=100000):
@@ -779,15 +930,17 @@ def leaderboard() -> dict[str, Any]:
         attacker_score += attack_points
         defender_score += defend_points
         rounds += len(record["attackerOut"].get("samples", []))
-    return {
+    result = {
         "items": [
             {"agent": "attacker", "score": attacker_score, "rounds": rounds},
             {"agent": "defender", "score": defender_score, "rounds": rounds},
         ],
     }
+    _leaderboard_cache = (now, result)
+    return result
 
 
-@app.get("/battles/{battle_id}/events/stream", include_in_schema=False)
+@app.get("/battles/{battle_id}/events/stream", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
 async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> StreamingResponse:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
@@ -800,9 +953,9 @@ async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> S
             for event in events[sent:]:
                 yield f"id: {event['id']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
                 sent += 1
-            if not follow or sent >= len(events) and sent > 0:
-                if not follow:
-                    break
+            terminal = bool(events and events[-1]["type"] in {"battle.completed", "battle.failed"})
+            if not follow or terminal and sent >= len(events):
+                break
             attempts += 1
             await asyncio.sleep(0.5)
 
@@ -811,6 +964,11 @@ async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> S
 
 @app.websocket("/ws/battles/{battle_id}")
 async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
+    if _protect_read_routes and _api_key:
+        supplied_key = websocket.headers.get("x-api-key") or websocket.query_params.get("api_key")
+        if supplied_key != _api_key:
+            await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
+            return
     if _battle_store.get(battle_id) is None:
         await websocket.close(code=4404, reason="战局不存在")
         return

@@ -1,4 +1,6 @@
 from fastapi.testclient import TestClient
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
 from agent_attack_lab.storage import BattleStore
 import agent_attack_lab.service as service
 
@@ -123,6 +125,132 @@ def test_battle_store_persists_records(tmp_path) -> None:
     first_store.save(record)
     second_store = BattleStore(str(database))
     assert second_store.get("battle-persisted") == record
+    assert first_store._connection.execute("SELECT version FROM schema_migrations").fetchone()[0] == 1
+
+
+def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(tmp_path, monkeypatch) -> None:
+    from alembic import command
+    from alembic.config import Config
+
+    database = tmp_path / "migrated.sqlite3"
+    BattleStore(str(database))
+    monkeypatch.setenv("AGENT_BATTLE_DATABASE_URL", "sqlite:///" + database.as_posix())
+    config = Config(str(service.Path(__file__).parents[1] / "alembic.ini"))
+    command.upgrade(config, "head")
+    command.upgrade(config, "head")
+
+    import sqlite3
+
+    connection = sqlite3.connect(database)
+    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261007_0001"
+    assert connection.execute("SELECT COUNT(*) FROM battles").fetchone()[0] == 0
+
+
+def test_sqlite_store_handles_concurrent_writes(tmp_path) -> None:
+    store = BattleStore(str(tmp_path / "concurrent.sqlite3"))
+
+    def save(index: int) -> None:
+        store.save({
+            "id": f"battle-{index}",
+            "difficulty": "low",
+            "topic": f"topic-{index}",
+            "status": "completed",
+            "createdAt": f"2026-10-07T00:00:{index:02d}+00:00",
+            "attackerOut": {"samples": []},
+            "defenderOut": [],
+        })
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(save, range(24)))
+
+    assert store.count() == 24
+
+
+def test_event_payload_is_bounded(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_event_data_max_bytes", 1024)
+    event = service._event(
+        "battle-large",
+        1,
+        "round.completed",
+        "completed",
+        {"sample": {"content": "x" * 5000}, "caught": []},
+    )
+    encoded = __import__("json").dumps(event["data"], ensure_ascii=False).encode("utf-8")
+    assert len(encoded) <= 1024
+    assert event["data"]["dataTruncated"] is True
+
+
+def test_retry_failed_battle() -> None:
+    record = {
+        "id": "battle-retry-test",
+        "difficulty": "low",
+        "topic": "重试测试",
+        "status": "failed",
+        "createdAt": "2026-10-07T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    }
+    service._battle_store.save(record)
+    response = client.post("/battles/battle-retry-test/retry")
+    assert response.status_code == 202
+    assert response.json()["status"] == "pending"
+    assert client.get("/battles/battle-retry-test").json()["status"] == "completed"
+    assert client.get("/battles/battle-retry-test/events").json()[-1]["type"] == "battle.completed"
+
+
+def test_read_routes_can_be_protected_together(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_protect_read_routes", True)
+    monkeypatch.setattr(service, "_api_key", "read-secret")
+    response = client.post(
+        "/battles",
+        json={"difficulty": "low", "topic": "鉴权测试"},
+        headers={"X-API-Key": "read-secret"},
+    )
+    battle_id = response.json()["id"]
+    for path in (
+        "/battles",
+        f"/battles/{battle_id}",
+        f"/battles/{battle_id}/events",
+        f"/battles/{battle_id}/replay",
+        f"/reports/{battle_id}",
+        "/leaderboard",
+    ):
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers={"X-API-Key": "read-secret"}).status_code == 200
+
+
+def test_follow_sse_stream_emits_complete_event_history() -> None:
+    response = client.post("/battles", json={"difficulty": "low", "topic": "SSE 测试"})
+    battle_id = response.json()["id"]
+    stream = client.get(f"/battles/{battle_id}/events/stream?follow=true")
+    assert stream.status_code == 200
+    assert "battle.created" in stream.text
+    assert "battle.completed" in stream.text
+
+
+def test_lifespan_resumes_interrupted_battle() -> None:
+    battle_id = "battle-recovery-test"
+    service._battle_store.save({
+        "id": battle_id,
+        "difficulty": "low",
+        "topic": "恢复测试",
+        "status": "running",
+        "createdAt": "2026-10-07T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    })
+
+    async def recover() -> None:
+        async with service._lifespan(service.app):
+            for _ in range(40):
+                record = service._battle_store.get(battle_id)
+                if record and record["status"] == "completed":
+                    return
+                await asyncio.sleep(0.1)
+        raise AssertionError("interrupted battle was not resumed")
+
+    asyncio.run(recover())
+    assert service._battle_store.get(battle_id)["status"] == "completed"
 
 
 def test_unknown_battle_returns_404() -> None:

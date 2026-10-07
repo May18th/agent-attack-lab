@@ -78,3 +78,28 @@ cd "D:\梧桐\backend"
 ```
 
 上述脚本仅适用于 SQLite。使用 PostgreSQL 时请使用 `pg_dump`/`pg_restore`，不要把 PostgreSQL 连接串当作 SQLite 路径传给脚本。
+
+## 读接口访问保护和事件限制
+
+公网部署可设置以下环境变量：
+
+```powershell
+$env:AGENT_PROTECT_READS = "1"
+$env:AGENT_EVENT_DATA_MAX_BYTES = "32768"
+```
+
+读保护开启后，战局列表/详情、事件、回放、战报、排行榜和 SSE 事件流都要求 `X-API-Key`。默认关闭以兼容当前前端联调。不要把服务端 API Key 编译进公开前端；公开部署应使用登录会话或由后端提供受控代理。
+
+事件单条数据默认不超过 32 KB。过长攻击样本会截短，返回数据包含 `dataTruncated` 和 `originalBytes`，避免数据库被超大输入拖大。
+
+## 异步战局恢复
+
+`POST /battles?background=true` 会持久化 `pending` 状态和事件。进程启动后会重新调度仍为 `pending` 或 `running` 的战局。明确失败的战局可以通过 `POST /battles/{battle_id}/retry` 再次执行。该机制可应对单机服务重启，不替代跨多实例部署所需的任务队列和分布式锁。
+
+SQLite 初始化会建立 `schema_migrations` 基线版本和所需索引。版本化迁移脚本位于 `backend/alembic/`，部署前在 backend 目录运行：
+
+```powershell
+uv run alembic upgrade head
+```
+
+PostgreSQL 使用 psycopg 连接池，默认最大 10 个连接；可通过 `AGENT_DB_POOL_MAX_SIZE` 调整。当前工作区没有可连接的 PostgreSQL 实例，因此只验证了 SQLite 迁移和 SQLite 并发行为，真实 PostgreSQL 迁移/连接池仍需在目标数据库做一次联调验收。

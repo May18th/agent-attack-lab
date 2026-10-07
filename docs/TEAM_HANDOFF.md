@@ -283,3 +283,5 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 5. 发送代码时不要包含 `.venv`；源码、`pyproject.toml`、`uv.lock` 和本交接文件即可。
 
 如果后端设置了 `AGENT_API_KEY`，前端写入接口需要通过 `X-API-Key` 发送密钥；内部 `GET /metrics` 也受同一密钥保护。密钥不要提交到 GitHub。
+
+后台 `/dashboard` 的异步对抗已接入 SSE 时间线。读接口鉴权默认关闭；打开 `AGENT_PROTECT_READS=1` 后，浏览器前端也需鉴权，不能把服务端密钥硬编码到公开前端包中。
