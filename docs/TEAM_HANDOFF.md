@@ -343,3 +343,12 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 公开浏览器前端不获取 `AGENT_API_KEY`。后端启用 `AGENT_BROWSER_PASSWORD` 后，前端使用 `/auth/session` 登录会话并设置 `credentials: "include"`；EventSource 使用 `withCredentials: true`。`/agent/*`、`/rpc`、`/metrics` 仍只接受服务端 API Key；详见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
 
 后台 `/dashboard` 的异步对抗已接入 SSE 时间线。公开部署须配置 `AGENT_API_KEY`、`AGENT_BROWSER_PASSWORD` 和 `AGENT_PROTECT_READS=1`；不得把服务端密钥硬编码到公开前端包中。
+
+## 7. 梧桐平台注册准备
+
+后端已加入官方 wheel 安装脚本：`backend/scripts/install_wit_wheels.ps1`。梧桐发行包不在公共 Python 软件源，需将以下两个官方文件放入 `D:\梧桐\backend\packages\` 后执行脚本：
+
+- `acps_sdk-2.2.0-py3-none-any.whl`
+- `wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl`
+
+wheel 目录已加入 Git 忽略，不上传 GitHub。安装成功后由后端继续生成攻击/防守 ACS 草稿并执行 `up_until_ready()`；梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
