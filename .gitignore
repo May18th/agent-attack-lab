@@ -18,6 +18,7 @@ __pycache__/
 backend/.env
 backend/acs-*.json
 backend/attack-agent-acs.json
+backend/packages/
 
 # Codex local handoff state
 codex/
