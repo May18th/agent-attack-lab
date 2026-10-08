@@ -8,11 +8,16 @@ const battle = {
   topic: '已有战局',
   status: 'completed',
   createdAt: '2026-10-07T00:00:00Z',
-  attackerOut: { samples: [{ type: 'defect', topic: '已有战局', severity: 'low', content: 'sample' }] },
-  defenderOut: [{ caught: [], risks: [], fixed: [] }],
+  attackerOut: { agentSource: 'acp-llm', samples: [{ type: 'defect', topic: '已有战局', severity: 'low', content: 'sample' }] },
+  defenderOut: [{ agentSource: 'acp-rule-fallback', caught: [], risks: [], fixed: [] }],
 }
 
-function installFetchMock(totalBattles = 21) {
+function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource = 'acp-rule-fallback') {
+  const sourceBattle = {
+    ...battle,
+    attackerOut: { ...battle.attackerOut, agentSource: source },
+    defenderOut: [{ ...battle.defenderOut[0], agentSource: defenseSource }],
+  }
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     if (url.pathname.endsWith('/health')) return Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
@@ -32,7 +37,7 @@ function installFetchMock(totalBattles = 21) {
       }), { status: 200 }))
     }
     if (url.pathname.endsWith('/battles') && init?.method === 'POST') {
-      return Promise.resolve(new Response(JSON.stringify({ ...battle, id: 'battle-new', topic: '新战局' }), { status: 201 }))
+      return Promise.resolve(new Response(JSON.stringify({ ...sourceBattle, id: 'battle-new', topic: '新战局' }), { status: 201 }))
     }
     if (url.pathname.endsWith('/battles') && init?.method !== 'POST') {
       const query = url.searchParams.get('q')?.toLowerCase() ?? ''
@@ -40,8 +45,8 @@ function installFetchMock(totalBattles = 21) {
         .filter((index) => !query || `历史战局 ${index + 1}`.toLowerCase().includes(query) || `battle-${index + 1}`.includes(query))
       const offset = Number(url.searchParams.get('offset') ?? '0')
       const limit = Number(url.searchParams.get('limit') ?? '10')
-      const items = matching.slice(offset, offset + limit).map((index) => index === 0 ? battle : {
-        ...battle,
+      const items = matching.slice(offset, offset + limit).map((index) => index === 0 ? sourceBattle : {
+        ...sourceBattle,
         id: `battle-${index + 1}`,
         topic: `历史战局 ${index + 1}`,
       })
@@ -52,7 +57,7 @@ function installFetchMock(totalBattles = 21) {
     }
     if (url.pathname.includes('/battles/')) {
       const id = decodeURIComponent(url.pathname.split('/').at(-1) ?? '')
-      return Promise.resolve(new Response(JSON.stringify(id === battle.id ? battle : { ...battle, id, topic: '已恢复回放' }), { status: 200 }))
+      return Promise.resolve(new Response(JSON.stringify(id === battle.id ? sourceBattle : { ...sourceBattle, id, topic: '已恢复回放' }), { status: 200 }))
     }
     return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
   })
@@ -80,6 +85,9 @@ describe('App', () => {
     expect(await screen.findByText(/ACP 调用场次：1/)).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/dashboard/summary'), expect.anything())
 
+    expect(screen.getByText('缺陷（Defect） · 低（Low）')).toBeInTheDocument()
+    expect(screen.getByText('攻击来源：独立 Agent（模型生成）')).toBeInTheDocument()
+    expect(screen.getByText('防守来源：独立 Agent（规则兜底）')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /已有战局/ }))
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('battle_id')).toBe('battle-test'))
     fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '' } })
@@ -156,5 +164,13 @@ describe('App', () => {
 
     expect(await screen.findByRole('button', { name: /服务连接失败/ })).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/health'), expect.anything())
+  })
+
+  it('keeps unknown agent sources visible instead of mislabeling them', async () => {
+    installFetchMock(21, 'future-agent', 'future-agent')
+    render(<App />)
+
+    expect(await screen.findByText('攻击来源：来源未知（future-agent）')).toBeInTheDocument()
+    expect(screen.getByText('防守来源：来源未知（future-agent）')).toBeInTheDocument()
   })
 })

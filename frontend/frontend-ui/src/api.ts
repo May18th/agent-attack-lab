@@ -1,10 +1,23 @@
 export type Difficulty = 'low' | 'mid' | 'high'
+export type AgentSource = 'acp-llm' | 'acp-rule-fallback' | 'local-rule' | (string & {})
 
-export type Sample = { type: string; topic?: string; severity: string; content: string }
+export type Sample = {
+  type: string
+  topic?: string
+  severity: string
+  content: string
+  testCaseId?: string
+  scenario?: string
+  objective?: string
+  simulation?: boolean
+}
 export type Defense = {
+  agentSource?: AgentSource
   caught?: Array<{ reason?: string; type?: string }>
   risks?: Array<{ reason?: string; level?: string }>
   fixed?: Array<{ action?: string; status?: string }>
+  verificationStatus?: string
+  scopeNotice?: string
 }
 export type DashboardSummary = {
   totalBattles: number
@@ -25,7 +38,7 @@ export type Battle = {
   topic: string
   status: string
   createdAt: string
-  attackerOut: { samples: Sample[] }
+  attackerOut: { agentSource?: AgentSource; samples: Sample[] }
   defenderOut: Defense[]
 }
 
