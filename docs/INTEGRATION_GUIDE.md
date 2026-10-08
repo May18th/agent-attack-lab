@@ -6,32 +6,26 @@
 
 | 用途 | 地址 | 说明 |
 |---|---|---|
-| 稳定后端 API | https://api.kcwx.online | 前端远程联调使用 |
-| 健康检查 | https://api.kcwx.online/health | 应返回 HTTP 200 |
-| 中文后台 | https://api.kcwx.online/dashboard | 查看战局、历史和服务状态 |
-| 接口文档 | https://api.kcwx.online/docs | FastAPI OpenAPI 文档 |
+| 计划后端 API | https://api.yuanyiagentzhandui.cn | 队友域名，尚未完成公网验收 |
+| 健康检查 | https://api.yuanyiagentzhandui.cn/health | 配置完成后应返回 HTTP 200 |
+| 本地中文后台 | http://127.0.0.1:8787/dashboard | 仅本机查看，不作为公网管理页 |
+| 本地接口文档 | http://127.0.0.1:8787/docs | 仅本机排查使用 |
 | 本地后端 | http://127.0.0.1:8787 | 仅后端电脑使用 |
 | 本地前端 | http://localhost:5173 | 仅运行前端的电脑使用 |
 
-队友的 trycloudflare.com 地址属于临时前端地址，会随 Quick Tunnel 重启而变化。页面地址和 API 地址不能混用：页面可以使用队友的临时地址，前端请求必须指向 https://api.kcwx.online。
+公网 API 计划使用 `api.yuanyiagentzhandui.cn`。该域名由队友管理；Zone、DNS、Tunnel、CORS、浏览器鉴权和 HTTPS 页面尚未完成验收前，不要将它当作可用地址。用户原有 `kcwx.online` 已从本项目退役，不得配置或作为备用地址。
 
 ### 公网验收注意
 
 本机 FastAPI 的 `/health` 和 `POST /battles` 已验证正常。若公网地址返回 `Hello world`、HTML 或其他非 JSON 内容，说明权威 DNS/Tunnel 仍指向其他服务。请先核对 Cloudflare 登录账号和 Tunnel 名称，不要让前端修改 DNS；公网返回本项目 JSON 后再进行页面验收。
 
-当前现场状态：已确认 `agent-attack-lab` Tunnel（ID：`abe90b02-7329-4488-8d1e-aa3e91725b37`）属于项目 Cloudflare 账号，配置为 `api.kcwx.online -> http://127.0.0.1:8787`；覆盖 `*.kcwx.online/*` 的旧 Worker 路由已删除。若删除后暂时返回 503，需要在后端电脑以管理员身份重启 Cloudflared 服务，再重新检查 `/health`。
-
-~~~powershell
-Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -Command "Restart-Service Cloudflared"'
-~~~
-
-当前后端 DNS 路由由 Cloudflare 管理：
+当前没有已验收的新域名后端 Tunnel 路由。须等队友确认 Cloudflare Zone 已可管理后，由域名负责人配置并核验。不要复用用户旧域名下的 Tunnel 或 DNS 记录。
 
 ~~~text
-api.kcwx.online CNAME abe90b02-7329-4488-8d1e-aa3e91725b37.cfargotunnel.com
+api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787
 ~~~
 
-不要把 DNS 指向其他 Tunnel ID，也不要在阿里云注册商 DNS 中重复创建这条记录。
+上面是目标转发关系，不是已经创建的 DNS 记录。不要重复创建记录；以队友 Cloudflare Zone 中实际路由为准。
 
 ## 2. 分工边界
 
@@ -79,7 +73,7 @@ package.json 位于 frontend\frontend-ui，不能在用户主目录直接运行 
 ~~~powershell
 cd frontend\frontend-ui
 npm install
-Set-Content .env.local "VITE_AGENT_API=https://api.kcwx.online"
+Set-Content .env.local "VITE_AGENT_API=https://api.yuanyiagentzhandui.cn"
 npm run dev -- --host 0.0.0.0
 ~~~
 
@@ -114,7 +108,7 @@ uv sync
 公网验证：
 
 ~~~powershell
-Invoke-RestMethod https://api.kcwx.online/health
+Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 ~~~
 
 健康检查应包含 status 为 ok、storage 为 ok 和 requestId。所有响应都会返回 X-Request-ID；排查问题时必须记录该值。
@@ -218,20 +212,20 @@ Content-Type: application/json
 检查后端：
 
 ~~~powershell
-Invoke-RestMethod -Uri "https://api.kcwx.online/health"
+Invoke-RestMethod -Uri "https://api.yuanyiagentzhandui.cn/health"
 ~~~
 
 创建一局：
 
 ~~~powershell
 $body = @{ difficulty = "low"; topic = "输入校验" } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "https://api.kcwx.online/battles" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "https://api.yuanyiagentzhandui.cn/battles" -ContentType "application/json" -Body $body
 ~~~
 
 查看历史：
 
 ~~~powershell
-Invoke-RestMethod "https://api.kcwx.online/battles?limit=10"
+Invoke-RestMethod "https://api.yuanyiagentzhandui.cn/battles?limit=10"
 ~~~
 
 创建请求返回 201，且响应包含 id、attackerOut、defenderOut 时，后端主流程可用。
@@ -239,7 +233,7 @@ Invoke-RestMethod "https://api.kcwx.online/battles?limit=10"
 ## 7. 联调验收清单
 
 - [ ] GET /health 返回 200；
-- [ ] 前端 .env.local 使用 https://api.kcwx.online；
+- [ ] 队友域名 API 验收通过后，前端 `.env.local` 才使用 `https://api.yuanyiagentzhandui.cn`；
 - [ ] low、mid、high 都能创建战局；
 - [ ] 页面显示攻击样本和防守三组结果；
 - [ ] 空数组有清晰提示，不显示 undefined；
@@ -289,14 +283,14 @@ cloudflared tunnel --url http://127.0.0.1:5173
 健康只代表连接器在线，不代表已经配置公网主机名。当前项目应使用名为 `agent-attack-lab` 的命名 Tunnel，并存在以下路由：
 
 ~~~text
-api.kcwx.online -> http://127.0.0.1:8787
+api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787
 ~~~
 
-如果控制台显示的是其他名称、其他账号或“路线 0”，不要把它当作本项目后端 Tunnel，也不要重复创建 DNS。以 `https://api.kcwx.online/health` 的实际响应为准。
+以上仅是目标路由。若队友尚未提供 Zone 权限或路由验收结果，不要配置或测试公网。完成后以 `https://api.yuanyiagentzhandui.cn/health` 的实际响应为准。
 
 ### 公网后端打不开、502 或 SSL 握手失败
 
-先访问 https://api.kcwx.online/health。不要使用旧 Quick Tunnel 地址，也不要重复创建 DNS 记录。后端电脑必须保持服务和命名 Tunnel 运行。
+配置完成后访问 `https://api.yuanyiagentzhandui.cn/health`。确认队友已完成 Zone、DNS 和 Tunnel 路由；后端电脑须保持 8787 服务和对应 Tunnel 运行。
 
 ### API_KEY_REQUIRED
 
@@ -308,7 +302,7 @@ api.kcwx.online -> http://127.0.0.1:8787
 
 ### 401 Unauthorized
 
-只有后端设置 AGENT_API_KEY 时才需要在请求头加入 X-API-Key。密钥不写入仓库，不发给前端队友。当前开发联调未启用 API Key 时无需添加。
+服务端调用内部接口时使用 `X-API-Key`；公开浏览器前端不能持有该密钥。后端启用 `AGENT_BROWSER_PASSWORD` 后，应通过 `/auth/session` 登录并携带 HttpOnly Cookie（fetch 设置 `credentials: "include"`）。本地免密开发模式下无需登录。配置细节见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
 
 ### 429 Too Many Requests
 
@@ -316,15 +310,15 @@ api.kcwx.online -> http://127.0.0.1:8787
 
 ### CORS 错误
 
-当前后端默认允许本地前端，以及 Cloudflare Quick Tunnel 的 `https://*.trycloudflare.com` 来源。前端正式域名不在允许来源时，后端启动前设置：
+未启用浏览器会话时，开发环境默认允许本地前端和 Quick Tunnel 来源。正式部署必须在后端启动前将前端 Origin 精确加入白名单：
 
 ~~~powershell
 $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 ~~~
 
-多个来源使用英文逗号分隔，然后重启后端。临时 Quick Tunnel 地址变化时，优先让前端调用稳定后端域名并确认浏览器实际 Origin。
+多个来源使用英文逗号分隔，然后重启后端。启用 `AGENT_BROWSER_PASSWORD` 后会关闭 Quick Tunnel 通配正则，只接受 `AGENT_CORS_ORIGINS` 中列出的精确 Origin。
 
-如需关闭临时域名匹配或改成更严格的规则，可设置：
+浏览器会话配置下不要使用正则通配来源。无登录的纯本地开发若需修改临时域名规则，可设置：
 
 ~~~powershell
 $env:AGENT_CORS_ORIGIN_REGEX="^https://你的前端域名$"

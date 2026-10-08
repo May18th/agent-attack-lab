@@ -194,5 +194,5 @@ GitHub `main` 分支已经包含 `frontend/frontend-ui` 的前端源码。前端
 ### 后端联调提示
 
 - 本机后端 `http://127.0.0.1:8787/health` 当前应返回 200。
-- Cloudflare `api.kcwx.online` 当前公网请求返回 503，需后端队友检查命名 Tunnel 连接器是否连接到本机 8787，并确认只有一个有效连接器。
-- 公网恢复后请复核 `GET /health`、`POST /battles`（low/mid/high）和前端 `VITE_AGENT_API=https://api.kcwx.online`。
+- `kcwx.online` 已从本项目退役，不再检查、配置或作为备用域名。
+- 队友域名 `api.yuanyiagentzhandui.cn` 尚待 Cloudflare Zone、DNS、Tunnel、CORS 和浏览器鉴权配置；验收后复核 `GET /health`、`POST /battles`（low/mid/high）和前端 API 地址。

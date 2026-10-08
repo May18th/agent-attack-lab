@@ -11,6 +11,8 @@ import time
 import uuid
 from typing import Any, Literal
 
+import httpx
+
 from acps_sdk.aip import AipRpcClient, StructuredDataItem, TaskResult, TextDataItem
 
 
@@ -89,8 +91,17 @@ def _validate_result(role: Role, data: dict[str, Any]) -> dict[str, Any]:
         for field in ("analysisMode", "verificationStatus", "scopeNotice"):
             if isinstance(data.get(field), str):
                 result[field] = data[field]
-    mode = result.get("agentMode", "local-rule-fallback")
-    result["agentSource"] = "acp-llm" if mode == "llm" else "acp-rule-fallback"
+    source = data.get("agentSource")
+    if isinstance(source, str) and source.strip():
+        result["agentSource"] = source
+    else:
+        mode = result.get("agentMode", "local-rule-fallback")
+        known_sources = {
+            "llm": "acp-llm",
+            "local-rule": "acp-rule-fallback",
+            "local-rule-fallback": "acp-rule-fallback",
+        }
+        result["agentSource"] = known_sources.get(mode, f"acp-unknown:{mode}")
     return result
 
 
@@ -102,12 +113,24 @@ async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
     timeout_seconds = _rpc_timeout_seconds()
     client: AipRpcClient | None = None
     try:
+        ssl_context = _ssl_context()
         client = AipRpcClient(
             partner_url=endpoint,
             leader_id=os.getenv("AGENT_AIP_LEADER_ID", "agent-attack-lab-dev").strip()
             or "agent-attack-lab-dev",
-            ssl_context=_ssl_context(),
+            ssl_context=ssl_context,
         )
+        rpc_api_key = os.getenv("AGENT_RPC_API_KEY", "").strip()
+        if rpc_api_key:
+            # SDK 客户端不支持自定义 header；替换其内部 httpx 客户端注入 X-API-Key。
+            # trust_env=False 避免本机系统代理劫持 127.0.0.1 调用。
+            original_http = client.http_client
+            client.http_client = httpx.AsyncClient(
+                headers={"X-API-Key": rpc_api_key},
+                verify=ssl_context if ssl_context else True,
+                trust_env=False,
+            )
+            await original_http.aclose()
         session_id = f"session-{uuid.uuid4()}"
 
         async def start_and_wait() -> TaskResult:

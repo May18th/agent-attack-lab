@@ -18,13 +18,13 @@ AIC、CAI、ACS、mTLS 证书和平台审核由后端负责人处理，前端不
 http://127.0.0.1:8787
 ```
 
-稳定公网 API（配置地址）：
+计划公网 API（尚未验收）：
 
 ```text
-https://api.kcwx.online
+https://api.yuanyiagentzhandui.cn
 ```
 
-前端公网地址由队友运行 Quick Tunnel 后以终端输出为准，地址会随重启变化。前端页面地址仅用于打开队友页面；前端 API 仍使用上面的稳定后端地址。
+`yuanyiagentzhandui.cn` 由队友管理，须先完成 Cloudflare Zone、DNS、Tunnel、CORS 和浏览器鉴权验收。原有 `kcwx.online` 已从本项目退役，不作为前端 API、备用地址或 Tunnel 配置。
 
 2026-10-07 本轮检查中，公网健康接口先后出现 Cloudflare HTTP 502/530，之后本机服务重启后恢复 HTTP 200；本机 `/health` 和 `/dashboard` 也返回 HTTP 200。该波动说明一次成功不代表 Tunnel 长期稳定。开始远程联调前请重新请求 `/health`；若不是 200，先暂停远程联调并按 `docs/INTEGRATION_GUIDE.md` 排查。Cloudflared 服务显示 Running 本身不代表 Tunnel 到本机端口链路可用。
 
@@ -291,10 +291,10 @@ Content-Type: application/json
 VITE_AGENT_API=http://127.0.0.1:8787
 ```
 
-远程联调时统一使用：
+远程联调时，待后端负责人确认队友域名 API 已验收后使用：
 
 ```env
-VITE_AGENT_API=https://api.kcwx.online
+VITE_AGENT_API=https://api.yuanyiagentzhandui.cn
 ```
 
 调用示例：
@@ -340,6 +340,26 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 4. 前端不需要运行或修改 AIC、ACS、CAI 和 mTLS 文件。
 5. 发送代码时不要包含 `.venv`；源码、`pyproject.toml`、`uv.lock` 和本交接文件即可。
 
-如果后端设置了 `AGENT_API_KEY`，前端写入接口需要通过 `X-API-Key` 发送密钥；内部 `GET /metrics` 也受同一密钥保护。密钥不要提交到 GitHub。
+公开浏览器前端不获取 `AGENT_API_KEY`。后端启用 `AGENT_BROWSER_PASSWORD` 后，前端使用 `/auth/session` 登录会话并设置 `credentials: "include"`；EventSource 使用 `withCredentials: true`。`/agent/*`、`/rpc`、`/metrics` 仍只接受服务端 API Key；详见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
 
-后台 `/dashboard` 的异步对抗已接入 SSE 时间线。读接口鉴权默认关闭；打开 `AGENT_PROTECT_READS=1` 后，浏览器前端也需鉴权，不能把服务端密钥硬编码到公开前端包中。
+后台 `/dashboard` 的异步对抗已接入 SSE 时间线。公开部署须配置 `AGENT_API_KEY`、`AGENT_BROWSER_PASSWORD` 和 `AGENT_PROTECT_READS=1`；不得把服务端密钥硬编码到公开前端包中。
+
+## 7. 梧桐平台注册准备
+
+后端已加入官方 wheel 安装脚本：`backend/scripts/install_wit_wheels.ps1`。梧桐发行包不在公共 Python 软件源，需将以下两个官方文件放入 `D:\梧桐\backend\packages\` 后执行脚本：
+
+- `acps_sdk-2.2.0-py3-none-any.whl`
+- `wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl`
+- `release-manifest.json`
+
+当前项目环境中的 `acps-sdk` 是 2.1.0，公开 PyPI 没有精确的 2.2.0；不要用公开包替代梧桐发行目录中的 SDK。
+
+wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。安装成功后由后端继续生成攻击/防守 ACS 草稿并执行 `up_until_ready()`；梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
+
+梧桐官方证书流程已补齐：审核通过取得 AIC 后，先用 `acps-cli auth login` 登录，再用 `cert eab fetch` 获取 EAB，最后用 `cert issue -u clientAuth` 签发证书。项目新增 `backend/acps-cli.toml.example`、`backend/scripts/verify_acps_cli.ps1`、`backend/scripts/issue_acps_certificate.ps1` 和 `backend/scripts/inspect_acps_certificate.ps1`；证书、EAB、Token 和本机配置只保存在被 Git 忽略的 `backend/.acps-cli/` 与 `backend/acps-cli.toml`。完整步骤见 [`docs/WUTONG_ACPS_CERT_SETUP.md`](WUTONG_ACPS_CERT_SETUP.md)。
+
+2026-10-09 已根据官方手册增加 `backend/scripts/fetch_wit_release.ps1`，只从 `wit.ioa.pub` 的 `release-manifest.json` 下载并校验绑定的 `acps_sdk 2.2.0` 与 `wit_framework 2.1.0`。本机实测 CLI 帮助和证书命令预检通过，但当前 TLS 无法连接官方发行目录；需要负责人在已登录梧桐网络/零信任的机器上运行脚本。不要使用公共 PyPI、GitHub 或第三方镜像替代发行文件。
+
+已按两个独立 Agent 生成技能包：`artifacts/attacker_agent.zip`（攻击样本生成）和 `artifacts/defender_agent.zip`（OWASP 防守检测）。两个 ZIP 只包含 `skill.md` 与输出契约说明，不含 AIC、API Key、Token、EAB、证书、私钥或数据库；技能包名称必须分别填写 `attacker_agent`、`defender_agent`，上传后等待管理员审核。
+
+官方安装包构建另见 [`docs/WUTONG_INSTALL_PACKAGE_HANDOFF.md`](WUTONG_INSTALL_PACKAGE_HANDOFF.md)。当前仓库缺少 `acps-infra`、app-release、镜像包和 vendor bundle，不能直接生成 image/host 安装包；本地 Windows PowerShell 启停脚本只用于开发联调。生产部署必须由部署方准备对应版本的 `acps-infra`、平台参数和 Ansible inventory。

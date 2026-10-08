@@ -21,32 +21,11 @@ Quick Tunnel 每次启动都会生成新地址，关闭进程后地址失效，�
 
 ## 稳定公网地址
 
-当前项目已创建命名 Tunnel `agent-attack-lab`，固定 API 域名为：
+本项目的新公网地址尚未完成配置和验收。队友提供的域名拟分配为前端 `https://yuanyiagentzhandui.cn`、后端 API `https://api.yuanyiagentzhandui.cn`；这只是待办目标，不代表当前可访问。域名 Zone 由队友管理，取得其 Cloudflare Zone 权限后，才可在同一账户配置 DNS 和后端 Tunnel。具体分工见 `frontend/FRONTEND_TODO.md`。
 
-```text
-https://api.kcwx.online
-```
+在新域名下的 Tunnel 与 API 完成公网验收前，跨电脑远程联调暂停。不要将本项目接到负责其他项目的旧域名/Tunnel，也不要修改或删除那些旧资源。Tunnel Token 只能通过安全渠道配置在后端主机或部署密钥中，不得提交到 Git 或聊天。
 
-`kcwx.online` 已完成 Cloudflare NS 委派，当前可直接使用：
-
-```text
-mimi.ns.cloudflare.com
-shane.ns.cloudflare.com
-```
-
-本机命名 Tunnel 配置位于用户目录下的 `.cloudflared/agent-attack-lab.yml`，不会提交到 Git。启动脚本会优先使用该命名 Tunnel，找不到配置时才回退到临时 Quick Tunnel。
-
-如果在另一台电脑重新部署，创建命名隧道并复制 Token，然后在 PowerShell 中设置：
-
-```powershell
-$env:CLOUDFLARE_TUNNEL_TOKEN = "不要把真实 Token 提交到 Git"
-cd "D:\梧桐\backend"
-.\start-tunnel.ps1
-```
-
-命名隧道的域名由 Cloudflare 控制台绑定，重启后保持不变。Token 只放在本机环境变量或部署平台密钥中。
-
-## PostgreSQL
+## MySQL / PostgreSQL
 
 SQLite 是默认开发数据库。生产环境设置 PostgreSQL 连接串：
 
@@ -56,6 +35,18 @@ cd "D:\梧桐\backend"
 uv sync
 .\restart.ps1
 ```
+
+也支持 MySQL 8+，连接池使用 PyMySQL/SQLAlchemy。先在 MySQL 创建专用数据库和最小权限用户，再配置连接串：
+
+```powershell
+$env:AGENT_BATTLE_DATABASE_URL = "mysql://用户名:URL编码后的密码@主机:3306/数据库名?charset=utf8mb4"
+cd "D:\梧桐\backend"
+uv sync
+uv run alembic upgrade head
+.\restart.ps1
+```
+
+密码含 `@`、`:`、`/`、`#` 等 URL 保留字符时必须进行百分号编码。MySQL 当前支持自动建表、索引、分页查询和重复记录更新；正式启用前仍需在目标 MySQL 实例执行迁移及读写验收。
 
 数据库连接串不提交到仓库。未设置 `AGENT_BATTLE_DATABASE_URL` 时继续使用 `.data/battles.sqlite3`。
 
@@ -84,11 +75,14 @@ cd "D:\梧桐\backend"
 公网部署可设置以下环境变量：
 
 ```powershell
+$env:AGENT_API_KEY = "请替换为自行生成的高强度随机密钥"
 $env:AGENT_PROTECT_READS = "1"
 $env:AGENT_EVENT_DATA_MAX_BYTES = "32768"
 ```
 
-读保护开启后，战局列表/详情、事件、回放、战报、排行榜和 SSE 事件流都要求 `X-API-Key`。默认关闭以兼容当前前端联调。不要把服务端 API Key 编译进公开前端；公开部署应使用登录会话或由后端提供受控代理。
+将 `AGENT_API_KEY` 替换为自行生成的高强度随机密钥，不要使用示例文字。启用 `AGENT_PROTECT_READS=1` 后，战局列表/详情、事件、回放、战报、排行榜和 SSE 事件流都要求 `X-API-Key`；写入接口和 `/metrics` 也由 `AGENT_API_KEY` 保护。默认读保护关闭以兼容当前前端联调。不要把服务端 API Key 编译进公开前端或提交到 GitHub；公开部署应使用登录会话或由后端提供受控代理。
+
+当前提供单密码浏览器会话：在后端同时配置 `AGENT_BROWSER_PASSWORD` 和 `AGENT_API_KEY`，浏览器调用 `POST /auth/session` 登录并接收 `HttpOnly` Cookie，通过 `GET /auth/session` 查询、`DELETE /auth/session` 退出。前端请求需设置 `credentials: "include"`；部署时精确设置 `AGENT_CORS_ORIGINS`，生产必须使用 `AGENT_BROWSER_COOKIE_SECURE=1`。启用后 Quick Tunnel 通配来源关闭，只接受精确 CORS Origin。该会话不会授权 `/agent/*`、`/rpc`、`/metrics`，这些接口继续使用服务端 API Key。会话当前只保存在单进程内存中，服务重启会要求重新登录，不可直接用于多 worker 或多实例部署。
 
 事件单条数据默认不超过 32 KB。过长攻击样本会截短，返回数据包含 `dataTruncated` 和 `originalBytes`，避免数据库被超大输入拖大。
 
@@ -102,4 +96,4 @@ SQLite 初始化会建立 `schema_migrations` 基线版本和所需索引。版�
 uv run alembic upgrade head
 ```
 
-PostgreSQL 使用 psycopg 连接池，默认最大 10 个连接；可通过 `AGENT_DB_POOL_MAX_SIZE` 调整。当前工作区没有可连接的 PostgreSQL 实例，因此只验证了 SQLite 迁移和 SQLite 并发行为，真实 PostgreSQL 迁移/连接池仍需在目标数据库做一次联调验收。
+PostgreSQL 使用 psycopg 连接池，MySQL 使用 SQLAlchemy/PyMySQL 连接池；默认最大 10 个连接，可通过 `AGENT_DB_POOL_MAX_SIZE` 调整。未提供可连接的生产数据库实例时，自动化测试只能验证驱动选择和 SQL 生成，不能替代真实数据库迁移/连接池联调。

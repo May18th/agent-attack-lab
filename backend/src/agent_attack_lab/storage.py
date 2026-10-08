@@ -36,16 +36,36 @@ class _PooledConnection:
         return
 
 
+class _SqlAlchemyConnection:
+    """Expose SQLAlchemy pooled connections through the store's small DB API."""
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
+
+    def execute(self, statement: str, parameters: Any = ()) -> _PooledResult:
+        with self._engine.begin() as connection:
+            driver_parameters = tuple(parameters) if isinstance(parameters, list) else parameters
+            result = connection.exec_driver_sql(statement, driver_parameters)
+            rows = [dict(row) for row in result.mappings()] if result.returns_rows else []
+        return _PooledResult(rows)
+
+    def commit(self) -> None:
+        return
+
+
 class BattleStore:
-    """Store battle records in SQLite or pooled PostgreSQL connections."""
+    """Store battle records in SQLite, PostgreSQL, or pooled MySQL connections."""
 
     def __init__(self, database_path: str | None = None) -> None:
         configured_path = database_path or os.getenv("AGENT_BATTLE_DATABASE_URL") or os.getenv(
             "AGENT_BATTLE_DB", ".data/battles.sqlite3"
         )
-        self._is_postgres = configured_path.startswith(("postgresql://", "postgres://"))
+        self._is_postgres = configured_path.startswith(("postgresql://", "postgres://", "postgresql+psycopg://"))
+        self._is_mysql = configured_path.startswith(("mysql://", "mysql+pymysql://"))
+        self._placeholder = "%s" if self._is_postgres or self._is_mysql else "?"
         self._lock = Lock()
         self._pool = None
+        self._engine = None
         if self._is_postgres:
             try:
                 from psycopg_pool import ConnectionPool
@@ -64,6 +84,26 @@ class BattleStore:
             )
             self._pool.wait(timeout=10)
             self._connection = _PooledConnection(self._pool)
+        elif self._is_mysql:
+            from sqlalchemy import create_engine
+            from sqlalchemy.engine import make_url
+
+            url = make_url(configured_path)
+            if url.drivername == "mysql":
+                url = url.set(drivername="mysql+pymysql")
+            if url.drivername != "mysql+pymysql":
+                raise ValueError("MySQL 连接串必须使用 mysql:// 或 mysql+pymysql://")
+            if "charset" not in url.query:
+                url = url.update_query_dict({"charset": "utf8mb4"})
+            pool_size = max(2, int(os.getenv("AGENT_DB_POOL_MAX_SIZE", "10")))
+            self._engine = create_engine(
+                url,
+                pool_size=pool_size,
+                max_overflow=0,
+                pool_pre_ping=True,
+                pool_recycle=1800,
+            )
+            self._connection = _SqlAlchemyConnection(self._engine)
         else:
             if configured_path != ":memory:":
                 Path(configured_path).parent.mkdir(parents=True, exist_ok=True)
@@ -74,7 +114,9 @@ class BattleStore:
             self._connection.execute("PRAGMA busy_timeout = 5000")
             if configured_path != ":memory:":
                 self._connection.execute("PRAGMA journal_mode = WAL")
-        if not self._is_postgres:
+        if self._is_mysql:
+            self._initialize_mysql_schema()
+        elif not self._is_postgres:
             self._initialize_sqlite_schema()
         else:
             self._initialize_postgres_schema()
@@ -175,6 +217,59 @@ class BattleStore:
         )
         self._connection.commit()
 
+    def _initialize_mysql_schema(self) -> None:
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS battles (
+                id VARCHAR(191) PRIMARY KEY,
+                difficulty VARCHAR(16) NOT NULL,
+                topic TEXT NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                created_at VARCHAR(40) NOT NULL,
+                attacker_out LONGTEXT NOT NULL,
+                defender_out LONGTEXT NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS battle_events (
+                id VARCHAR(191) PRIMARY KEY,
+                battle_id VARCHAR(191) NOT NULL,
+                sequence INTEGER NOT NULL,
+                event_type VARCHAR(64) NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                created_at VARCHAR(40) NOT NULL,
+                data LONGTEXT NOT NULL,
+                UNIQUE KEY uq_battle_event_sequence (battle_id, sequence)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        indexes = {
+            row["Key_name"]
+            for row in self._connection.execute("SHOW INDEX FROM battle_events").fetchall()
+        }
+        if "idx_battle_events_battle" not in indexes:
+            self._connection.execute(
+                "CREATE INDEX idx_battle_events_battle ON battle_events (battle_id, sequence)"
+            )
+        for name, columns in (
+            ("idx_battles_created", "created_at DESC"),
+            ("idx_battles_difficulty_created", "difficulty, created_at DESC"),
+            ("idx_battles_status_created", "status, created_at DESC"),
+        ):
+            indexes = {
+                row["Key_name"]
+                for row in self._connection.execute("SHOW INDEX FROM battles").fetchall()
+            }
+            if name not in indexes:
+                self._connection.execute(f"CREATE INDEX {name} ON battles ({columns})")
+        self._connection.execute("INSERT IGNORE INTO schema_migrations (version) VALUES (1)")
+        self._connection.commit()
+
     def save(self, record: dict[str, Any]) -> None:
         with self._lock:
             values = (
@@ -191,6 +286,17 @@ class BattleStore:
                     ON CONFLICT (id) DO UPDATE SET difficulty=EXCLUDED.difficulty,
                     topic=EXCLUDED.topic, status=EXCLUDED.status, created_at=EXCLUDED.created_at,
                     attacker_out=EXCLUDED.attacker_out, defender_out=EXCLUDED.defender_out
+                    """, values,
+                )
+            elif self._is_mysql:
+                self._connection.execute(
+                    """
+                    INSERT INTO battles
+                    (id, difficulty, topic, status, created_at, attacker_out, defender_out)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE difficulty=VALUES(difficulty), topic=VALUES(topic),
+                    status=VALUES(status), created_at=VALUES(created_at),
+                    attacker_out=VALUES(attacker_out), defender_out=VALUES(defender_out)
                     """, values,
                 )
             else:
@@ -219,6 +325,15 @@ class BattleStore:
                     ON CONFLICT (id) DO UPDATE SET status=EXCLUDED.status, data=EXCLUDED.data
                     """, values,
                 )
+            elif self._is_mysql:
+                self._connection.execute(
+                    """
+                    INSERT INTO battle_events
+                    (id, battle_id, sequence, event_type, status, created_at, data)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE status=VALUES(status), data=VALUES(data)
+                    """, values,
+                )
             else:
                 self._connection.execute(
                     """
@@ -232,7 +347,7 @@ class BattleStore:
     def get(self, battle_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._connection.execute(
-                "SELECT * FROM battles WHERE id = " + ("%s" if self._is_postgres else "?"),
+                "SELECT * FROM battles WHERE id = " + self._placeholder,
                 (battle_id,),
             ).fetchone()
         if row is None:
@@ -261,7 +376,7 @@ class BattleStore:
             params.extend([pattern, pattern])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.extend([limit, offset])
-        placeholder = "%s" if self._is_postgres else "?"
+        placeholder = self._placeholder
         where = where.replace("?", placeholder)
         with self._lock:
             rows = self._connection.execute(
@@ -273,7 +388,7 @@ class BattleStore:
     def list_events(self, battle_id: str) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._connection.execute(
-                "SELECT * FROM battle_events WHERE battle_id = " + ("%s" if self._is_postgres else "?") + " ORDER BY sequence",
+                "SELECT * FROM battle_events WHERE battle_id = " + self._placeholder + " ORDER BY sequence",
                 (battle_id,),
             ).fetchall()
         return [self._to_event(row) for row in rows]
@@ -297,7 +412,7 @@ class BattleStore:
             pattern = f"%{query}%"
             params.extend([pattern, pattern])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        placeholder = "%s" if self._is_postgres else "?"
+        placeholder = self._placeholder
         where = where.replace("?", placeholder)
         with self._lock:
             row = self._connection.execute(
@@ -361,9 +476,11 @@ class BattleStore:
     def close(self) -> None:
         if self._pool is not None:
             self._pool.close()
+        if self._engine is not None:
+            self._engine.dispose()
 
     @staticmethod
-    def _to_record(row: sqlite3.Row) -> dict[str, Any]:
+    def _to_record(row: Any) -> dict[str, Any]:
         return {
             "id": row["id"],
             "difficulty": row["difficulty"],
@@ -375,7 +492,7 @@ class BattleStore:
         }
 
     @staticmethod
-    def _to_event(row: sqlite3.Row) -> dict[str, Any]:
+    def _to_event(row: Any) -> dict[str, Any]:
         return {
             "id": row["id"],
             "battleId": row["battle_id"],

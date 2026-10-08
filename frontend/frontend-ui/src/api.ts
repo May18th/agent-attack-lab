@@ -19,6 +19,19 @@ export type Defense = {
   verificationStatus?: string
   scopeNotice?: string
 }
+export type DashboardSummary = {
+  totalBattles: number
+  completedBattles: number
+  failedBattles: number
+  highDifficultyBattles: number
+  sampleCount: number
+  ruleHitCount: number
+  riskCount: number
+  recommendationCount: number
+  simulationSampleCount: number
+  acpCallBattles: number
+  ruleLibraryCaseCount: number
+}
 export type Battle = {
   id: string
   difficulty: Difficulty
@@ -52,7 +65,7 @@ function detailText(value: unknown): string | undefined {
   return messages.length ? messages.join('；') : undefined
 }
 
-export async function api<T>(path: string, options?: RequestInit): Promise<T> {
+async function request(path: string, options?: RequestInit): Promise<Response> {
   let response: Response
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -74,15 +87,27 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     throw new ApiError(response.status, errorMessage(response.status, detail), response.headers.get('X-Request-ID') ?? undefined)
   }
 
+  return response
+}
+
+async function responseJson<T>(response: Response): Promise<T> {
   try {
     return await response.json() as T
   } catch {
-    throw new ApiError(
-      response.status,
-      '后端返回了无效响应',
-      response.headers.get('X-Request-ID') ?? undefined,
-    )
+    throw new ApiError(response.status, '后端返回了无效响应', response.headers.get('X-Request-ID') ?? undefined)
   }
+}
+
+export async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  return responseJson<T>(await request(path, options))
+}
+
+export async function apiPage<T>(path: string): Promise<{ items: T[]; total: number }> {
+  const response = await request(path)
+  const items = await responseJson<T[]>(response)
+  const rawTotal = response.headers.get('X-Total-Count')
+  const headerTotal = rawTotal === null ? Number.NaN : Number(rawTotal)
+  return { items, total: Number.isFinite(headerTotal) && headerTotal >= 0 ? headerTotal : items.length }
 }
 
 export function errorMessage(status: number, detail?: string): string {

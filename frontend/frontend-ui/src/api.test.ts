@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, apiErrorMessage, errorMessage } from './api'
+import { api, apiErrorMessage, apiPage, errorMessage } from './api'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -39,6 +39,30 @@ describe('api error handling', () => {
       status: 200,
       requestId: 'request-html',
       message: '后端返回了无效响应',
+    })
+  })
+
+  it('reads the server-side total for paginated results', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify([{ id: 'battle-2' }]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'X-Total-Count': '50' },
+    })))
+
+    await expect(apiPage<{ id: string }>('/battles?limit=10&offset=10')).resolves.toEqual({
+      items: [{ id: 'battle-2' }],
+      total: 50,
+    })
+  })
+
+  it('falls back to the current page size if a gateway strips the total header', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify([{ id: 'battle-1' }]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(apiPage<{ id: string }>('/battles?limit=10&offset=0')).resolves.toEqual({
+      items: [{ id: 'battle-1' }],
+      total: 1,
     })
   })
 })
