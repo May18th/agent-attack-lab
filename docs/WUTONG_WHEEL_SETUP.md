@@ -8,6 +8,8 @@
 
 由于 `wit-framework` 不在公共 Python 软件源，不能用普通 `pip install wit-framework` 替代。请从梧桐平台发行页面下载后，将两个文件放入：
 
+同样不要用公开 PyPI 的 `acps-sdk` 替代发行目录中的 SDK。当前公开源没有精确的 `acps-sdk 2.2.0`，而 `wit v2.1.0` 会校验随发行版绑定的 SDK 版本和模块。
+
 ```text
 D:\梧桐\backend\packages\
 ```
