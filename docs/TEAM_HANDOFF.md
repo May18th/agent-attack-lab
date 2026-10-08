@@ -363,3 +363,5 @@ wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装�
 已按两个独立 Agent 生成技能包：`artifacts/attacker_agent.zip`（攻击样本生成）和 `artifacts/defender_agent.zip`（OWASP 防守检测）。两个 ZIP 只包含 `skill.md` 与输出契约说明，不含 AIC、API Key、Token、EAB、证书、私钥或数据库；技能包名称必须分别填写 `attacker_agent`、`defender_agent`，上传后等待管理员审核。
 
 官方安装包构建另见 [`docs/WUTONG_INSTALL_PACKAGE_HANDOFF.md`](WUTONG_INSTALL_PACKAGE_HANDOFF.md)。当前仓库缺少 `acps-infra`、app-release、镜像包和 vendor bundle，不能直接生成 image/host 安装包；本地 Windows PowerShell 启停脚本只用于开发联调。生产部署必须由部署方准备对应版本的 `acps-infra`、平台参数和 Ansible inventory。
+
+2026-10-09 公网复查发现系统 cloudflared 配置只给 `api.yuanyiagentzhandui.cn` 放行了 `/rpc`，而网页还需要 `/health`、`/battles` 和 `/dashboard/summary`；公网 `/health` 实测返回 530。已新增 `backend/scripts/fix_cloudflare_api_route.ps1`，需在后端电脑以管理员 PowerShell 运行；脚本会备份配置、移除 `/rpc` 路径限制、重启服务并复测公网 `/health`。
