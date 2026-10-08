@@ -49,6 +49,8 @@ GitHub PR `#1` 的代码冲突已由后端负责人合并，当前分支提交�
 5. 检查生产访问路径：`frontend/frontend-ui/vite.config.ts` 当前生产 `base` 为 `/ui/`。若最终网站从域名根路径打开，应确认是否访问 `/ui/`；若要求根路径 `/`，先回报后再改 `base`，不要自行改后端路由。
 6. 重新触发 Cloudflare 预览构建，回执必须包含：构建平台（Pages/Workers）、根目录、构建命令、输出目录、预览地址、提交版本和失败日志或成功日志。
 
+本地已补齐 Workers Static Assets 部署配置：`frontend/frontend-ui/wrangler.jsonc` 将 `dist` 声明为静态资源目录，`package.json` 提供 `npm run deploy`。若继续使用 Workers Builds，请将项目根目录设为 `frontend/frontend-ui`，构建命令设为 `npm run build`，部署命令设为 `npx wrangler deploy`（或 `npm run deploy`，二者不要同时执行构建），并确认生产入口仍按当前 Vite 配置使用 `/ui/` 路径。该配置不会创建或修改队友账号中的 Build trigger；线上失败日志仍需在对应 Cloudflare 账号回执。
+
 队友不需要修改后端 Python、DNS、旧 `kcwx.online` 资源，也不要把 API Key、Tunnel Token 或私钥放入仓库或前端变量。
 
 **后端负责人（8787 服务）**
