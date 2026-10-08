@@ -30,7 +30,16 @@ Write-Host "使用解释器：$pythonVersion"
 Write-Host "安装：$($acpsWheel.Name)"
 Write-Host "安装：$($witWheel.Name)"
 
-uv pip install --python $python $acpsWheel.FullName $witWheel.FullName
+Write-Host "先安装绑定的 acps-sdk 2.2.0"
+uv pip install --python $python $acpsWheel.FullName
+if ($LASTEXITCODE -ne 0) {
+    throw "acps-sdk wheel 安装失败"
+}
+Write-Host "再安装 wit-framework 2.1.0"
+uv pip install --python $python $witWheel.FullName
+if ($LASTEXITCODE -ne 0) {
+    throw "wit-framework wheel 安装失败"
+}
 
 $preflight = Join-Path (Split-Path $python) "wit-release-preflight.exe"
 if (-not (Test-Path -LiteralPath $preflight)) {

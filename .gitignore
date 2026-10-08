@@ -19,6 +19,10 @@ backend/.env
 backend/acs-*.json
 backend/attack-agent-acs.json
 backend/packages/
+backend/.acps-cli/
+backend/.wit/
+backend/acps-cli.toml
+artifacts/
 
 # Codex local handoff state
 codex/

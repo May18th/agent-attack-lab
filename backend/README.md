@@ -160,3 +160,15 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8787/rpc -ContentType 'appl
 `acs-attack-trusted-registration.json` 和 `acs-defender-trusted-registration.json` 是提交审核用文件，当前版本为 `1.0.1`。审核阶段 `aic` 保持空字符串，不要自行填写或编造 AIC。平台反馈只允许 `JSONRPC` 或 `AMQP`，因此端点已改为 `JSONRPC` 并指向 `/rpc`。
 
 审核通过后，再把平台下发的真实 AIC 和 CAI/mTLS 证书按平台要求回填。拿到证书前，本服务是 JSON-RPC 演示服务，不能声称已经启用 mTLS。当前使用的 Cloudflare Quick Tunnel 是临时公网地址，进程停止后会失效，正式交付应换成稳定域名和真实证书。
+
+### 梧桐官方证书接入
+
+先在梧桐注册平台审核 ACS 并取得 AIC，再使用官方 `acps-cli` 获取 EAB 和 mTLS 证书。项目提供以下本地脚本：
+
+```powershell
+Copy-Item .\acps-cli.toml.example .\acps-cli.toml
+.\scripts\verify_acps_cli.ps1
+.\scripts\issue_acps_certificate.ps1 -Aic "<已审核 AIC>" -Usage clientAuth
+```
+
+ACPs 2.2.0 使用 OIDC 设备授权登录，证书脚本默认显式使用 Ed25519。证书和 EAB 只写入被忽略的 `.acps-cli/`。若已登录梧桐网络/零信任，可先运行 `.\scripts\fetch_wit_release.ps1` 获取官方 wheel，再运行 `.\scripts\install_wit_wheels.ps1`；无法访问官方发行目录时脚本会停止，不会回退到第三方源。详细边界见 [`docs/WUTONG_ACPS_CERT_SETUP.md`](../docs/WUTONG_ACPS_CERT_SETUP.md)。

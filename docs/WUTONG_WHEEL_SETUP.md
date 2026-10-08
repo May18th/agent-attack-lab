@@ -6,9 +6,17 @@
 - `wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl`
 - `release-manifest.json`
 
-由于 `wit-framework` 不在公共 Python 软件源，不能用普通 `pip install wit-framework` 替代。请从梧桐平台发行页面下载后，将两个文件放入：
+由于 `wit-framework` 不在公共 Python 软件源，不能用普通 `pip install wit-framework` 替代。请从梧桐平台官方发行目录下载后，将三个文件放入：
 
 同样不要用公开 PyPI 的 `acps-sdk` 替代发行目录中的 SDK。当前公开源没有精确的 `acps-sdk 2.2.0`，而 `wit v2.1.0` 会校验随发行版绑定的 SDK 版本和模块。
+
+如果本机已登录梧桐网络/零信任，可先尝试从官方清单自动取包：
+
+```powershell
+.\scripts\fetch_wit_release.ps1
+```
+
+该脚本只访问 `wit.ioa.pub`，会按 `release-manifest.json` 中的 SHA-256 校验两个 wheel；无法访问官方发行目录时会停止，不会回退到第三方源。
 
 ```text
 D:\梧桐\backend\packages\

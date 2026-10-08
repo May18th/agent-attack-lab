@@ -1,0 +1,15 @@
+# 梧桐官方 acps-cli 生产配置示例。
+# 复制为 backend/acps-cli.toml 后再按平台账号需要调整；不要提交复制后的文件。
+
+[registry]
+base_url = "https://wt.ioa.pub/registry-server"
+
+[auth]
+user_token_file = "./.acps-cli/tokens/registry-user.json"
+admin_token_file = "./.acps-cli/tokens/registry-admin.json"
+
+[ca]
+base_url = "https://wt.ioa.pub/ca-server"
+
+[discovery]
+base_url = "https://wt.ioa.pub/discovery"
