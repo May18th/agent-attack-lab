@@ -350,5 +350,6 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 
 - `acps_sdk-2.2.0-py3-none-any.whl`
 - `wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl`
+- `release-manifest.json`
 
-wheel 目录已加入 Git 忽略，不上传 GitHub。安装成功后由后端继续生成攻击/防守 ACS 草稿并执行 `up_until_ready()`；梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
+wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。安装成功后由后端继续生成攻击/防守 ACS 草稿并执行 `up_until_ready()`；梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。

@@ -15,11 +15,13 @@ $acpsWheel = Get-ChildItem -LiteralPath $packageDir -File -Filter "acps_sdk-2.2.
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $witWheel = Get-ChildItem -LiteralPath $packageDir -File -Filter "wit_framework-2.1.0-*.whl" |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$manifest = Join-Path $packageDir "release-manifest.json"
 
-if (-not $acpsWheel -or -not $witWheel) {
-    Write-Host "缺少官方 wheel。请将以下两个文件放入：$packageDir"
+if (-not $acpsWheel -or -not $witWheel -or -not (Test-Path -LiteralPath $manifest)) {
+    Write-Host "缺少梧桐发行目录文件。请将以下三个相邻文件放入：$packageDir"
     Write-Host "  acps_sdk-2.2.0-py3-none-any.whl"
     Write-Host "  wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl"
+    Write-Host "  release-manifest.json"
     exit 2
 }
 
@@ -29,6 +31,15 @@ Write-Host "安装：$($acpsWheel.Name)"
 Write-Host "安装：$($witWheel.Name)"
 
 uv pip install --python $python $acpsWheel.FullName $witWheel.FullName
+
+$preflight = Join-Path (Split-Path $python) "wit-release-preflight.exe"
+if (-not (Test-Path -LiteralPath $preflight)) {
+    throw "未找到发行预检命令：$preflight"
+}
+& $preflight --manifest $manifest
+if ($LASTEXITCODE -ne 0) {
+    throw "wit-release-preflight 未通过"
+}
 
 $check = @'
 import importlib.metadata as metadata
