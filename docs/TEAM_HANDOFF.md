@@ -410,3 +410,18 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 - 本次真实 DeepSeek 请求收到 HTTP 402（账户余额/计费问题），攻击和防守 Agent 均按设计回退本地规则；未将回退结果标记为 `acp-llm`。补充可用模型额度后再验收 `acp-llm`。
 - 后端本机 `.env` 已加入正式前端来源 `https://yuanyiagentzhandui.cn,https://www.yuanyiagentzhandui.cn`；重启后对 `www` 来源的 CORS OPTIONS 预检和 GET 均 HTTP 200，允许凭据。
 - 本次代码提交不得包含 `backend/.env`、AIC、EAB、证书、私钥、数据库、日志或 `tools/` 临时源码目录。
+
+### Git 交接待办（2026-10-09）
+
+后端修复已推送到 `codex/team-domain-handoff`：
+
+- `85218a7`：修复本机 AIP 身份绑定默认值、Windows 代理环境兼容和相关测试。
+- `723133d`：记录正式前端来源 CORS 公网验收。
+
+请队友将上述两个提交合并到 `main`（推荐按顺序 cherry-pick），并保留其已有的 `07b966a` Pages 根路径修复。合并后验收：
+
+1. 前端构建产物使用 `VITE_AGENT_API=https://api.yuanyiagentzhandui.cn`。
+2. 浏览器请求带 `credentials: include`，SSE 带凭据；服务端密钥不进入前端构建。
+3. `https://api.yuanyiagentzhandui.cn/health`、`/dashboard/summary` 返回 200，正式前端 Origin 的 CORS 预检返回 200。
+4. 根域名 `https://yuanyiagentzhandui.cn` 若仍握手失败，修复 DNS/证书后再作为主入口；当前可先使用 `https://www.yuanyiagentzhandui.cn`。
+5. 梧桐真实 mTLS 仍需平台侧 Leader AIC/证书、稳定 Agent `/rpc` endpoint 和服务端证书，不能用本地回环验收替代。
