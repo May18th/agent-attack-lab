@@ -34,6 +34,8 @@ base_url = "https://wt.ioa.pub/ca-server"
 base_url = "https://wt.ioa.pub/discovery"
 ```
 
+如果使用自建 ACPs 基础设施，`registry`、`ca`、`discovery` 和 MQ 地址可以改为内网或 `localhost`；这类配置只适用于自建服务，不代表梧桐生产 Registry/CA。不要把 `localhost:9001/9002/9003/9005` 直接用于平台注册。
+
 先做本地预检，不会登录或申请证书：
 
 ```powershell
@@ -87,6 +89,14 @@ $env:AGENT_AIP_MTLS_KEY_FILE = "D:\梧桐\backend\.acps-cli\certs\...\agent-key.
 $env:AGENT_AIP_CA_FILE = "D:\梧桐\backend\.acps-cli\certs\...\trust-bundle.pem"
 $env:AGENT_AIP_LEADER_ID = "<主调度 Agent 的真实 AIC>"
 ```
+
+拿到真实 endpoint 和证书后，可先运行不输出密钥或证书内容的环境预检：
+
+```powershell
+.\scripts\verify_acp_mtls_config.ps1 -RequireIdentityBinding
+```
+
+本地 HTTP 回环联调可加 `-AllowHttp`，但不得把该选项用于生产部署。
 
 随后配置攻击/防守 Agent 的真实 `/rpc` 地址并重启主服务。地址必须是 `/rpc`，不是网页首页；证书必须和平台登记的 endpoint、AIC 以及对端信任链一致。
 

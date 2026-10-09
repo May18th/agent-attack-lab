@@ -2,13 +2,13 @@
 
 ## 当前实现
 
-战局调度器分别支持独立攻击 Agent 和独立防守 Agent，通过 ACPs SDK 2.1.0 的 AIP v2 `AipRpcClient.start_task()` 发起 Start 任务。
+战局调度器分别支持独立攻击 Agent 和独立防守 Agent，通过 ACPs SDK 2.2.0 的 AIP v2 `AipRpcClient.start_task()` 发起 Start 任务。
 
 - 配置 `AGENT_ATTACKER_RPC_URL` 后，攻击样本改由该 AIP JSON-RPC 服务生成。
 - 配置 `AGENT_DEFENDER_RPC_URL` 后，每个样本会逐个发送给该 AIP JSON-RPC 服务检测。
 - 某个角色未配置 URL 时，该角色明确使用本地规则引擎。
 - URL 已配置但远端超时、协议错误或输出结构错误时，战局失败，不会静默回退到本地规则。
-- 后台实时事件、战局结果中的 `agentSource` 会区分 `acp` 和 `local-rule`。
+- 后台实时事件、战局结果中的 `agentSource` 会区分 `acp-llm`、`acp-rule-fallback`、`local-rule` 及未知来源。
 
 `POST /agent/attack`、`POST /agent/defend` 和本服务的 `/rpc` 仍是本地演示 Agent 入口；独立 Agent 的战局编排发生在 `POST /battles`。
 
@@ -87,14 +87,14 @@ $env:AGENT_AIP_CA_FILE = "D:\path\to\ca.crt"
 {"caught":[],"risks":[],"fixed":[]}
 ```
 
-三个防守字段及攻击方 `samples` 均必须是对象数组。AIP 任务失败、拒绝或未提供符合格式的结构化输出时，后端会将战局标记为失败。上述契约以本项目已安装的 `acps-sdk 2.1.0` 模型和客户端实现为准；不同平台的扩展字段需与队友另行对齐。
+三个防守字段及攻击方 `samples` 均必须是对象数组。AIP 任务失败、拒绝或未提供符合格式的结构化输出时，后端会将战局标记为失败。上述契约以本项目已安装的 `acps-sdk 2.2.0` 模型和客户端实现为准；不同平台的扩展字段需与队友另行对齐。
 
 ## 验收
 
 1. 分别请求两个 Agent 的 `/health`（若其提供该接口），确认 URL 从后端主机可访问。
 2. 配置至少一个远端角色并重启后端。
 3. 调用 `POST /battles?background=true` 创建战局，轮询 `GET /battles/{id}` 至完成。
-4. 调用 `GET /battles/{id}/events`，确认攻击样本和逐轮检测事件包含 `attackerSource` / `defenderSource: "acp"`；后台应显示“独立 ACP Agent”。
+4. 调用 `GET /battles/{id}/events`，确认攻击样本和逐轮检测事件包含真实来源：真模型为 `acp-llm`，模型失败的 Agent 规则兜底为 `acp-rule-fallback`；未接线才是 `local-rule`。
 5. 检查后端日志和战报，确认没有协议错误或超时。
 
 目前未配置任何独立 Agent URL、真实 AIC 或 mTLS 证书，因此代码和模拟测试通过不等于真实远端已连通。要完成端到端验收，需要取得攻击 Agent `/rpc`、防守 Agent `/rpc` 地址，以及平台要求的真实身份与证书材料。
