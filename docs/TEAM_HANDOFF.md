@@ -423,5 +423,5 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 1. 前端构建产物使用 `VITE_AGENT_API=https://api.yuanyiagentzhandui.cn`。
 2. 浏览器请求带 `credentials: include`，SSE 带凭据；服务端密钥不进入前端构建。
 3. `https://api.yuanyiagentzhandui.cn/health`、`/dashboard/summary` 返回 200，正式前端 Origin 的 CORS 预检返回 200。
-4. 根域名 `https://yuanyiagentzhandui.cn` 若仍握手失败，修复 DNS/证书后再作为主入口；当前可先使用 `https://www.yuanyiagentzhandui.cn`。
+4. 根域名 `https://yuanyiagentzhandui.cn` 已用不经过本机代理的直连 TLS/HTTP 复核为 200；此前 PowerShell 握手失败是本机代理误报。若本地仍失败，使用 `curl --noproxy "*"` 或关闭代理复测。
 5. 梧桐真实 mTLS 仍需平台侧 Leader AIC/证书、稳定 Agent `/rpc` endpoint 和服务端证书，不能用本地回环验收替代。
