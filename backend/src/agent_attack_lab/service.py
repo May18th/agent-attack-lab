@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import inspect
 import ipaddress
 import json
 import logging
@@ -2129,12 +2130,14 @@ async def rpc(request: Request) -> dict[str, Any]:
     """JSON-RPC endpoint supporting both AIP ``rpc`` and simple agent methods."""
     body = await request.json()
     if body.get("method") == "rpc":
-        response = await handle_rpc_request(
-            request,
-            _aip_handlers,
-            local_aic=_local_aic,
-            identity_binding_enabled=_identity_binding_enabled,
-        )
+        options = {
+            "local_aic": _local_aic,
+            "identity_binding_enabled": _identity_binding_enabled,
+        }
+        parameters = inspect.signature(handle_rpc_request).parameters
+        if not any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+            options = {key: value for key, value in options.items() if key in parameters}
+        response = await handle_rpc_request(request, _aip_handlers, **options)
         return response.model_dump(by_alias=True, exclude_none=True)
 
     parsed_request = JsonRpcRequest.model_validate(body)

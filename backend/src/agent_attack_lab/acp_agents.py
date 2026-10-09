@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -131,14 +132,34 @@ async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
             verify=ssl_context if ssl_context else True,
             trust_env=False,
         )
-        client = AipRpcClient(
-            partner_url=endpoint,
-            leader_id=os.getenv("AGENT_AIP_LEADER_ID", "agent-attack-lab-dev").strip()
+        client_options: dict[str, Any] = {
+            "partner_url": endpoint,
+            "leader_id": os.getenv("AGENT_AIP_LEADER_ID", "agent-attack-lab-dev").strip()
             or "agent-attack-lab-dev",
-            ssl_context=ssl_context,
-            transport=transport,
+            "ssl_context": ssl_context,
+            "transport": transport,
             **_identity_binding_options(role, ssl_context),
+        }
+        client_parameters = inspect.signature(AipRpcClient).parameters
+        accepts_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in client_parameters.values()
         )
+        if not accepts_kwargs:
+            client_options = {
+                key: value for key, value in client_options.items() if key in client_parameters
+            }
+        client = AipRpcClient(**client_options)
+        if "transport" not in client_parameters and not accepts_kwargs:
+            # acps-sdk 2.1.0 has no transport constructor argument. Replace its
+            # default client so loopback calls still ignore ambient proxy settings.
+            original_http = client.http_client
+            client.http_client = httpx.AsyncClient(
+                transport=transport,
+                verify=ssl_context if ssl_context else True,
+                trust_env=False,
+            )
+            await original_http.aclose()
         rpc_api_key = os.getenv("AGENT_RPC_API_KEY", "").strip()
         if rpc_api_key:
             # SDK 客户端不支持自定义 header；替换其内部 httpx 客户端注入 X-API-Key。
@@ -146,6 +167,7 @@ async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
             original_http = client.http_client
             client.http_client = httpx.AsyncClient(
                 headers={"X-API-Key": rpc_api_key},
+                transport=transport,
                 verify=ssl_context if ssl_context else True,
                 trust_env=False,
             )
