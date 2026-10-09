@@ -365,3 +365,5 @@ wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装�
 官方安装包构建另见 [`docs/WUTONG_INSTALL_PACKAGE_HANDOFF.md`](WUTONG_INSTALL_PACKAGE_HANDOFF.md)。当前仓库缺少 `acps-infra`、app-release、镜像包和 vendor bundle，不能直接生成 image/host 安装包；本地 Windows PowerShell 启停脚本只用于开发联调。生产部署必须由部署方准备对应版本的 `acps-infra`、平台参数和 Ansible inventory。
 
 2026-10-09 公网复查发现系统 cloudflared 配置只给 `api.yuanyiagentzhandui.cn` 放行了 `/rpc`，而网页还需要 `/health`、`/battles` 和 `/dashboard/summary`；公网 `/health` 实测返回 530。已新增 `backend/scripts/fix_cloudflare_api_route.ps1`，需在后端电脑以管理员 PowerShell 运行；脚本会备份配置、移除 `/rpc` 路径限制、重启服务并复测公网 `/health`。
+
+2026-10-09 12:10 公网 Tunnel 复核：Cloudflare API 显示本账号的 `yuanyi-agent-attack-lab-backend`（Tunnel ID `8e8a3878-180a-4761-816c-ab2137275602`）配置为 `api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787`。本机用户态连接器已成功建立到该 Tunnel 的边缘连接，Tunnel 状态为 `healthy`；但公网仍返回 Cloudflare `1033`。因此当前阻塞点不是 8787 或 Tunnel 连接器，而是队友账号中 `api.yuanyiagentzhandui.cn` 的 DNS 记录/公开主机名尚未指向该 Tunnel。请域名负责人在 `yuanyiagentzhandui.cn` Zone 中核对并修正：`api` 必须为指向 `8e8a3878-180a-4761-816c-ab2137275602.cfargotunnel.com` 的 CNAME（Proxied），删除冲突的 A/AAAA/旧 CNAME 后，再从公网执行 `Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health`。不要恢复 `kcwx.online`。

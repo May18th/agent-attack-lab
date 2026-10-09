@@ -21,6 +21,8 @@
 
 当前没有已验收的新域名后端 Tunnel 路由。须等队友确认 Cloudflare Zone 已可管理后，由域名负责人配置并核验。不要复用用户旧域名下的 Tunnel 或 DNS 记录。
 
+后端 Tunnel 的目标配置已在本账号验证：`yuanyi-agent-attack-lab-backend`（Tunnel ID `8e8a3878-180a-4761-816c-ab2137275602`）将 `api.yuanyiagentzhandui.cn` 转发到 `http://127.0.0.1:8787`。由于域名 Zone 由队友账号管理，后端无法代替域名负责人修改其 DNS。若连接器状态为 healthy 但公网返回 Cloudflare `1033`，请在队友账号的 Zone 中将 `api` CNAME 指向 `8e8a3878-180a-4761-816c-ab2137275602.cfargotunnel.com`（开启代理），清除冲突记录后再复测；不要把 `api` 指向旧 Tunnel 或 `kcwx.online`。
+
 ~~~text
 api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787
 ~~~
