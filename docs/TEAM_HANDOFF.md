@@ -352,11 +352,11 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 - `wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl`
 - `release-manifest.json`
 
-当前项目环境中的 `acps-sdk` 是 2.1.0，公开 PyPI 没有精确的 2.2.0；不要用公开包替代梧桐发行目录中的 SDK。
+本机后端虚拟环境已安装 `acps-sdk 2.2.0` 和 `wit-framework 2.1.0`，导入路径均位于 `backend/.venv/site-packages/`。官方 `release-manifest.json` 尚未取得，因此 `wit-release-preflight` 仍未通过；不能把已安装等同于完成发行物哈希验收。
 
-wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。安装成功后由后端继续生成攻击/防守 ACS 草稿并执行 `up_until_ready()`；梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
+wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
 
-梧桐官方证书流程已补齐：审核通过取得 AIC 后，先用 `acps-cli auth login` 登录，再用 `cert eab fetch` 获取 EAB，最后用 `cert issue -u clientAuth` 签发证书。项目新增 `backend/acps-cli.toml.example`、`backend/scripts/verify_acps_cli.ps1`、`backend/scripts/issue_acps_certificate.ps1` 和 `backend/scripts/inspect_acps_certificate.ps1`；证书、EAB、Token 和本机配置只保存在被 Git 忽略的 `backend/.acps-cli/` 与 `backend/acps-cli.toml`。完整步骤见 [`docs/WUTONG_ACPS_CERT_SETUP.md`](WUTONG_ACPS_CERT_SETUP.md)。
+梧桐官方证书流程已补齐：审核通过取得 AIC 后，先用 `acps-cli auth login` 登录，再用 `cert eab fetch` 获取 EAB，最后用 `cert issue -u clientAuth` 签发证书。项目新增 `backend/acps-cli.toml.example`、`backend/scripts/verify_acps_cli.ps1`、`backend/scripts/issue_acps_certificate.ps1` 和 `backend/scripts/inspect_acps_certificate.ps1`；EAB、Agent 私钥、证书和本机配置仅保存在被 Git 忽略的 `backend/.acps-cli/` 与 `backend/acps-cli.toml`，ACME 账户密钥和 CSR 位于同样被忽略的 `backend/keyfiles/`。完整步骤见 [`docs/WUTONG_ACPS_CERT_SETUP.md`](WUTONG_ACPS_CERT_SETUP.md)。
 
 2026-10-09 已根据官方手册增加 `backend/scripts/fetch_wit_release.ps1`，只从 `wit.ioa.pub` 的 `release-manifest.json` 下载并校验绑定的 `acps_sdk 2.2.0` 与 `wit_framework 2.1.0`。本机实测 CLI 帮助和证书命令预检通过，但当前 TLS 无法连接官方发行目录；需要负责人在已登录梧桐网络/零信任的机器上运行脚本。不要使用公共 PyPI、GitHub 或第三方镜像替代发行文件。
 
@@ -364,14 +364,8 @@ wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装�
 
 官方安装包构建另见 [`docs/WUTONG_INSTALL_PACKAGE_HANDOFF.md`](WUTONG_INSTALL_PACKAGE_HANDOFF.md)。当前仓库缺少 `acps-infra`、app-release、镜像包和 vendor bundle，不能直接生成 image/host 安装包；本地 Windows PowerShell 启停脚本只用于开发联调。生产部署必须由部署方准备对应版本的 `acps-infra`、平台参数和 Ansible inventory。
 
-## 2026-10-09 后端 AIP 本机链路复核
+2026-10-09 公网复查发现系统 cloudflared 配置只给 `api.yuanyiagentzhandui.cn` 放行了 `/rpc`，而网页还需要 `/health`、`/battles` 和 `/dashboard/summary`；公网 `/health` 实测返回 530。已新增 `backend/scripts/fix_cloudflare_api_route.ps1`，需在后端电脑以管理员 PowerShell 运行；脚本会备份配置、移除 `/rpc` 路径限制、重启服务并复测公网 `/health`。
 
-<<<<<<< HEAD
-- 修复 SDK 默认身份绑定导致的本机回环失败：没有平台 AIC 时显式关闭绑定；设置 `AGENT_IDENTITY_BINDING_ENABLED=1` 时强制要求 `AGENT_LOCAL_AIC`。
-- 修复 Windows/Clash 分号格式 `NO_PROXY` 被 httpx 解析为非法代理规则的问题：AIP 出站客户端使用显式传输并关闭环境代理。
-- 正式前端来源已加入后端 CORS：`https://yuanyiagentzhandui.cn`、`https://www.yuanyiagentzhandui.cn`；重启后端服务后再验收。
-- 真实模型请求若因账户余额返回 HTTP 402，攻击和防守 Agent 应回退到 `acp-rule-fallback`，不得标记为 `acp-llm`。
-=======
 2026-10-09 12:10 公网 Tunnel 复核：Cloudflare API 显示本账号的 `yuanyi-agent-attack-lab-backend`（Tunnel ID `8e8a3878-180a-4761-816c-ab2137275602`）配置为 `api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787`。本机用户态连接器已成功建立到该 Tunnel 的边缘连接，Tunnel 状态为 `healthy`；但公网仍返回 Cloudflare `1033`。因此当前阻塞点不是 8787 或 Tunnel 连接器，而是队友账号中 `api.yuanyiagentzhandui.cn` 的 DNS 记录/公开主机名尚未指向该 Tunnel。请域名负责人在 `yuanyiagentzhandui.cn` Zone 中核对并修正：`api` 必须为指向 `8e8a3878-180a-4761-816c-ab2137275602.cfargotunnel.com` 的 CNAME（Proxied），删除冲突的 A/AAAA/旧 CNAME 后，再从公网执行 `Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health`。不要恢复 `kcwx.online`。
 
 补充核实：Cloudflare Tunnel 的 `cfargotunnel.com` 目标只代理同一 Cloudflare 账号中的 DNS 记录。若 `yuanyiagentzhandui.cn` 确实属于队友账号，而上述 Tunnel 属于另一账号，即使 CNAME 内容完全正确也会持续返回 `1033`。正式方案是在队友账号新建后端 Tunnel（服务 `http://127.0.0.1:8787`），让 DNS 记录和 Tunnel 归属同一账号，再把新 Tunnel token 安装到后端电脑；不要继续修改跨账号 CNAME。
@@ -416,4 +410,18 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 - 本次真实 DeepSeek 请求收到 HTTP 402（账户余额/计费问题），攻击和防守 Agent 均按设计回退本地规则；未将回退结果标记为 `acp-llm`。补充可用模型额度后再验收 `acp-llm`。
 - 后端本机 `.env` 已加入正式前端来源 `https://yuanyiagentzhandui.cn,https://www.yuanyiagentzhandui.cn`；重启后对 `www` 来源的 CORS OPTIONS 预检和 GET 均 HTTP 200，允许凭据。
 - 本次代码提交不得包含 `backend/.env`、AIC、EAB、证书、私钥、数据库、日志或 `tools/` 临时源码目录。
->>>>>>> 85218a7 (fix: stabilize local AIP identity and proxy transport)
+
+### Git 交接待办（2026-10-09）
+
+后端修复已推送到 `codex/team-domain-handoff`：
+
+- `85218a7`：修复本机 AIP 身份绑定默认值、Windows 代理环境兼容和相关测试。
+- `723133d`：记录正式前端来源 CORS 公网验收。
+
+请队友将上述两个提交合并到 `main`（推荐按顺序 cherry-pick），并保留其已有的 `07b966a` Pages 根路径修复。合并后验收：
+
+1. 前端构建产物使用 `VITE_AGENT_API=https://api.yuanyiagentzhandui.cn`。
+2. 浏览器请求带 `credentials: include`，SSE 带凭据；服务端密钥不进入前端构建。
+3. `https://api.yuanyiagentzhandui.cn/health`、`/dashboard/summary` 返回 200，正式前端 Origin 的 CORS 预检返回 200。
+4. 根域名 `https://yuanyiagentzhandui.cn` 若仍握手失败，修复 DNS/证书后再作为主入口；当前可先使用 `https://www.yuanyiagentzhandui.cn`。
+5. 梧桐真实 mTLS 仍需平台侧 Leader AIC/证书、稳定 Agent `/rpc` endpoint 和服务端证书，不能用本地回环验收替代。
