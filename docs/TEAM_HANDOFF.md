@@ -363,3 +363,10 @@ wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装�
 已按两个独立 Agent 生成技能包：`artifacts/attacker_agent.zip`（攻击样本生成）和 `artifacts/defender_agent.zip`（OWASP 防守检测）。两个 ZIP 只包含 `skill.md` 与输出契约说明，不含 AIC、API Key、Token、EAB、证书、私钥或数据库；技能包名称必须分别填写 `attacker_agent`、`defender_agent`，上传后等待管理员审核。
 
 官方安装包构建另见 [`docs/WUTONG_INSTALL_PACKAGE_HANDOFF.md`](WUTONG_INSTALL_PACKAGE_HANDOFF.md)。当前仓库缺少 `acps-infra`、app-release、镜像包和 vendor bundle，不能直接生成 image/host 安装包；本地 Windows PowerShell 启停脚本只用于开发联调。生产部署必须由部署方准备对应版本的 `acps-infra`、平台参数和 Ansible inventory。
+
+## 2026-10-09 后端 AIP 本机链路复核
+
+- 修复 SDK 默认身份绑定导致的本机回环失败：没有平台 AIC 时显式关闭绑定；设置 `AGENT_IDENTITY_BINDING_ENABLED=1` 时强制要求 `AGENT_LOCAL_AIC`。
+- 修复 Windows/Clash 分号格式 `NO_PROXY` 被 httpx 解析为非法代理规则的问题：AIP 出站客户端使用显式传输并关闭环境代理。
+- 正式前端来源已加入后端 CORS：`https://yuanyiagentzhandui.cn`、`https://www.yuanyiagentzhandui.cn`；重启后端服务后再验收。
+- 真实模型请求若因账户余额返回 HTTP 402，攻击和防守 Agent 应回退到 `acp-rule-fallback`，不得标记为 `acp-llm`。

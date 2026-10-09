@@ -58,6 +58,19 @@ def _ssl_context() -> ssl.SSLContext | None:
         raise ACPAgentError("ACP mTLS 证书配置无效") from None
 
 
+def _identity_binding_options(role: Role, ssl_context: ssl.SSLContext | None) -> dict[str, Any]:
+    """Configure AIP identity checks without breaking local loopback agents."""
+    expected_partner_aic = os.getenv(
+        f"AGENT_{role.upper()}_EXPECTED_AIC",
+        os.getenv("AGENT_AIP_EXPECTED_PARTNER_AIC", ""),
+    ).strip()
+    if not expected_partner_aic:
+        return {"identity_binding_enabled": False}
+    if ssl_context is None:
+        raise ACPAgentError(f"ACP {role} 已配置对端 AIC，但未配置 mTLS 客户端证书和信任链")
+    return {"expected_partner_aic": expected_partner_aic, "identity_binding_enabled": True}
+
+
 def _task_data(task: TaskResult) -> dict[str, Any]:
     state = _state_name(task)
     if state in {"failed", "rejected", "canceled"}:
@@ -114,11 +127,17 @@ async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
     client: AipRpcClient | None = None
     try:
         ssl_context = _ssl_context()
+        transport = httpx.AsyncHTTPTransport(
+            verify=ssl_context if ssl_context else True,
+            trust_env=False,
+        )
         client = AipRpcClient(
             partner_url=endpoint,
             leader_id=os.getenv("AGENT_AIP_LEADER_ID", "agent-attack-lab-dev").strip()
             or "agent-attack-lab-dev",
             ssl_context=ssl_context,
+            transport=transport,
+            **_identity_binding_options(role, ssl_context),
         )
         rpc_api_key = os.getenv("AGENT_RPC_API_KEY", "").strip()
         if rpc_api_key:
