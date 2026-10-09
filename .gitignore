@@ -21,6 +21,7 @@ backend/attack-agent-acs.json
 backend/packages/
 backend/.acps-cli/
 backend/.wit/
+backend/keyfiles/
 backend/acps-cli.toml
 artifacts/
 

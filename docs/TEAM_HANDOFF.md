@@ -352,11 +352,11 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 - `wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl`
 - `release-manifest.json`
 
-当前项目环境中的 `acps-sdk` 是 2.1.0，公开 PyPI 没有精确的 2.2.0；不要用公开包替代梧桐发行目录中的 SDK。
+本机后端虚拟环境已安装 `acps-sdk 2.2.0` 和 `wit-framework 2.1.0`，导入路径均位于 `backend/.venv/site-packages/`。官方 `release-manifest.json` 尚未取得，因此 `wit-release-preflight` 仍未通过；不能把已安装等同于完成发行物哈希验收。
 
-wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。安装成功后由后端继续生成攻击/防守 ACS 草稿并执行 `up_until_ready()`；梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
+wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
 
-梧桐官方证书流程已补齐：审核通过取得 AIC 后，先用 `acps-cli auth login` 登录，再用 `cert eab fetch` 获取 EAB，最后用 `cert issue -u clientAuth` 签发证书。项目新增 `backend/acps-cli.toml.example`、`backend/scripts/verify_acps_cli.ps1`、`backend/scripts/issue_acps_certificate.ps1` 和 `backend/scripts/inspect_acps_certificate.ps1`；证书、EAB、Token 和本机配置只保存在被 Git 忽略的 `backend/.acps-cli/` 与 `backend/acps-cli.toml`。完整步骤见 [`docs/WUTONG_ACPS_CERT_SETUP.md`](WUTONG_ACPS_CERT_SETUP.md)。
+梧桐官方证书流程已补齐：审核通过取得 AIC 后，先用 `acps-cli auth login` 登录，再用 `cert eab fetch` 获取 EAB，最后用 `cert issue -u clientAuth` 签发证书。项目新增 `backend/acps-cli.toml.example`、`backend/scripts/verify_acps_cli.ps1`、`backend/scripts/issue_acps_certificate.ps1` 和 `backend/scripts/inspect_acps_certificate.ps1`；EAB、Agent 私钥、证书和本机配置仅保存在被 Git 忽略的 `backend/.acps-cli/` 与 `backend/acps-cli.toml`，ACME 账户密钥和 CSR 位于同样被忽略的 `backend/keyfiles/`。完整步骤见 [`docs/WUTONG_ACPS_CERT_SETUP.md`](WUTONG_ACPS_CERT_SETUP.md)。
 
 2026-10-09 已根据官方手册增加 `backend/scripts/fetch_wit_release.ps1`，只从 `wit.ioa.pub` 的 `release-manifest.json` 下载并校验绑定的 `acps_sdk 2.2.0` 与 `wit_framework 2.1.0`。本机实测 CLI 帮助和证书命令预检通过，但当前 TLS 无法连接官方发行目录；需要负责人在已登录梧桐网络/零信任的机器上运行脚本。不要使用公共 PyPI、GitHub 或第三方镜像替代发行文件。
 
@@ -369,6 +369,15 @@ wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装�
 2026-10-09 12:10 公网 Tunnel 复核：Cloudflare API 显示本账号的 `yuanyi-agent-attack-lab-backend`（Tunnel ID `8e8a3878-180a-4761-816c-ab2137275602`）配置为 `api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787`。本机用户态连接器已成功建立到该 Tunnel 的边缘连接，Tunnel 状态为 `healthy`；但公网仍返回 Cloudflare `1033`。因此当前阻塞点不是 8787 或 Tunnel 连接器，而是队友账号中 `api.yuanyiagentzhandui.cn` 的 DNS 记录/公开主机名尚未指向该 Tunnel。请域名负责人在 `yuanyiagentzhandui.cn` Zone 中核对并修正：`api` 必须为指向 `8e8a3878-180a-4761-816c-ab2137275602.cfargotunnel.com` 的 CNAME（Proxied），删除冲突的 A/AAAA/旧 CNAME 后，再从公网执行 `Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health`。不要恢复 `kcwx.online`。
 
 补充核实：Cloudflare Tunnel 的 `cfargotunnel.com` 目标只代理同一 Cloudflare 账号中的 DNS 记录。若 `yuanyiagentzhandui.cn` 确实属于队友账号，而上述 Tunnel 属于另一账号，即使 CNAME 内容完全正确也会持续返回 `1033`。正式方案是在队友账号新建后端 Tunnel（服务 `http://127.0.0.1:8787`），让 DNS 记录和 Tunnel 归属同一账号，再把新 Tunnel token 安装到后端电脑；不要继续修改跨账号 CNAME。
+
+## 8. 梧桐注册当前状态（2026-10-09）
+
+- `acps-sdk 2.2.0` 与 `wit-framework 2.1.0` 已安装并可从后端虚拟环境导入；官方 `release-manifest.json` 因本机到 `wit.ioa.pub` TLS 握手失败尚未取得，因此发行物 SHA-256 和 `wit-release-preflight` 尚未验收。
+- 正确 Registry 账号下已查到攻击、防守两个 Agent，状态均为 `APPROVED`；原 ACS 中的 AIC 与 Registry 记录一致。此前另一个账号尝试保存同名草稿得到 403；没有创建重复 Agent，原 ACS 未被修改。
+- 两个 Agent 均已获取 EAB 并签发 Ed25519 `clientAuth` 证书。使用 `cryptography` 验证了 AIC URI SAN、`clientAuth` EKU、私钥匹配及信任链，CA 查询均为 `VALID`。证书有效期截至 2026-11-27；EAB、Agent 私钥和证书在 `backend/.acps-cli/`，ACME 账户密钥和 CSR 在 `backend/keyfiles/`，均已加入 Git 忽略。
+- Registry 记录中的 Agent endpoint 仍指向旧 `trycloudflare.com` 临时隧道；本机直连 DNS 解析失败，经代理 TLS 握手也失败。尚未确认当前稳定公网 endpoint，证书也尚未接入 Agent 服务端或主服务 AIP 客户端，因此**目前不能宣称端到端 mTLS/AIP 已通**。
+- **队友待办**：确认攻击、防守 Agent 的稳定公开 `/rpc` 地址及其 TLS/mTLS 入口；由有权限的负责人按平台流程更新已审核 ACS endpoint。不要把当前临时隧道地址继续作为正式 endpoint，也不要发送或提交密码、Token、EAB、私钥、证书。
+- 后续还需为平台 Leader 身份完成注册/AIC 与 `clientAuth` 证书，并根据最终服务端部署方式申请/配置 `serverAuth` 证书及双向身份校验；另需取得官方 manifest 并通过发行预检。
 
 ### 队友 Cloudflare Zero Trust/Tunnel 待办
 
