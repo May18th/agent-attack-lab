@@ -14,7 +14,19 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
 
 $raw = [IO.File]::ReadAllText($ConfigPath)
 if ($raw -notmatch '(?m)^\s*- hostname:\s*api\.yuanyiagentzhandui\.cn\s*$') {
-    throw "The API hostname was not found in the config. No changes were made."
+    $userConfig = Join-Path $env:USERPROFILE ".cloudflared\yuanyi-agent-attack-lab.yml"
+    if (-not (Test-Path -LiteralPath $userConfig -PathType Leaf)) {
+        throw "The API hostname was not found in the service config or the user tunnel config. No changes were made."
+    }
+    $userRaw = [IO.File]::ReadAllText($userConfig)
+    if ($userRaw -notmatch '(?m)^\s*- hostname:\s*api\.yuanyiagentzhandui\.cn\s*$') {
+        throw "The API hostname was not found in the service config or the user tunnel config. No changes were made."
+    }
+    $backup = "$ConfigPath.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
+    Copy-Item -LiteralPath $ConfigPath -Destination $backup -Force
+    $raw = $userRaw
+    Write-Host "Restored the service config source from: $userConfig"
+    Write-Host "Backed up the previous service config to: $backup"
 }
 if ($raw -notmatch '(?m)^\s+path:\s*\^/rpc\$\s*$') {
     Write-Host "No RPC-only path rule found. No config change is needed."
