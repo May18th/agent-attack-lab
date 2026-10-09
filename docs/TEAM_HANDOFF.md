@@ -417,6 +417,8 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 
 - `85218a7`：修复本机 AIP 身份绑定默认值、Windows 代理环境兼容和相关测试。
 - `723133d`：记录正式前端来源 CORS 公网验收。
+- `4ae243b`：移除 DeepSeek 默认配置，统一为通用 OpenAI-compatible 配置。
+- `76820c1`：新增梧桐 ACP mTLS 环境预检脚本，并统一 SDK 2.2.0/来源状态文档。
 
 请队友将上述两个提交合并到 `main`（推荐按顺序 cherry-pick），并保留其已有的 `07b966a` Pages 根路径修复。合并后验收：
 
