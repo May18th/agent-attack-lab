@@ -366,7 +366,53 @@ wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装�
 
 ## 2026-10-09 后端 AIP 本机链路复核
 
+<<<<<<< HEAD
 - 修复 SDK 默认身份绑定导致的本机回环失败：没有平台 AIC 时显式关闭绑定；设置 `AGENT_IDENTITY_BINDING_ENABLED=1` 时强制要求 `AGENT_LOCAL_AIC`。
 - 修复 Windows/Clash 分号格式 `NO_PROXY` 被 httpx 解析为非法代理规则的问题：AIP 出站客户端使用显式传输并关闭环境代理。
 - 正式前端来源已加入后端 CORS：`https://yuanyiagentzhandui.cn`、`https://www.yuanyiagentzhandui.cn`；重启后端服务后再验收。
 - 真实模型请求若因账户余额返回 HTTP 402，攻击和防守 Agent 应回退到 `acp-rule-fallback`，不得标记为 `acp-llm`。
+=======
+2026-10-09 12:10 公网 Tunnel 复核：Cloudflare API 显示本账号的 `yuanyi-agent-attack-lab-backend`（Tunnel ID `8e8a3878-180a-4761-816c-ab2137275602`）配置为 `api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787`。本机用户态连接器已成功建立到该 Tunnel 的边缘连接，Tunnel 状态为 `healthy`；但公网仍返回 Cloudflare `1033`。因此当前阻塞点不是 8787 或 Tunnel 连接器，而是队友账号中 `api.yuanyiagentzhandui.cn` 的 DNS 记录/公开主机名尚未指向该 Tunnel。请域名负责人在 `yuanyiagentzhandui.cn` Zone 中核对并修正：`api` 必须为指向 `8e8a3878-180a-4761-816c-ab2137275602.cfargotunnel.com` 的 CNAME（Proxied），删除冲突的 A/AAAA/旧 CNAME 后，再从公网执行 `Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health`。不要恢复 `kcwx.online`。
+
+补充核实：Cloudflare Tunnel 的 `cfargotunnel.com` 目标只代理同一 Cloudflare 账号中的 DNS 记录。若 `yuanyiagentzhandui.cn` 确实属于队友账号，而上述 Tunnel 属于另一账号，即使 CNAME 内容完全正确也会持续返回 `1033`。正式方案是在队友账号新建后端 Tunnel（服务 `http://127.0.0.1:8787`），让 DNS 记录和 Tunnel 归属同一账号，再把新 Tunnel token 安装到后端电脑；不要继续修改跨账号 CNAME。
+
+## 8. 梧桐注册当前状态（2026-10-09）
+
+- `acps-sdk 2.2.0` 与 `wit-framework 2.1.0` 已安装并可从后端虚拟环境导入；官方 `release-manifest.json` 因本机到 `wit.ioa.pub` TLS 握手失败尚未取得，因此发行物 SHA-256 和 `wit-release-preflight` 尚未验收。
+- 正确 Registry 账号下已查到攻击、防守两个 Agent，状态均为 `APPROVED`；原 ACS 中的 AIC 与 Registry 记录一致。此前另一个账号尝试保存同名草稿得到 403；没有创建重复 Agent，原 ACS 未被修改。
+- 两个 Agent 均已获取 EAB 并签发 Ed25519 `clientAuth` 证书。使用 `cryptography` 验证了 AIC URI SAN、`clientAuth` EKU、私钥匹配及信任链，CA 查询均为 `VALID`。证书有效期截至 2026-11-27；EAB、Agent 私钥和证书在 `backend/.acps-cli/`，ACME 账户密钥和 CSR 在 `backend/keyfiles/`，均已加入 Git 忽略。
+- Registry 记录中的 Agent endpoint 仍指向旧 `trycloudflare.com` 临时隧道；本机直连 DNS 解析失败，经代理 TLS 握手也失败。尚未确认当前稳定公网 endpoint，证书也尚未接入 Agent 服务端或主服务 AIP 客户端，因此**目前不能宣称端到端 mTLS/AIP 已通**。
+- **队友待办**：确认攻击、防守 Agent 的稳定公开 `/rpc` 地址及其 TLS/mTLS 入口；由有权限的负责人按平台流程更新已审核 ACS endpoint。不要把当前临时隧道地址继续作为正式 endpoint，也不要发送或提交密码、Token、EAB、私钥、证书。
+- 后续还需为平台 Leader 身份完成注册/AIC 与 `clientAuth` 证书，并根据最终服务端部署方式申请/配置 `serverAuth` 证书及双向身份校验；另需取得官方 manifest 并通过发行预检。
+
+### 队友 Cloudflare Zero Trust/Tunnel 待办
+
+请在管理 `yuanyiagentzhandui.cn` 的同一个 Cloudflare 账号中完成：
+
+1. 首次使用时进入 **Zero Trust**，完成账号初始化（选择团队名称即可；不需要给公网访问者配置 Access 登录、WARP 或成员账号）。
+2. 进入 **Networks → Tunnels → Create tunnel → Cloudflared**，新建后端 Tunnel。
+3. 为 Tunnel 添加公网主机名：`api.yuanyiagentzhandui.cn`，服务填写 `http://127.0.0.1:8787`。让控制台自动创建同账号的 DNS 记录，不要继续使用旧账号的 `8e8a3878-180a-4761-816c-ab2137275602.cfargotunnel.com`。
+4. 复制连接器安装 Token，在后端电脑管理员 PowerShell 中执行：
+
+```powershell
+cloudflared service install <新 Tunnel Token>
+Restart-Service cloudflared
+```
+
+Token 只在本机私下输入，不提交 GitHub、不发送聊天。完成后由后端负责人验证：
+
+```powershell
+Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
+```
+
+验收必须返回 HTTP 200，且 JSON 中 `status` 为 `ok`、`storage` 为 `ok`；随后再验证 `/dashboard/summary` 和 `POST /battles`。根域名 `yuanyiagentzhandui.cn` 与 `www` 前端记录另行配置，不影响后端 API。
+
+## 2026-10-09 后端 AIP 本机链路复核
+
+- 队友已完成前端域名绑定；`https://api.yuanyiagentzhandui.cn/health` 和 `https://www.yuanyiagentzhandui.cn/` 已实测 HTTP 200。根域名 HTTPS 仍需队友确认 DNS/证书状态。
+- 修复 SDK 2.2 默认身份绑定导致的本机回环失败：没有平台 AIC 时显式关闭绑定；设置 `AGENT_IDENTITY_BINDING_ENABLED=1` 时强制要求 `AGENT_LOCAL_AIC`，避免空身份启动。
+- 修复 Windows/Clash 分号格式 `NO_PROXY` 被 httpx 解析为非法代理规则的问题：AIP 出站客户端使用显式 `AsyncHTTPTransport(trust_env=False)`，不读取环境代理。
+- 后端全套测试：`61 passed`，仅保留既有 Starlette/httpx 弃用警告。三服务已重启，8787/8788/8789 `/health` 均正常；后台战局实测 `completed`，`attackerSource=acp-rule-fallback`，1 个样本、1 轮防守。
+- 本次真实 DeepSeek 请求收到 HTTP 402（账户余额/计费问题），攻击和防守 Agent 均按设计回退本地规则；未将回退结果标记为 `acp-llm`。补充可用模型额度后再验收 `acp-llm`。
+- 本次代码提交不得包含 `backend/.env`、AIC、EAB、证书、私钥、数据库、日志或 `tools/` 临时源码目录。
+>>>>>>> 85218a7 (fix: stabilize local AIP identity and proxy transport)

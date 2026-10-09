@@ -64,6 +64,9 @@ def test_sdk_posts_aip_v2_start_command(monkeypatch: pytest.MonkeyPatch) -> None
     class FakeResponse:
         def __init__(self, data: dict[str, object]) -> None:
             self.data = data
+            self.content = json.dumps(data).encode("utf-8")
+            self.status_code = 200
+            self.text = self.content.decode("utf-8")
 
         def raise_for_status(self) -> None:
             return None
@@ -89,6 +92,7 @@ def test_sdk_posts_aip_v2_start_command(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
     monkeypatch.setenv("AGENT_AIP_LEADER_ID", "agent-lab-test")
+    monkeypatch.delenv("AGENT_RPC_API_KEY", raising=False)
     monkeypatch.setattr(aip_rpc_client.httpx, "AsyncClient", lambda **_kwargs: FakeHttpClient())
 
     result = asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "wire test"}))
@@ -170,3 +174,17 @@ def test_remote_failure_does_not_fall_back_to_local(monkeypatch: pytest.MonkeyPa
 def test_unconfigured_role_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_ATTACKER_RPC_URL", raising=False)
     assert asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "test"})) is None
+
+
+def test_local_rpc_disables_sdk_identity_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENT_ATTACKER_EXPECTED_AIC", raising=False)
+    monkeypatch.delenv("AGENT_AIP_EXPECTED_PARTNER_AIC", raising=False)
+    assert acp_agents._identity_binding_options("attacker", None) == {
+        "identity_binding_enabled": False
+    }
+
+
+def test_remote_identity_binding_requires_peer_aic_and_mtls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_ATTACKER_EXPECTED_AIC", "acps://peer")
+    with pytest.raises(acp_agents.ACPAgentError, match="未配置 mTLS"):
+        acp_agents._identity_binding_options("attacker", None)

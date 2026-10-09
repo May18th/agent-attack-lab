@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 import os
@@ -60,7 +59,13 @@ def _ssl_context() -> ssl.SSLContext | None:
 
 
 def _identity_binding_options(role: Role, ssl_context: ssl.SSLContext | None) -> dict[str, Any]:
-    """Configure AIP identity checks without breaking local loopback agents."""
+    """Configure AIP identity checks without breaking local loopback agents.
+
+    The current SDK requires ``expected_partner_aic`` whenever identity binding
+    is enabled. Local development agents do not have platform-issued AICs, so
+    they use explicit non-mTLS HTTP endpoints. Production callers can opt in by
+    supplying the role-specific peer AIC together with the mTLS settings.
+    """
     expected_partner_aic = os.getenv(
         f"AGENT_{role.upper()}_EXPECTED_AIC",
         os.getenv("AGENT_AIP_EXPECTED_PARTNER_AIC", ""),
@@ -68,8 +73,13 @@ def _identity_binding_options(role: Role, ssl_context: ssl.SSLContext | None) ->
     if not expected_partner_aic:
         return {"identity_binding_enabled": False}
     if ssl_context is None:
-        raise ACPAgentError(f"ACP {role} 已配置对端 AIC，但未配置 mTLS 客户端证书和信任链")
-    return {"expected_partner_aic": expected_partner_aic, "identity_binding_enabled": True}
+        raise ACPAgentError(
+            f"ACP {role} 已配置对端 AIC，但未配置 mTLS 客户端证书和信任链"
+        )
+    return {
+        "expected_partner_aic": expected_partner_aic,
+        "identity_binding_enabled": True,
+    }
 
 
 def _task_data(task: TaskResult) -> dict[str, Any]:
@@ -128,38 +138,22 @@ async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
     client: AipRpcClient | None = None
     try:
         ssl_context = _ssl_context()
+        # The SDK's default httpx client parses the process NO_PROXY value.
+        # Windows proxy tools commonly use semicolon-separated patterns, which
+        # httpx treats as malformed URL patterns. An explicit transport keeps
+        # loopback and mTLS calls independent from ambient proxy settings.
         transport = httpx.AsyncHTTPTransport(
             verify=ssl_context if ssl_context else True,
             trust_env=False,
         )
-        client_options: dict[str, Any] = {
-            "partner_url": endpoint,
-            "leader_id": os.getenv("AGENT_AIP_LEADER_ID", "agent-attack-lab-dev").strip()
+        client = AipRpcClient(
+            partner_url=endpoint,
+            leader_id=os.getenv("AGENT_AIP_LEADER_ID", "agent-attack-lab-dev").strip()
             or "agent-attack-lab-dev",
-            "ssl_context": ssl_context,
-            "transport": transport,
+            ssl_context=ssl_context,
+            transport=transport,
             **_identity_binding_options(role, ssl_context),
-        }
-        client_parameters = inspect.signature(AipRpcClient).parameters
-        accepts_kwargs = any(
-            parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in client_parameters.values()
         )
-        if not accepts_kwargs:
-            client_options = {
-                key: value for key, value in client_options.items() if key in client_parameters
-            }
-        client = AipRpcClient(**client_options)
-        if "transport" not in client_parameters and not accepts_kwargs:
-            # acps-sdk 2.1.0 has no transport constructor argument. Replace its
-            # default client so loopback calls still ignore ambient proxy settings.
-            original_http = client.http_client
-            client.http_client = httpx.AsyncClient(
-                transport=transport,
-                verify=ssl_context if ssl_context else True,
-                trust_env=False,
-            )
-            await original_http.aclose()
         rpc_api_key = os.getenv("AGENT_RPC_API_KEY", "").strip()
         if rpc_api_key:
             # SDK 客户端不支持自定义 header；替换其内部 httpx 客户端注入 X-API-Key。
@@ -167,7 +161,6 @@ async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
             original_http = client.http_client
             client.http_client = httpx.AsyncClient(
                 headers={"X-API-Key": rpc_api_key},
-                transport=transport,
                 verify=ssl_context if ssl_context else True,
                 trust_env=False,
             )

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import inspect
 import ipaddress
 import json
 import logging
@@ -145,11 +144,13 @@ _rate_limited_count = 0
 _api_key = os.getenv("AGENT_API_KEY", "").strip()
 _protect_read_routes = os.getenv("AGENT_PROTECT_READS", "0").strip().lower() in {"1", "true", "yes"}
 _local_aic = os.getenv("AGENT_LOCAL_AIC", "").strip() or None
-_identity_binding_enabled = os.getenv("AGENT_IDENTITY_BINDING_ENABLED", "").strip().lower() in {
-    "1", "true", "yes", "on"
-}
+_identity_binding_enabled = os.getenv(
+    "AGENT_IDENTITY_BINDING_ENABLED", ""
+).strip().lower() in {"1", "true", "yes", "on"}
 if _identity_binding_enabled and not _local_aic:
-    raise RuntimeError("AGENT_IDENTITY_BINDING_ENABLED 已开启，但未配置 AGENT_LOCAL_AIC")
+    raise RuntimeError(
+        "AGENT_IDENTITY_BINDING_ENABLED 已开启，但未配置 AGENT_LOCAL_AIC"
+    )
 _event_data_max_bytes = 32768
 _leaderboard_cache: tuple[float, dict[str, Any]] | None = None
 _recovery_tasks: set[asyncio.Task[Any]] = set()
@@ -2130,14 +2131,12 @@ async def rpc(request: Request) -> dict[str, Any]:
     """JSON-RPC endpoint supporting both AIP ``rpc`` and simple agent methods."""
     body = await request.json()
     if body.get("method") == "rpc":
-        options = {
-            "local_aic": _local_aic,
-            "identity_binding_enabled": _identity_binding_enabled,
-        }
-        parameters = inspect.signature(handle_rpc_request).parameters
-        if not any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
-            options = {key: value for key, value in options.items() if key in parameters}
-        response = await handle_rpc_request(request, _aip_handlers, **options)
+        response = await handle_rpc_request(
+            request,
+            _aip_handlers,
+            local_aic=_local_aic,
+            identity_binding_enabled=_identity_binding_enabled,
+        )
         return response.model_dump(by_alias=True, exclude_none=True)
 
     parsed_request = JsonRpcRequest.model_validate(body)
