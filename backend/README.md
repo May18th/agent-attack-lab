@@ -119,9 +119,9 @@ $env:no_proxy = "localhost,127.0.0.1,::1"
 .\stop-agents.ps1
 ```
 
-### 配置 DeepSeek 大模型
+### 配置外部大模型
 
-独立 Agent 使用 OpenAI Chat Completions 兼容接口。DeepSeek 配置示例位于 `.env.example`；复制为 `.env`，只在本机填写 `AGENT_LLM_API_KEY`。`.env` 已加入 Git 忽略规则，不要把密钥发到聊天或提交到仓库。启动/重启脚本会自动读取该文件，并启动 8788/8789 两个 Agent。
+独立 Agent 使用 OpenAI Chat Completions 兼容接口。默认配置为 OpenAI `gpt-4o-mini`；也可以替换为任意兼容服务，只需修改 `AGENT_LLM_BASE_URL` 和 `AGENT_LLM_MODEL`。复制 `.env.example` 为 `.env`，只在本机填写 `AGENT_LLM_API_KEY`。`.env` 已加入 Git 忽略规则，不要把密钥发到聊天或提交到仓库。启动/重启脚本会自动读取该文件，并启动 8788/8789 两个 Agent。
 
 当前实现请求 JSON Object，再由 Agent 本地校验返回结构；模型调用失败或输出不符合 Agent 契约时会标记并降级到本地规则。配置更新后运行 `.\restart.ps1`，并确认两个 Agent 的健康状态及战局来源标签。具体环境变量见 `.env.example`。
 

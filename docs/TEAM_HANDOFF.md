@@ -407,7 +407,7 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 - 修复 SDK 2.2 默认身份绑定导致的本机回环失败：没有平台 AIC 时显式关闭绑定；设置 `AGENT_IDENTITY_BINDING_ENABLED=1` 时强制要求 `AGENT_LOCAL_AIC`，避免空身份启动。
 - 修复 Windows/Clash 分号格式 `NO_PROXY` 被 httpx 解析为非法代理规则的问题：AIP 出站客户端使用显式 `AsyncHTTPTransport(trust_env=False)`，不读取环境代理。
 - 后端全套测试：`61 passed`，仅保留既有 Starlette/httpx 弃用警告。三服务已重启，8787/8788/8789 `/health` 均正常；后台战局实测 `completed`，`attackerSource=acp-rule-fallback`，1 个样本、1 轮防守。
-- 本次真实 DeepSeek 请求收到 HTTP 402（账户余额/计费问题），攻击和防守 Agent 均按设计回退本地规则；未将回退结果标记为 `acp-llm`。补充可用模型额度后再验收 `acp-llm`。
+- 本次外部模型请求曾收到 HTTP 402（账户余额/计费问题），攻击和防守 Agent 均按设计回退本地规则；未将回退结果标记为 `acp-llm`。配置任意有额度的 OpenAI-compatible Chat Completions 服务后再验收 `acp-llm`。
 - 后端本机 `.env` 已加入正式前端来源 `https://yuanyiagentzhandui.cn,https://www.yuanyiagentzhandui.cn`；重启后对 `www` 来源的 CORS OPTIONS 预检和 GET 均 HTTP 200，允许凭据。
 - 本次代码提交不得包含 `backend/.env`、AIC、EAB、证书、私钥、数据库、日志或 `tools/` 临时源码目录。
 
