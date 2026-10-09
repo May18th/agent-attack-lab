@@ -400,3 +400,12 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 ```
 
 验收必须返回 HTTP 200，且 JSON 中 `status` 为 `ok`、`storage` 为 `ok`；随后再验证 `/dashboard/summary` 和 `POST /battles`。根域名 `yuanyiagentzhandui.cn` 与 `www` 前端记录另行配置，不影响后端 API。
+
+## 2026-10-09 后端 AIP 本机链路复核
+
+- 队友已完成前端域名绑定；`https://api.yuanyiagentzhandui.cn/health` 和 `https://www.yuanyiagentzhandui.cn/` 已实测 HTTP 200。根域名 HTTPS 仍需队友确认 DNS/证书状态。
+- 修复 SDK 2.2 默认身份绑定导致的本机回环失败：没有平台 AIC 时显式关闭绑定；设置 `AGENT_IDENTITY_BINDING_ENABLED=1` 时强制要求 `AGENT_LOCAL_AIC`，避免空身份启动。
+- 修复 Windows/Clash 分号格式 `NO_PROXY` 被 httpx 解析为非法代理规则的问题：AIP 出站客户端使用显式 `AsyncHTTPTransport(trust_env=False)`，不读取环境代理。
+- 后端全套测试：`61 passed`，仅保留既有 Starlette/httpx 弃用警告。三服务已重启，8787/8788/8789 `/health` 均正常；后台战局实测 `completed`，`attackerSource=acp-rule-fallback`，1 个样本、1 轮防守。
+- 本次真实 DeepSeek 请求收到 HTTP 402（账户余额/计费问题），攻击和防守 Agent 均按设计回退本地规则；未将回退结果标记为 `acp-llm`。补充可用模型额度后再验收 `acp-llm`。
+- 本次代码提交不得包含 `backend/.env`、AIC、EAB、证书、私钥、数据库、日志或 `tools/` 临时源码目录。
