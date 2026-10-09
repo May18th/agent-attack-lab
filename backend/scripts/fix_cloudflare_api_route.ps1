@@ -6,47 +6,47 @@ param(
 $ErrorActionPreference = "Stop"
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw "请以管理员身份运行 PowerShell 后再执行此脚本。"
+    throw "Run this script from an elevated PowerShell window."
 }
 if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
-    throw "找不到 cloudflared 配置：$ConfigPath"
+    throw "cloudflared config was not found: $ConfigPath"
 }
 
 $raw = [IO.File]::ReadAllText($ConfigPath)
 if ($raw -notmatch '(?m)^\s*- hostname:\s*api\.yuanyiagentzhandui\.cn\s*$') {
-    throw "配置中未找到 api.yuanyiagentzhandui.cn，已停止，未改动文件。"
+    throw "The API hostname was not found in the config. No changes were made."
 }
 if ($raw -notmatch '(?m)^\s+path:\s*\^/rpc\$\s*$') {
-    Write-Host "未发现仅限 /rpc 的路径规则，配置无需修改。"
+    Write-Host "No RPC-only path rule found. No config change is needed."
 } else {
     $backup = "$ConfigPath.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
     Copy-Item -LiteralPath $ConfigPath -Destination $backup -Force
     $updated = [regex]::Replace($raw, '(?m)^\s+path:\s*\^/rpc\$\s*\r?\n', '')
     [IO.File]::WriteAllText($ConfigPath, $updated, [Text.UTF8Encoding]::new($false))
-    Write-Host "已备份旧配置：$backup"
-    Write-Host "已移除 /rpc 路径限制，api hostname 现在转发全部后端路由。"
+    Write-Host "Backed up the previous config to: $backup"
+    Write-Host "Removed the /rpc-only path rule. The API hostname now forwards all backend routes."
 }
 
 Restart-Service -Name cloudflared -Force
 Start-Sleep -Seconds 3
 $service = Get-Service -Name cloudflared
 if ($service.Status -ne "Running") {
-    throw "cloudflared 服务未恢复运行：$($service.Status)"
+    throw "cloudflared service did not return to Running: $($service.Status)"
 }
 
 try {
     $local = Invoke-WebRequest -Uri "http://127.0.0.1:8787/health" -TimeoutSec 10
-    Write-Host "本机 /health：$($local.StatusCode)"
+    Write-Host "Local /health: $($local.StatusCode)"
 } catch {
-    throw "本机 8787 /health 不可用，已停止公网验收：$($_.Exception.Message)"
+    throw "Local port 8787 /health is unavailable; public verification was stopped: $($_.Exception.Message)"
 }
 
 try {
     $public = Invoke-WebRequest -Uri $ApiUrl -TimeoutSec 20
-    Write-Host "公网 /health：$($public.StatusCode)"
+    Write-Host "Public /health: $($public.StatusCode)"
     Write-Host $public.Content
 } catch {
-    throw "公网 API 仍不可用：$($_.Exception.Message)。请检查 Cloudflare public hostname 是否绑定同一 Tunnel。"
+    throw "Public API is still unavailable: $($_.Exception.Message). Check the Cloudflare public hostname and tunnel binding."
 }
 
-Write-Host "Cloudflare API 路由修复并验收完成。"
+Write-Host "Cloudflare API route repair and verification completed."
