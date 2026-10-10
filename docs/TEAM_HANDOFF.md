@@ -427,3 +427,18 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 3. `https://api.yuanyiagentzhandui.cn/health`、`/dashboard/summary` 返回 200，正式前端 Origin 的 CORS 预检返回 200。
 4. 根域名 `https://yuanyiagentzhandui.cn` 已用不经过本机代理的直连 TLS/HTTP 复核为 200；此前 PowerShell 握手失败是本机代理误报。若本地仍失败，使用 `curl --noproxy "*"` 或关闭代理复测。
 5. 梧桐真实 mTLS 仍需平台侧 Leader AIC/证书、稳定 Agent `/rpc` endpoint 和服务端证书，不能用本地回环验收替代。
+
+### Git 交接记录（2026-10-10）
+
+公网浏览器会话和战局主流程已完成 API 级验收：
+
+- low/mid/high 三场公网战局创建均返回 HTTP 201；SSE 均返回 HTTP 200，并包含 `battle.created` 与终态事件；最终状态均为 `completed`。
+- 浏览器会话登录返回 HTTP 200，携带 Cookie 访问 `/battles` 返回 HTTP 200，退出登录返回 HTTP 200。
+- 前端独立登录页已部署到根域名和 `www` 域名；登录密码只保存在后端运行环境，未进入前端构建或 Git。
+
+微调材料完成本地离线审计，报告见 [`FINETUNE_AUDIT_20261010.md`](FINETUNE_AUDIT_20261010.md)：
+
+- 共 105 条 JSONL；manifest 数量和 SHA-256 全部一致。
+- 训练/验证无重复样本和 topic+difficulty 分组泄漏；防守 evidence 全部匹配输入连续原文。
+- 未发现真实凭据、私钥或真实服务 URL；原始 `artifacts/finetune/` 未同步 Git、VPS 或训练平台。
+- 队友审核重点：确认样本主题代表性、空 findings 比例和后续训练平台上传审批；未获授权前不要上传或启动训练。
