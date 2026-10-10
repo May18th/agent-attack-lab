@@ -28,6 +28,7 @@
 - 正式发行物和本机运行时预检已经通过；该结果只解除发行物完整性阻塞，不代表 Registry 注册、WIT Direct 或生产 mTLS 已完成。
 - Cloudflare Pages 与 Workers Preview 构建已验收；生产域名、Tunnel、DNS/SSL 和公网 API 状态仍需在合并/部署后按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 复验。
 - 清洗后攻击样本 low 难度仅 1 条，是否补样由队友审核决定。
+- 已建立独立外部安全案例库导入脚本 `backend/scripts/import_external_cases.py`；首批从 CISA 官方 KEV JSON 导入目录版本 `2026.10.08` 的 1,739 条记录，全部标记 `verified_primary`、`synthetic=0`，数据库位于被忽略的 `.data/external_security_cases.sqlite3`。这些记录是外部事实参考，不自动视为本项目战局或攻击样本。
 - 空白 `topic` 已在服务端统一拒绝并自动去除首尾空白；已新增 `DELETE /battles/{battle_id}`，删除已结束战局时同步清理事件，运行中战局返回 409。
 
 ## 本次清理
@@ -49,6 +50,7 @@
 1. 将攻击、防守两个 AIC 和固定 endpoint 发给 Registry 管理员，请其执行已审核 Agent 的端点迁移并同步 Discovery；禁止新建重复 Agent。
 2. 平台变更完成后，按 AIC 查询 authoritative ACS，并执行 low/mid/high 全链路验收。
 3. 仍需在原 VPS、容器卷、快照和备份中搜索完整 `acps/` workspace；不得读取或回传凭据正文。
+4. 外部案例库后续只接入可核验的一手来源；每条记录保留来源、版本、采集时间、内容哈希和原始字段，经过人工复核后才可脱敏改编为合成测试场景。
 
 ## 禁止事项
 

@@ -601,3 +601,16 @@ bash backend/scripts/find-wit-workspaces.sh
 仍需平台侧完成：用 Registry authoritative ACS 更新两个 `endPoints.url`，重新审核并确认 discovery
 同步；不能把本地文件修改视为 Registry 已更新。`deployer` 当前无免密 sudo，用户级 systemd
 可由该账号管理。禁止提交 `backend/.env`、API Key、Token、EAB、私钥、证书正文和 Tunnel Token。
+
+### 外部安全案例库（2026-10-11）
+
+已新增 `backend/scripts/import_external_cases.py`，建立与战局库隔离的
+`.data/external_security_cases.sqlite3`。首批数据来自 CISA 官方 Known Exploited
+Vulnerabilities JSON（目录版本 `2026.10.08`），导入 1,739 条 CVE 记录；每条保留厂商、产品、
+标题、CISA 描述、处置建议、CWE、原始 JSON、来源 URL、目录版本、采集时间和内容 SHA-256。
+
+- 数据库字段明确标记 `provenance_status=verified_primary`、`synthetic=0`；外部事实记录不会被
+  自动展示为本项目真实战局或攻击样本。
+- 导入脚本可重复执行，同一来源版本和内容哈希幂等更新；数据文件和凭据均不提交 Git。
+- 后续接入只允许可核验的一手来源（CISA、NVD、CVE、CERT/厂商公告、OWASP 等），先保留原文
+  证据和来源，再人工脱敏、去重和审核；禁止把模型生成内容或无来源转载写入事实库。
