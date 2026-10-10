@@ -499,3 +499,26 @@ mTLS 尚未具备。禁止提交或发送 `.env`、API Key、浏览器密码、T
 队友/平台待确认：现有三个 AIC 如何导入或接管 WIT workspace；若不支持接管，是否批准创建
 新身份。Direct 上线还需要匹配公网主机 SAN 的 serverAuth 证书、稳定
 `/acps/aip/v1/rpc` 映射以及 VPS SSH。完整判断见 `docs/WIT_IDENTITY_MIGRATION.md`。
+
+### 正式 WIT 发行物验收交接（2026-10-11）
+
+实现提交：`693ef57`。
+
+- 官方 `release-manifest.json` 与两个正式 wheel 的 SHA-256 已通过 `wit-release-preflight`；本机
+  安装版本为 `acps-sdk 2.2.0`、`wit-framework 2.1.0`。
+- `install_wit_wheels.ps1` 新增可选 `-PackageDir`，可直接验收相邻放置清单的正式发行目录；
+  默认 `backend/packages/` 行为保持不变。
+- 本机验收：WIT Identity/Direct/Group API 预检通过，后端 `82 passed, 1 skipped`。
+
+队友审核动作：
+
+1. 审核提交 `693ef57`，确认发行目录参数和状态文档后合并 PR #2。
+2. SSH 恢复后，将正式发行物通过受控通道放到 VPS 的非 Git 目录，使用 `-PackageDir` 安装并
+   重跑预检；不要把 wheel、manifest 或凭据提交到仓库。
+3. 向平台确认现有三个 AIC 的 WIT workspace 接管方式；确认前不得运行新的
+   `up_until_ready()`，避免创建重复身份。
+
+验收标准：预检报告 `acps-sdk 2.2.0`、`wit-framework 2.1.0`，API 检查通过，且 Registry 中
+没有新增重复 AIC。已知问题：`47.108.92.113:22` 仍为 TCP 连接超时，尚不能在 VPS 复验；
+serverAuth、稳定 Direct endpoint 和真实端到端 mTLS 仍未完成。禁止提交或发送 Registry 凭据、
+Token、EAB、私钥、证书正文、Tunnel Token、数据库或私有发行物。
