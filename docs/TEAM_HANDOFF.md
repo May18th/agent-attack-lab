@@ -444,3 +444,9 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 - 训练/验证无重复样本和 topic+difficulty 分组泄漏；防守 evidence 全部匹配输入连续原文。
 - 未发现真实凭据、私钥或真实服务 URL；原始 `artifacts/finetune/` 未同步 Git、VPS 或训练平台。
 - 队友审核重点：确认样本主题代表性、空 findings 比例和后续训练平台上传审批；未获授权前不要上传或启动训练。
+
+### 微调数据清洗（2026-10-10）
+
+- 新增 `backend/scripts/clean_finetune_dataset.py`，按主题成组移除明显联调、评委、占位和随机噪声；原始 `artifacts/finetune/` 不变。
+- 清洗结果写入本地 `artifacts/finetune_clean/`：105 条保留 72 条，剔除 33 条；攻击/防守样本同步处理，保留 6 个正式安全主题。
+- 规则、数量和审核问题见 [`FINETUNE_CLEANING_20261010.md`](FINETUNE_CLEANING_20261010.md)。清洗后的 JSONL 和 manifest 不提交 Git、不上传云端，队友审核脚本与报告即可复现。
