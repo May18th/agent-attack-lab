@@ -479,3 +479,22 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 已知问题：公网 API 当前正常，但 SSH 22 仍连接超时；真实公网 `/rpc`、serverAuth 和端到端
 mTLS 尚未具备。禁止提交或发送 `.env`、API Key、浏览器密码、Tunnel Token、EAB、证书、
 私钥和数据库备份；不得把预检通过表述为真实 mTLS 已验收。
+
+### WIT Identity 状态机迁移评估（2026-10-11）
+
+实现提交：`cd9c42a`。
+
+- 使用隔离临时环境安装现有私有 wheel，确认 `acps-sdk 2.2.0` 与 `wit-framework 2.1.0`
+  的 `AcpsConfig`、`AcpsRegistration`、`WitRuntime`、`up_until_ready()` 和
+  `serve_direct_partner()` API 与新 Identity 流程匹配；离线 ACS 草稿生成成功。
+- 项目 `.venv` 当前是公共 `acps-sdk 2.1.0`，无法导入私有 `wit-framework`；私有 wheel
+  虽位于被忽略的 `backend/packages/`，但缺少官方 `release-manifest.json`，未绕过预检安装。
+- 新增 `backend/scripts/verify_wit_runtime_api.py`，并接入 `install_wit_wheels.ps1`；安装通过
+  manifest 后还必须验证 Identity/Direct/Group API 完整及协程属性。
+- 当前三个 Agent 已有 AIC 和 clientAuth 材料，但没有 WIT workspace。已检查公开 API，未发现
+  导入现有 AIC、接管现有证书或恢复 Registry workspace 的入口，因此禁止直接新建 workspace
+  再运行 `up_until_ready()`，避免重复身份与证书分叉。
+
+队友/平台待确认：现有三个 AIC 如何导入或接管 WIT workspace；若不支持接管，是否批准创建
+新身份。Direct 上线还需要匹配公网主机 SAN 的 serverAuth 证书、稳定
+`/acps/aip/v1/rpc` 映射以及 VPS SSH。完整判断见 `docs/WIT_IDENTITY_MIGRATION.md`。

@@ -2,6 +2,10 @@
 
 这份说明对应梧桐官方“使用 SDK 开发智能体”流程。项目当前是 FastAPI + AIP v2 服务，先使用平台官方 `acps-cli` 获取身份材料，再把 clientAuth 证书接入 `acp_agents.py` 的出站 mTLS 客户端。
 
+`WitRuntime` Identity 状态机与现有三个 AIC 的迁移判断见
+[`WIT_IDENTITY_MIGRATION.md`](WIT_IDENTITY_MIGRATION.md)。在平台确认既有身份接管方式前，
+不要用空白 workspace 对同名 Agent 再次执行 `AcpsRegistration.integrated()`。
+
 ## 1. 官方前置条件
 
 必须先在 [梧桐智能体注册平台](https://wt.ioa.pub/registry/) 完成：
