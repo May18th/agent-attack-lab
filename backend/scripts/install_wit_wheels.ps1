@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $backendRoot = (Resolve-Path (Join-Path $PSScriptRoot ".."))
 $python = Join-Path $backendRoot ".venv\Scripts\python.exe"
@@ -30,7 +30,7 @@ Write-Host "使用解释器：$pythonVersion"
 Write-Host "安装：$($acpsWheel.Name)"
 Write-Host "安装：$($witWheel.Name)"
 
-Write-Host "先安装绑定的 acps-sdk 2.2.0"
+Write-Host "先安装绑定的 acps-sdk 2.2.0（覆盖 CI 公共 SDK 基线）"
 uv pip install --python $python $acpsWheel.FullName
 if ($LASTEXITCODE -ne 0) {
     throw "acps-sdk wheel 安装失败"

@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EnvLoader = Join-Path $ProjectRoot 'scripts\load-env.ps1'
 if (Test-Path -LiteralPath $EnvLoader) { & $EnvLoader -ProjectRoot $ProjectRoot }
@@ -44,10 +44,11 @@ Start-Process -FilePath $Python -ArgumentList @(
 
 Write-Host "Service started at http://127.0.0.1:$Port (AIP agents wired)"
 
-# 2026-10-08: 公网 Agent 隧道（attacker/defender.kechuang2026.cn）随主服务一并拉起。
-$AgentsTunnelScript = Join-Path $ProjectRoot 'start-agents-tunnel.ps1'
-if (Test-Path -LiteralPath $AgentsTunnelScript) {
+# The optional agent tunnel uses a separate hostname and must not be started
+# during ordinary backend restarts. Enable it explicitly for local testing.
+$AgentsTunnelScript = [IO.Path]::Combine([string]$ProjectRoot, 'start-agents-tunnel.ps1')
+if ($env:AGENT_START_AGENTS_TUNNEL -eq '1' -and (Test-Path -LiteralPath $AgentsTunnelScript -PathType Leaf)) {
     & $AgentsTunnelScript
 } else {
-    Write-Host "start-agents-tunnel.ps1 not found; skipping agents tunnel."
+    Write-Host 'Skipping optional agents tunnel (set AGENT_START_AGENTS_TUNNEL=1 to enable).'
 }

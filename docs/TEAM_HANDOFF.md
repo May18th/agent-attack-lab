@@ -2,6 +2,8 @@
 
 这是一个独立项目，与之前的科创项目无关。
 
+> 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
+
 ## 1. 分工
 
 前端负责页面、输入控件、加载状态、错误提示，以及攻击样本和防守结果展示。
@@ -128,6 +130,8 @@ GET /battles/{battle_id}
 ```
 
 查询战局。另有 `GET /battles?limit=50` 可获取最近战局列表，`limit` 范围为 1-200。战局默认保存在项目目录下的 `.data/battles.sqlite3`，服务重启后仍保留。
+
+`DELETE /battles/{battle_id}` 删除已完成或失败的战局及其事件记录，成功返回 HTTP 204；等待中或运行中的战局返回 HTTP 409。该写操作沿用浏览器会话或 API Key 鉴权。
 
 后台的 `GET /dashboard/summary` 汇总数据库中全部已保存战局、样本、规则命中和风险记录，并按本地规则用例编号统计模拟用例库规模；它不计算准确率或拦截率。统计值来自独立字段口径：样本数数 `attackerOut.samples`，规则命中数数 `defenderOut[].caught`，风险数数 `defenderOut[].risks`。`GET /battles?limit=10&offset=0&q=...` 使用 `X-Total-Count` 响应头返回筛选后的记录总数，跨域时会公开该响应头。React 前端选择历史战局后在地址栏写入 `?battle_id=...`；刷新/分享该地址会重新加载所选战局。后台 HTML 页历史回放仍读取 `/battles/{id}/replay` 事件并逐步播放。
 
@@ -427,3 +431,27 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 3. `https://api.yuanyiagentzhandui.cn/health`、`/dashboard/summary` 返回 200，正式前端 Origin 的 CORS 预检返回 200。
 4. 根域名 `https://yuanyiagentzhandui.cn` 已用不经过本机代理的直连 TLS/HTTP 复核为 200；此前 PowerShell 握手失败是本机代理误报。若本地仍失败，使用 `curl --noproxy "*"` 或关闭代理复测。
 5. 梧桐真实 mTLS 仍需平台侧 Leader AIC/证书、稳定 Agent `/rpc` endpoint 和服务端证书，不能用本地回环验收替代。
+
+### Git 交接记录（2026-10-10）
+
+本次记录提交：`26664b0`（分支：`codex/team-domain-handoff`）。
+
+公网浏览器会话和战局主流程已完成 API 级验收：
+
+- low/mid/high 三场公网战局创建均返回 HTTP 201；SSE 均返回 HTTP 200，并包含 `battle.created` 与终态事件；最终状态均为 `completed`。
+- 浏览器会话登录返回 HTTP 200，携带 Cookie 访问 `/battles` 返回 HTTP 200，退出登录返回 HTTP 200。
+- 前端独立登录页已部署到根域名和 `www` 域名；登录密码只保存在后端运行环境，未进入前端构建或 Git。
+
+微调材料完成本地离线审计，报告见 [`FINETUNE_AUDIT_20261010.md`](FINETUNE_AUDIT_20261010.md)：
+
+- 共 105 条 JSONL；manifest 数量和 SHA-256 全部一致。
+- 训练/验证无重复样本和 topic+difficulty 分组泄漏；防守 evidence 全部匹配输入连续原文。
+- 未发现真实凭据、私钥或真实服务 URL；原始 `artifacts/finetune/` 未同步 Git、VPS 或训练平台。
+- 队友审核重点：确认样本主题代表性、空 findings 比例和后续训练平台上传审批；未获授权前不要上传或启动训练。
+
+### 微调数据清洗（2026-10-10）
+
+- 新增 `backend/scripts/clean_finetune_dataset.py`，按主题成组移除明显联调、评委、占位和随机噪声；原始 `artifacts/finetune/` 不变。
+- 清洗结果写入本地 `artifacts/finetune_clean/`：105 条保留 72 条，剔除 33 条；攻击/防守样本同步处理，保留 6 个正式安全主题。
+- 规则、数量和审核问题见 [`FINETUNE_CLEANING_20261010.md`](FINETUNE_CLEANING_20261010.md)。清洗后的 JSONL 和 manifest 不提交 Git、不上传云端，队友审核脚本与报告即可复现。
+- 清洗后复核无字段缺失、evidence 错配或 sourceBattle 跨集合泄漏；攻击 low 难度仅 1 条，是否补充 low 样本需队友决定。

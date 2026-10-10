@@ -188,3 +188,26 @@ def test_remote_identity_binding_requires_peer_aic_and_mtls(monkeypatch: pytest.
     monkeypatch.setenv("AGENT_ATTACKER_EXPECTED_AIC", "acps://peer")
     with pytest.raises(acp_agents.ACPAgentError, match="未配置 mTLS"):
         acp_agents._identity_binding_options("attacker", None)
+
+
+def test_locked_sdk_options_are_filtered() -> None:
+    class LegacyAipClient:
+        def __init__(self, partner_url: str, leader_id: str, ssl_context=None) -> None:
+            pass
+
+    options = acp_agents._supported_options(
+        LegacyAipClient,
+        {
+            "partner_url": "http://127.0.0.1/rpc",
+            "leader_id": "leader",
+            "ssl_context": None,
+            "transport": object(),
+            "identity_binding_enabled": False,
+        },
+    )
+
+    assert options == {
+        "partner_url": "http://127.0.0.1/rpc",
+        "leader_id": "leader",
+        "ssl_context": None,
+    }

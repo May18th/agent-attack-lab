@@ -94,10 +94,13 @@ def test_mysql_store_uses_mysql_pool_schema_and_queries(monkeypatch) -> None:
     assert store.list(limit=10, offset=20) == []
     assert store.get("battle-1") is None
     assert store.count(query="登录") == 0
+    store.delete("battle-1")
 
     statements = [statement for statement, _parameters in engine.calls]
     assert sum("ON DUPLICATE KEY UPDATE" in statement for statement in statements) == 2
     assert any("ORDER BY created_at DESC LIMIT %s OFFSET %s" in statement for statement in statements)
     assert any("WHERE id = %s" in statement for statement in statements)
+    assert any("DELETE FROM battle_events WHERE battle_id = %s" in statement for statement in statements)
+    assert any("DELETE FROM battles WHERE id = %s" in statement for statement in statements)
     store.close()
     assert engine.disposed is True

@@ -1,8 +1,7 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
-export default defineConfig({
-  // Pages serves this SPA from the domain root; keep asset URLs valid on the custom domain.
+export default defineConfig(() => ({
   base: '/',
   plugins: [react()],
   server: {
@@ -12,4 +11,4 @@ export default defineConfig({
       '.trycloudflare.com',
     ],
   },
-})
+}))

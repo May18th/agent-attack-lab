@@ -42,6 +42,11 @@ export type Battle = {
   defenderOut: Defense[]
 }
 
+export type BrowserSession = {
+  enabled: boolean
+  authenticated: boolean
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly requestId?: string
@@ -70,6 +75,7 @@ async function request(path: string, options?: RequestInit): Promise<Response> {
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...options,
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
     })
   } catch {
@@ -108,6 +114,23 @@ export async function apiPage<T>(path: string): Promise<{ items: T[]; total: num
   const rawTotal = response.headers.get('X-Total-Count')
   const headerTotal = rawTotal === null ? Number.NaN : Number(rawTotal)
   return { items, total: Number.isFinite(headerTotal) && headerTotal >= 0 ? headerTotal : items.length }
+}
+
+export async function getBrowserSession(): Promise<BrowserSession> {
+  return api<BrowserSession>('/auth/session')
+}
+
+export async function loginBrowser(password: string): Promise<BrowserSession> {
+  await api<{ authenticated: boolean; expiresInSeconds: number }>('/auth/session', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  })
+  return getBrowserSession()
+}
+
+export async function logoutBrowser(): Promise<BrowserSession> {
+  await api<{ authenticated: boolean }>('/auth/session', { method: 'DELETE' })
+  return getBrowserSession()
 }
 
 export function errorMessage(status: number, detail?: string): string {

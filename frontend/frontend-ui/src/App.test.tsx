@@ -12,7 +12,8 @@ const battle = {
   defenderOut: [{ agentSource: 'acp-rule-fallback', caught: [], risks: [], fixed: [] }],
 }
 
-function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource = 'acp-rule-fallback') {
+function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource = 'acp-rule-fallback', initialSession = { enabled: false, authenticated: false }) {
+  let session = initialSession
   const sourceBattle = {
     ...battle,
     attackerOut: { ...battle.attackerOut, agentSource: source },
@@ -20,6 +21,11 @@ function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource =
   }
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
+    if (url.pathname.endsWith('/auth/session')) {
+      if (init?.method === 'POST') session = { enabled: true, authenticated: true }
+      if (init?.method === 'DELETE') session = { enabled: true, authenticated: false }
+      return Promise.resolve(new Response(JSON.stringify(session), { status: 200 }))
+    }
     if (url.pathname.endsWith('/health')) return Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
     if (url.pathname.endsWith('/dashboard/summary')) {
       return Promise.resolve(new Response(JSON.stringify({
@@ -172,5 +178,21 @@ describe('App', () => {
 
     expect(await screen.findByText('攻击来源：来源未知（future-agent）')).toBeInTheDocument()
     expect(screen.getByText('防守来源：来源未知（future-agent）')).toBeInTheDocument()
+  })
+
+  it('requires browser login before loading protected data', async () => {
+    const fetchMock = installFetchMock(21, 'acp-llm', 'acp-rule-fallback', { enabled: true, authenticated: false })
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: '登录控制台（Sign in）' })).toBeInTheDocument()
+    expect(document.querySelector('.login-page')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '开始新战局（New battle）' })).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/battles?'), expect.anything())
+    fireEvent.change(screen.getByLabelText(/浏览器密码/), { target: { value: 'browser-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: /登录（Sign in）/ }))
+
+    expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
+    expect(document.querySelector('.login-page')).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/auth/session'), expect.objectContaining({ method: 'POST', credentials: 'include' }))
   })
 })

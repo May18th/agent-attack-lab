@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, apiErrorMessage, apiPage, errorMessage } from './api'
+import { api, apiErrorMessage, apiPage, errorMessage, getBrowserSession, loginBrowser } from './api'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -64,6 +64,19 @@ describe('api error handling', () => {
       items: [{ id: 'battle-1' }],
       total: 1,
     })
+  })
+
+  it('uses browser credentials for session login and status checks', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ authenticated: true, expiresInSeconds: 28800 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ enabled: true, authenticated: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ enabled: true, authenticated: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(loginBrowser('browser-secret')).resolves.toEqual({ enabled: true, authenticated: true })
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST', credentials: 'include' })
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ credentials: 'include' })
+    await expect(getBrowserSession()).resolves.toEqual({ enabled: true, authenticated: true })
   })
 })
 

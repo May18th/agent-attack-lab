@@ -1,4 +1,15 @@
-param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+﻿param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+# ASCII ONLY (PS 5.1 reads BOM-less files as ANSI; Chinese comments break parsing).
+# Proxy env vars may exist in duplicated letter cases (inherited from Git Bash etc.).
+# .NET Start-Process throws on case-insensitive duplicate keys when copying the
+# environment dictionary, which kills start-agents.ps1 / restart.ps1. Outbound AIP
+# clients use trust_env=False, so proxies are not needed; clear them all here.
+foreach ($ProxyName in @('HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy')) {
+    if ([Environment]::GetEnvironmentVariable($ProxyName, 'Process')) {
+        Remove-Item ("Env:" + $ProxyName) -ErrorAction SilentlyContinue
+    }
+}
 
 $EnvPath = Join-Path $ProjectRoot '.env'
 if (-not (Test-Path -LiteralPath $EnvPath)) { return }

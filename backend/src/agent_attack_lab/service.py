@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import inspect
 import ipaddress
 import json
 import logging
@@ -22,7 +23,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from acps_sdk.aip import (
     Product,
     StructuredDataItem,
@@ -108,6 +109,14 @@ class JsonRpcRequest(BaseModel):
 class BattleRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
+
+    @field_validator("topic")
+    @classmethod
+    def validate_topic(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("topic 不能为空")
+        return value
 
 
 class BrowserLoginRequest(BaseModel):
@@ -1845,6 +1854,26 @@ def retry_battle(
     return BattleRecord.model_validate(record)
 
 
+@app.delete(
+    "/battles/{battle_id}",
+    dependencies=[Depends(_rate_limit_dependency)],
+    status_code=204,
+    summary="删除已结束的战局",
+    description="删除 completed 或 failed 战局及其事件；pending/running 战局必须先结束。",
+    tags=["战局接口"],
+)
+def delete_battle(battle_id: str, request: Request) -> Response:
+    _check_browser_or_api_auth(request)
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    if record["status"] in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail="运行中的战局不能删除")
+    _battle_store.delete(battle_id)
+    _invalidate_leaderboard_cache()
+    return Response(status_code=204)
+
+
 @app.get(
     "/battles",
     summary="查询历史战局",
@@ -2131,12 +2160,17 @@ async def rpc(request: Request) -> dict[str, Any]:
     """JSON-RPC endpoint supporting both AIP ``rpc`` and simple agent methods."""
     body = await request.json()
     if body.get("method") == "rpc":
-        response = await handle_rpc_request(
-            request,
-            _aip_handlers,
-            local_aic=_local_aic,
-            identity_binding_enabled=_identity_binding_enabled,
-        )
+        options = {
+            "local_aic": _local_aic,
+            "identity_binding_enabled": _identity_binding_enabled,
+        }
+        parameters = inspect.signature(handle_rpc_request).parameters
+        if not any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            options = {key: value for key, value in options.items() if key in parameters}
+        response = await handle_rpc_request(request, _aip_handlers, **options)
         return response.model_dump(by_alias=True, exclude_none=True)
 
     parsed_request = JsonRpcRequest.model_validate(body)

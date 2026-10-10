@@ -127,6 +127,17 @@ def test_attack_rejects_unknown_difficulty() -> None:
     assert response.status_code == 422
 
 
+def test_attack_and_battle_reject_blank_topic() -> None:
+    assert client.post("/agent/attack", json={"topic": "   \t"}).status_code == 422
+    assert client.post("/battles", json={"topic": "   \n"}).status_code == 422
+
+
+def test_battle_topic_is_trimmed() -> None:
+    response = client.post("/battles", json={"difficulty": "low", "topic": "  登录安全  "})
+    assert response.status_code == 201
+    assert response.json()["topic"] == "登录安全"
+
+
 def test_battle_runs_attack_and_defense() -> None:
     response = client.post("/battles", json={"difficulty": "high", "topic": "SQL 注入"})
     assert response.status_code == 201
@@ -227,6 +238,41 @@ def test_battle_list_returns_filtered_total_for_pagination(tmp_path, monkeypatch
     assert response.headers["X-Total-Count"] == "3"
     assert len(response.json()) == 1
     assert response.json()[0]["id"] == "battle-page-1"
+
+
+def test_delete_battle_removes_record_and_events(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "battle-delete.sqlite3"))
+    monkeypatch.setattr(service, "_battle_store", store)
+    created = client.post("/battles", json={"difficulty": "low", "topic": "删除测试"})
+    battle_id = created.json()["id"]
+    assert store.list_events(battle_id)
+
+    deleted = client.delete(f"/battles/{battle_id}")
+
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+    assert store.get(battle_id) is None
+    assert store.list_events(battle_id) == []
+    assert client.delete(f"/battles/{battle_id}").status_code == 404
+
+
+def test_delete_battle_rejects_active_record(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "battle-delete-active.sqlite3"))
+    store.save({
+        "id": "battle-active",
+        "difficulty": "low",
+        "topic": "运行中",
+        "status": "running",
+        "createdAt": "2026-10-11T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+
+    response = client.delete("/battles/battle-active")
+
+    assert response.status_code == 409
+    assert store.get("battle-active") is not None
 
 
 def test_battle_events_report_filters_and_leaderboard() -> None:
@@ -691,6 +737,16 @@ def test_api_key_protects_agent_routes(monkeypatch) -> None:
         json={"difficulty": "low", "topic": "安全测试"},
     )
     assert with_key.status_code == 200
+    created = client.post(
+        "/battles",
+        headers={"X-API-Key": "test-secret"},
+        json={"difficulty": "low", "topic": "删除鉴权测试"},
+    )
+    battle_id = created.json()["id"]
+    assert client.delete(f"/battles/{battle_id}").status_code == 401
+    assert client.delete(
+        f"/battles/{battle_id}", headers={"X-API-Key": "test-secret"}
+    ).status_code == 204
 
 
 def test_api_key_protects_metrics(monkeypatch) -> None:

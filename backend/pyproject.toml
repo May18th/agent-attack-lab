@@ -8,6 +8,9 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    # Keep the CI/test baseline installable from the public package index.
+    # Production Wutong 2.2.0 + wit-framework are installed separately by
+    # scripts/install_wit_wheels.ps1 from the private release directory.
     "acps-sdk>=2.1.0",
     "fastapi>=0.110",
     "httpx>=0.27",
@@ -17,6 +20,10 @@ dependencies = [
     "pytest>=8.0",
     "uvicorn>=0.29",
 ]
+
+# Production Wutong wheels are intentionally not a repository dependency:
+# they are private release artifacts and are installed after platform approval.
+# The code supports both the public SDK 2.1 interface and the locked 2.2 API.
 
 [project.scripts]
 agent-attack-lab = "agent_attack_lab:main"
