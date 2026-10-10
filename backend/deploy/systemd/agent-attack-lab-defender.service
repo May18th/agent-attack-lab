@@ -1,0 +1,15 @@
+[Unit]
+Description=Agent Attack Lab Defender Agent
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-attack-lab/backend
+ExecStart=/opt/agent-attack-lab/backend/scripts/start-service.sh agent_attack_lab.agents.defender:app 8789
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

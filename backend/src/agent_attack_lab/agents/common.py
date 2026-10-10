@@ -58,8 +58,11 @@ def create_agent_app(
     process: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> FastAPI:
     local_aic = os.getenv("AGENT_LOCAL_AIC", "").strip() or None
+    # Partner agents use a dedicated switch so the Leader can keep platform
+    # identity binding on while local loopback calls stay on HTTP + API key.
+    # Identity binding only makes sense over real mTLS channels.
     identity_binding_enabled = os.getenv(
-        "AGENT_IDENTITY_BINDING_ENABLED", ""
+        "AGENT_PARTNER_IDENTITY_BINDING_ENABLED", ""
     ).strip().lower() in {"1", "true", "yes", "on"}
     if identity_binding_enabled and not local_aic:
         raise RuntimeError(

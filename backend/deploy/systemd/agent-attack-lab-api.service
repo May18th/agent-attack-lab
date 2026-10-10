@@ -1,0 +1,15 @@
+[Unit]
+Description=Agent Attack Lab API
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-attack-lab/backend
+ExecStart=/opt/agent-attack-lab/backend/scripts/start-service.sh agent_attack_lab.service:app 8787
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
