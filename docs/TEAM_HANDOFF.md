@@ -430,6 +430,8 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 
 ### Git 交接记录（2026-10-10）
 
+本次记录提交：`26664b0`（分支：`codex/team-domain-handoff`）。
+
 公网浏览器会话和战局主流程已完成 API 级验收：
 
 - low/mid/high 三场公网战局创建均返回 HTTP 201；SSE 均返回 HTTP 200，并包含 `battle.created` 与终态事件；最终状态均为 `completed`。
