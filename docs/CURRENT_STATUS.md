@@ -11,11 +11,14 @@
 - 在独立临时 worktree 检查 `origin/main`：针对性 ACP 测试 `10 passed`，完整后端测试 `61 passed`。
 - 本分支补充旧/新 SDK 构造参数兼容和 Partner 独立身份绑定后，本机官方 SDK 2.2 环境和全新公开 SDK 2.1 环境均为 `70 passed`，仅有既有 Starlette/httpx 弃用警告。
 - 微调数据：原始 105 条，保守清洗保留 72 条、剔除 33 条；清洗集未上传 Git、VPS 或训练平台。条件、数量和校验见 `FINETUNE_CLEANING_20261010.md`。
+- 身份绑定预检已区分 Leader 与 Partner 开关；开关打开但当前 SDK 不支持服务端身份绑定参数时会失败关闭，不再静默丢弃配置。
+- 新增 VPS 只读常驻验收脚本，可一次检查 linger、三个业务服务、Cloudflare Tunnel 和四个健康接口；仍需 SSH 恢复后在 VPS 实机运行并做重启验收。
 
 ## 当前阻塞
 
 - GitHub Actions 已在 PR `#2` 通过：后端测试、前端构建检查均为 SUCCESS；Cloudflare Pages 与 Workers Preview 也已通过。
 - 生产梧桐发行包 `release-manifest.json`、稳定 Agent `/rpc` 地址和真实端到端 mTLS 仍未完成；本地回环测试不能替代平台验收。
+- VPS `47.108.92.113:22` 当前连接超时；公网 API 正常，但无法从本机重新核对 systemd enabled、linger 和重启恢复状态。
 - Cloudflare Pages 与 Workers Preview 构建已验收；生产域名、Tunnel、DNS/SSL 和公网 API 状态仍需在合并/部署后按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 复验。
 - 清洗后攻击样本 low 难度仅 1 条，是否补样由队友审核决定。
 - 空白 `topic` 已在服务端统一拒绝并自动去除首尾空白；已新增 `DELETE /battles/{battle_id}`，删除已结束战局时同步清理事件，运行中战局返回 409。

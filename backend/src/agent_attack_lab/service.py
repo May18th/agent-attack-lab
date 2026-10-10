@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import inspect
 import ipaddress
 import json
 import logging
@@ -38,6 +37,7 @@ from acps_sdk.aip.aip_rpc_server import (
     TaskManager,
     handle_rpc_request,
 )
+from agent_attack_lab.aip_compat import server_identity_options
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
     call_attacker,
@@ -160,6 +160,12 @@ if _identity_binding_enabled and not _local_aic:
     raise RuntimeError(
         "AGENT_IDENTITY_BINDING_ENABLED 已开启，但未配置 AGENT_LOCAL_AIC"
     )
+_aip_server_options = server_identity_options(
+    handle_rpc_request,
+    local_aic=_local_aic,
+    enabled=_identity_binding_enabled,
+    setting_name="AGENT_IDENTITY_BINDING_ENABLED",
+)
 _event_data_max_bytes = 32768
 _leaderboard_cache: tuple[float, dict[str, Any]] | None = None
 _recovery_tasks: set[asyncio.Task[Any]] = set()
@@ -2160,17 +2166,7 @@ async def rpc(request: Request) -> dict[str, Any]:
     """JSON-RPC endpoint supporting both AIP ``rpc`` and simple agent methods."""
     body = await request.json()
     if body.get("method") == "rpc":
-        options = {
-            "local_aic": _local_aic,
-            "identity_binding_enabled": _identity_binding_enabled,
-        }
-        parameters = inspect.signature(handle_rpc_request).parameters
-        if not any(
-            parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in parameters.values()
-        ):
-            options = {key: value for key, value in options.items() if key in parameters}
-        response = await handle_rpc_request(request, _aip_handlers, **options)
+        response = await handle_rpc_request(request, _aip_handlers, **_aip_server_options)
         return response.model_dump(by_alias=True, exclude_none=True)
 
     parsed_request = JsonRpcRequest.model_validate(body)

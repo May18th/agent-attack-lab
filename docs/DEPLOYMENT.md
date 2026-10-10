@@ -25,6 +25,19 @@ Quick Tunnel 每次启动都会生成新地址，关闭进程后地址失效，�
 
 在新域名下的 Tunnel 与 API 完成公网验收前，跨电脑远程联调暂停。不要将本项目接到负责其他项目的旧域名/Tunnel，也不要修改或删除那些旧资源。Tunnel Token 只能通过安全渠道配置在后端主机或部署密钥中，不得提交到 Git 或聊天。
 
+### VPS 常驻验收
+
+VPS 安装用户级 systemd 单元并启用 `deployer` linger 后，可在项目目录执行只读验收：
+
+```bash
+cd /opt/agent-attack-lab
+backend/scripts/verify-vps-runtime.sh
+```
+
+脚本检查三个业务服务和 Cloudflare Tunnel 是否 `enabled`、`active`，并请求三个本地健康
+接口及公网 API。脚本不会读取或输出 `.env`、API Key、浏览器密码、Tunnel Token、证书或
+私钥。VPS 重启后应再次执行；只有重启后的检查也全部通过，才能确认无人登录时可自动恢复。
+
 ## MySQL / PostgreSQL
 
 SQLite 是默认开发数据库。生产环境设置 PostgreSQL 连接串：

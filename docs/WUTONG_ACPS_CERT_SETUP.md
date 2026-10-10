@@ -93,8 +93,18 @@ $env:AGENT_AIP_LEADER_ID = "<主调度 Agent 的真实 AIC>"
 拿到真实 endpoint 和证书后，可先运行不输出密钥或证书内容的环境预检：
 
 ```powershell
-.\scripts\verify_acp_mtls_config.ps1 -RequireIdentityBinding
+# Leader 主服务要求身份绑定
+.\scripts\verify_acp_mtls_config.ps1 -RequireLeaderIdentityBinding
+
+# Partner 攻击/防守服务要求身份绑定时另行检查
+.\scripts\verify_acp_mtls_config.ps1 -RequirePartnerIdentityBinding
 ```
+
+旧参数 `-RequireIdentityBinding` 仍作为 Leader 检查的兼容别名。预检会分别读取
+`AGENT_IDENTITY_BINDING_ENABLED` 和 `AGENT_PARTNER_IDENTITY_BINDING_ENABLED`，并确认当前
+SDK 服务端确实接受身份绑定参数；开关已打开但 SDK 不支持时会直接失败，避免静默退化为
+未绑定身份的 HTTP RPC。预检通过仍只代表本机配置和 SDK 能力齐全，不代表公网 mTLS
+通道已经完成端到端验收。
 
 本地 HTTP 回环联调可加 `-AllowHttp`，但不得把该选项用于生产部署。
 

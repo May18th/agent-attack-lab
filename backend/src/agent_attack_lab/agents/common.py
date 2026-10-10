@@ -28,8 +28,7 @@ from acps_sdk.aip.aip_rpc_server import (
     TaskManager,
     handle_rpc_request,
 )
-from fastapi import FastAPI, Request
-
+from agent_attack_lab.aip_compat import server_identity_options
 from agent_attack_lab.agents.llm_runtime import is_configured as llm_configured
 
 
@@ -68,6 +67,12 @@ def create_agent_app(
         raise RuntimeError(
             "AGENT_PARTNER_IDENTITY_BINDING_ENABLED 已开启，但未配置 AGENT_LOCAL_AIC"
         )
+    aip_server_options = server_identity_options(
+        handle_rpc_request,
+        local_aic=local_aic,
+        enabled=identity_binding_enabled,
+        setting_name="AGENT_PARTNER_IDENTITY_BINDING_ENABLED",
+    )
 
     async def on_start(command: TaskCommand, task: TaskResult | None) -> TaskResult:
         result = await DefaultHandlers.start(command, task)
@@ -115,17 +120,7 @@ def create_agent_app(
         api_key = os.getenv("AGENT_RPC_API_KEY", "").strip()
         if api_key and request.headers.get("x-api-key") != api_key:
             raise HTTPException(status_code=401, detail="invalid or missing X-API-Key")
-        options = {
-            "local_aic": local_aic,
-            "identity_binding_enabled": identity_binding_enabled,
-        }
-        parameters = inspect.signature(handle_rpc_request).parameters
-        if not any(
-            parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in parameters.values()
-        ):
-            options = {key: value for key, value in options.items() if key in parameters}
-        response = await handle_rpc_request(request, handlers, **options)
+        response = await handle_rpc_request(request, handlers, **aip_server_options)
         return response.model_dump(by_alias=True, exclude_none=True)
 
     return app
