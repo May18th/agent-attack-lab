@@ -549,3 +549,33 @@ Token、EAB、私钥、证书正文、Tunnel Token、数据库或私有发行物
 
 本次只做了公网、DNS、Cloudflare 资源和本地代码的只读核验，没有修改 Cloudflare、Registry、VPS
 或服务配置；禁止提交 API Key、浏览器密码、Token、EAB、私钥、证书正文、Tunnel Token 和数据库。
+
+### 现有 AIC 接管 WIT workspace 判定（2026-10-11）
+
+结论已收口：**仅凭现有 AIC、Registry 账号或单独 clientAuth 材料，不能让空 WIT workspace
+接管旧身份。** 正式 `wit-framework 2.1.0` 字节码显示状态机依赖 `enrollment.json`、
+`registrationId`、EAB、Registry token 和本地生成的证书私钥；缺少本地状态时会进入
+“create a new workspace”路径并产生新注册。
+
+本机递归审计只找到 Leader、攻击、防守三组 `.acps-cli` clientAuth 证书、私钥、EAB 和 trust
+bundle；没有 `enrollment.json`、`acs.final.json`、`registry-token.json`、serverAuth 或 WIT AIP
+状态数据库。因此本机材料不足以恢复攻击/防守原 workspace。
+
+新增只读搜索脚本：
+
+```bash
+cd /opt/agent-attack-lab
+bash backend/scripts/find-wit-workspaces.sh
+```
+
+队友待办：
+
+1. SSH 恢复后在原 VPS、停止容器、Docker volume、快照和备份中搜索完整 `acps/`。脚本只输出
+   候选路径和缺失项，不读取凭据正文。
+2. 找到完整 `acps/`：使用受控加密通道备份整个目录，不拆分、不改名、不提交 Git；按平台流程
+   恢复原状态，并为固定域名重签 serverAuth、更新 ACS/discovery。
+3. 确认找不到：由负责人批准新 workspace 和新 AIC，完成固定 RPC 与端到端 mTLS 后更新
+   discovery，并将旧 AIC/RPC 记录标记废弃。
+
+未完成上述判定前，禁止在空 workspace 运行 `up_until_ready()`；也不得发送或提交
+`enrollment.json`、Registry token、EAB、私钥、证书正文、整个 workspace 压缩包或数据库。
