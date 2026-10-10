@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
-import { api, apiErrorMessage, apiPage } from './api'
-import type { AgentSource, Battle, DashboardSummary, Difficulty } from './api'
+import { api, apiErrorMessage, apiPage, getBrowserSession, loginBrowser, logoutBrowser } from './api'
+import type { AgentSource, Battle, BrowserSession, DashboardSummary, Difficulty } from './api'
 const PAGE_SIZE = 10
 const DEFAULT_TOPIC = '提示注入与输入校验'
 const difficultyLabel: Record<Difficulty, string> = { low: '低（Low）', mid: '中（Medium）', high: '高（High）' }
@@ -61,7 +61,26 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [topicError, setTopicError] = useState('')
   const [message, setMessage] = useState('')
+  const [session, setSession] = useState<BrowserSession | null>(null)
+  const [sessionLoading, setSessionLoading] = useState(true)
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginBusy, setLoginBusy] = useState(false)
+  const [loginError, setLoginError] = useState('')
   const historyRequestId = useRef(0)
+
+  const refreshSession = useCallback(async () => {
+    try {
+      const current = await getBrowserSession()
+      setSession(current)
+      return current
+    } catch (error) {
+      setSession(null)
+      setMessage('登录状态检查失败：' + apiErrorMessage(error))
+      return null
+    } finally {
+      setSessionLoading(false)
+    }
+  }, [])
 
   const loadBattleDetail = useCallback(async (battleId: string) => {
     try {
@@ -114,20 +133,25 @@ function App() {
   }, [])
 
   useEffect(() => {
-    // Async initialization intentionally updates remote health state after mount.
+    // Health is public; protected data waits for the browser session check below.
     // oxlint-disable-next-line react/set-state-in-effect
     void checkHealth()
-    // Async initialization intentionally updates remote-data state after mount.
+    // oxlint-disable-next-line react/set-state-in-effect
+    void refreshSession()
+  }, [checkHealth, refreshSession])
+
+  useEffect(() => {
+    if (sessionLoading || !session || (session.enabled && !session.authenticated)) return
+    // Async initialization intentionally updates protected remote data after auth.
     // oxlint-disable-next-line react/set-state-in-effect
     void loadHistory(0, true)
     // Async initialization intentionally restores a shareable replay URL.
     // oxlint-disable-next-line react/set-state-in-effect
     const replayBattleId = readReplayBattleId()
     if (replayBattleId) void loadBattleDetail(replayBattleId)
-    // Async initialization intentionally loads independent persisted statistics.
     // oxlint-disable-next-line react/set-state-in-effect
     void loadSummary()
-  }, [checkHealth, loadHistory, loadBattleDetail, loadSummary])
+  }, [sessionLoading, session, loadHistory, loadBattleDetail, loadSummary])
 
   useEffect(() => {
     const restoreRoute = () => {
@@ -189,8 +213,42 @@ function App() {
     link.download = selected.topic + '.md'; link.click(); URL.revokeObjectURL(link.href)
   }
 
+  const submitLogin = async (event: FormEvent) => {
+    event.preventDefault()
+    if (loginBusy || !loginPassword) return
+    setLoginBusy(true)
+    setLoginError('')
+    try {
+      const current = await loginBrowser(loginPassword)
+      setSession(current)
+      setLoginPassword('')
+      if (!current.authenticated) setLoginError('登录未完成，请重试')
+    } catch (error) {
+      setLoginError('登录失败：' + apiErrorMessage(error))
+    } finally {
+      setLoginBusy(false)
+    }
+  }
+
+  const submitLogout = async () => {
+    try {
+      const current = await logoutBrowser()
+      setSession(current)
+      setSelected(null)
+      setBattles([])
+      setSummary(null)
+      setHistoryTotal(0)
+      setMessage('已退出登录')
+    } catch (error) {
+      setMessage('退出登录失败：' + apiErrorMessage(error))
+    }
+  }
+
+  const requiresLogin = Boolean(session?.enabled && !session.authenticated)
+
   return <div className="page">
-    <header className="topbar"><div><div className="eyebrow">智能体攻防实验室（AGENT ATTACK LAB）</div><h1>智能体<em>攻防实验室</em></h1><p className="sub">后端联调控制台（Backend console） · 实时战局（Live battles） · 风险复盘（Risk review）</p></div><button className={'status ' + status} type="button" onClick={() => status === 'error' && void checkHealth()} disabled={status === 'loading'}><span className="dot" />{status === 'loading' ? '正在检查服务（Checking service）' : status === 'ok' ? '服务运行正常（Service healthy）' : '服务连接失败（Connection failed）· 点击重试（Retry）'}</button></header>
+    <header className="topbar"><div><div className="eyebrow">智能体攻防实验室（AGENT ATTACK LAB）</div><h1>智能体<em>攻防实验室</em></h1><p className="sub">后端联调控制台（Backend console） · 实时战局（Live battles） · 风险复盘（Risk review）</p></div><div className="topbar-actions">{session?.enabled && session.authenticated && <button className="btn-ghost auth-logout" type="button" onClick={() => void submitLogout()}>退出登录（Logout）</button>}<button className={'status ' + status} type="button" onClick={() => status === 'error' && void checkHealth()} disabled={status === 'loading'}><span className="dot" />{status === 'loading' ? '正在检查服务（Checking service）' : status === 'ok' ? '服务运行正常（Service healthy）' : '服务连接失败（Connection failed）· 点击重试（Retry）'}</button></div></header>
+    {sessionLoading ? <section className="glass auth-panel" aria-live="polite"><div className="en">ACCESS CHECK</div><h2>正在检查登录状态（Checking session）</h2></section> : requiresLogin ? <section className="glass auth-panel" aria-labelledby="login-title"><div className="en">SECURE ACCESS</div><h2 id="login-title">登录控制台（Sign in）</h2><p className="auth-note">请输入后端管理员设置的浏览器密码。</p><form className="auth-form" onSubmit={submitLogin}><label htmlFor="browser-password">浏览器密码（Browser password）<input id="browser-password" className="input" type="password" autoComplete="current-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} /></label>{loginError && <div className="field-error" role="alert">{loginError}</div>}<button className="btn-primary" type="submit" disabled={loginBusy || !loginPassword}>{loginBusy ? '登录中（Signing in）...' : '登录（Sign in）'}</button></form></section> : <>
     <section className="stats" aria-label="真实统计口径（Persisted statistics）">{[
       ['已保存战局（Saved battles）', summary?.totalBattles ?? '—', '全部已保存战局数量', '#4da3ff'],
       ['规则库本地模拟用例（Rule cases）', summary?.ruleLibraryCaseCount ?? '—', '当前规则库中的唯一用例编号数', '#ffb54d'],
@@ -203,7 +261,7 @@ function App() {
       <section className="glass card"><div className="card-head"><div><div className="en">开始新战局（NEW BATTLE）</div><h2>开始新战局（New battle）</h2></div></div><form onSubmit={createBattle} noValidate><label htmlFor="topic">测试主题（Test topic）<input id="topic" className="input" value={topic} maxLength={200} aria-invalid={Boolean(topicError)} aria-describedby={topicError ? 'topic-error' : 'topic-count'} onChange={(event) => { const value = event.target.value; setTopic(value); if (topicError) setTopicError(validateTopic(value)) }} />{topicError ? <span className="field-error" id="topic-error" role="alert">{topicError}</span> : <span className="field-hint" id="topic-count">{topic.length}/200</span>}</label><label>对抗难度（Difficulty）<div className="diff-grid">{(['low', 'mid', 'high'] as Difficulty[]).map((item) => <label key={item}><input type="radio" name="difficulty" checked={difficulty === item} onChange={() => setDifficulty(item)} /><span className="diff-item"><b>{difficultyLabel[item]}</b><small>{item === 'low' ? '基础缺陷（Basic defect）' : item === 'mid' ? '规则违规（Rule violation）' : '复合漏洞（Compound vulnerability）'}</small></span></label>)}</div></label><button className="btn-primary" type="submit" disabled={busy}>{busy ? '攻防进行中（Battle running）...' : '开始攻防（Start battle）'}</button></form></section>
     <section className="glass card history"><div className="card-head"><div><div className="en">历史战局（BATTLE LOG）</div><h2>历史战局（Battle history）</h2></div><span className="en">{historyTotal} 场</span></div><input className="input" placeholder="搜索主题或编号（Search topic or ID）" value={search} onChange={(event) => { const value = event.target.value; setSearch(value); void loadHistory(0, false, value) }} />{historyLoading ? <div className="empty" role="status">正在加载历史战局（Loading battle history）...</div> : <div className="battle-list">{battles.length ? battles.map((battle) => <button className={'battle-item ' + (selected?.id === battle.id ? 'active' : '')} key={battle.id} onClick={() => openReplay(battle.id)}><span className={'battle-badge ' + battle.difficulty}>{difficultyLabel[battle.difficulty]}</span><span className="bi-main"><b>{battle.topic}</b><small>{new Date(battle.createdAt).toLocaleString('zh-CN')} · {displayLabel(battle.status)}</small></span><span className="arrow">›</span></button>) : <div className="empty">暂无匹配记录（No matching battles）</div>}</div>}<div className="pagination"><button type="button" className="btn-ghost" disabled={historyLoading || historyPage === 0} onClick={() => void loadHistory(historyPage - 1, false, search)}>上一页</button><span>第 {historyPage + 1} / {totalPages} 页 · 每页 {PAGE_SIZE} 场</span><button type="button" className="btn-ghost" disabled={historyLoading || historyPage + 1 >= totalPages} onClick={() => void loadHistory(historyPage + 1, false, search)}>下一页</button></div></section>
     </div>
-    <section className="glass card detail">{selected ? <><div className="detail-head"><div><h2>{selected.topic}</h2><div className="detail-meta">{selected.id} · {difficultyLabel[selected.difficulty]}难度（Difficulty） · {displayLabel(selected.status)} · {new Date(selected.createdAt).toLocaleString('zh-CN')}</div><div className="source-meta"><span>攻击来源：{sourceLabel(selected.attackerOut.agentSource)}</span><span>防守来源：{sourceLabel(selected.defenderOut[0]?.agentSource)}</span></div></div><button className="btn-ghost" onClick={exportMarkdown}>导出 Markdown（Export Markdown）</button></div><div className="steps">{[['战局创建（Create battle）', '已完成（Completed）'], ['攻击生成（Generate attacks）', selected.attackerOut.samples.length + ' 个样本（samples）'], ['防守检测（Detect）', count(selected, 'caught') + ' 项发现（findings）'], ['修复建议（Remediate）', count(selected, 'fixed') + ' 项动作（actions）']].map(([title, sub], index) => <div className="step" key={title}><div className="n">{index + 1}</div><b>{title}</b><small>{sub}</small></div>)}</div><div className="rounds-head"><h3>逐轮对抗（Rounds） <small>ROUNDS</small></h3><span className="total">{selected.attackerOut.samples.length} rounds</span></div><div className="rounds-scroll">{selected.attackerOut.samples.map((sample, index) => { const defense = selected.defenderOut[index] ?? {}; return <article className="round-card" key={selected.id + '-' + index}><div className="round-head"><b>第 {index + 1} 轮（Round {index + 1}）</b><span className="pill">{sampleTypeLabel[sample.type] ?? sample.type} · {difficultyLabel[sample.severity as Difficulty] ?? sample.severity}</span><span className="state">已完成（Completed）</span></div><div className="round-body"><div className="side atk"><h4>攻击方 · 样本生成（Attacker · Sample generation）</h4><span className="code-chip">来源（Source）：{sourceLabel(selected.attackerOut.agentSource)}</span><span className="code-chip">主题（Topic）：{sample.topic ?? selected.topic}</span><div className="sample"><span className="sample-label">原始样本（Raw sample）</span>{sample.content}</div></div><div className="side def"><h4>防守方 · 检测与修复（Defender · Detection & remediation）</h4><span className="code-chip">来源（Source）：{sourceLabel(defense.agentSource)}</span><Finding label="发现问题（Findings）" items={defense.caught?.map((item) => displayLabel(item.reason ?? item.type)) ?? []} empty="未发现问题（No findings）" /><Finding label="风险评估（Risk assessment）" items={defense.risks?.map((item) => displayLabel(item.reason ?? item.level)) ?? []} empty="无额外风险（No additional risks）" /><Finding label="修复动作（Remediation）" items={defense.fixed?.map((item) => displayLabel(item.action ?? item.status)) ?? []} empty="无需修复（No remediation needed）" />{defense.scopeNotice && <div className="finding"><span className="k">范围说明（Scope）</span><span className="v">{defense.scopeNotice}</span></div>}</div></div></article> })}</div></> : <div className="empty detail-empty">提交主题后开始一轮攻防（Submit a topic to start），或选择历史战局查看详情（Select a battle to view details）。</div>}</section></main>{message && <div className="toast show">{message}</div>}
+    <section className="glass card detail">{selected ? <><div className="detail-head"><div><h2>{selected.topic}</h2><div className="detail-meta">{selected.id} · {difficultyLabel[selected.difficulty]}难度（Difficulty） · {displayLabel(selected.status)} · {new Date(selected.createdAt).toLocaleString('zh-CN')}</div><div className="source-meta"><span>攻击来源：{sourceLabel(selected.attackerOut.agentSource)}</span><span>防守来源：{sourceLabel(selected.defenderOut[0]?.agentSource)}</span></div></div><button className="btn-ghost" onClick={exportMarkdown}>导出 Markdown（Export Markdown）</button></div><div className="steps">{[['战局创建（Create battle）', '已完成（Completed）'], ['攻击生成（Generate attacks）', selected.attackerOut.samples.length + ' 个样本（samples）'], ['防守检测（Detect）', count(selected, 'caught') + ' 项发现（findings）'], ['修复建议（Remediate）', count(selected, 'fixed') + ' 项动作（actions）']].map(([title, sub], index) => <div className="step" key={title}><div className="n">{index + 1}</div><b>{title}</b><small>{sub}</small></div>)}</div><div className="rounds-head"><h3>逐轮对抗（Rounds） <small>ROUNDS</small></h3><span className="total">{selected.attackerOut.samples.length} rounds</span></div><div className="rounds-scroll">{selected.attackerOut.samples.map((sample, index) => { const defense = selected.defenderOut[index] ?? {}; return <article className="round-card" key={selected.id + '-' + index}><div className="round-head"><b>第 {index + 1} 轮（Round {index + 1}）</b><span className="pill">{sampleTypeLabel[sample.type] ?? sample.type} · {difficultyLabel[sample.severity as Difficulty] ?? sample.severity}</span><span className="state">已完成（Completed）</span></div><div className="round-body"><div className="side atk"><h4>攻击方 · 样本生成（Attacker · Sample generation）</h4><span className="code-chip">来源（Source）：{sourceLabel(selected.attackerOut.agentSource)}</span><span className="code-chip">主题（Topic）：{sample.topic ?? selected.topic}</span><div className="sample"><span className="sample-label">原始样本（Raw sample）</span>{sample.content}</div></div><div className="side def"><h4>防守方 · 检测与修复（Defender · Detection & remediation）</h4><span className="code-chip">来源（Source）：{sourceLabel(defense.agentSource)}</span><Finding label="发现问题（Findings）" items={defense.caught?.map((item) => displayLabel(item.reason ?? item.type)) ?? []} empty="未发现问题（No findings）" /><Finding label="风险评估（Risk assessment）" items={defense.risks?.map((item) => displayLabel(item.reason ?? item.level)) ?? []} empty="无额外风险（No additional risks）" /><Finding label="修复动作（Remediation）" items={defense.fixed?.map((item) => displayLabel(item.action ?? item.status)) ?? []} empty="无需修复（No remediation needed）" />{defense.scopeNotice && <div className="finding"><span className="k">范围说明（Scope）</span><span className="v">{defense.scopeNotice}</span></div>}</div></div></article> })}</div></> : <div className="empty detail-empty">提交主题后开始一轮攻防（Submit a topic to start），或选择历史战局查看详情（Select a battle to view details）。</div>}</section></main></>}{message && <div className="toast show">{message}</div>}
   </div>
 }
 
