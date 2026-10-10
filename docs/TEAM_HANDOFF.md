@@ -455,3 +455,27 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 - 清洗结果写入本地 `artifacts/finetune_clean/`：105 条保留 72 条，剔除 33 条；攻击/防守样本同步处理，保留 6 个正式安全主题。
 - 规则、数量和审核问题见 [`FINETUNE_CLEANING_20261010.md`](FINETUNE_CLEANING_20261010.md)。清洗后的 JSONL 和 manifest 不提交 Git、不上传云端，队友审核脚本与报告即可复现。
 - 清洗后复核无字段缺失、evidence 错配或 sourceBattle 跨集合泄漏；攻击 low 难度仅 1 条，是否补充 low 样本需队友决定。
+
+### 后端身份绑定与 VPS 常驻验收（2026-10-11）
+
+实现提交：`28a55d0`。
+
+- Leader 与 Partner 服务端身份绑定分别使用 `AGENT_IDENTITY_BINDING_ENABLED` 和
+  `AGENT_PARTNER_IDENTITY_BINDING_ENABLED`；预检也分别提供强制检查参数。
+- 当前 SDK 不接受服务端身份绑定参数时，开启相应开关会立即失败，不再静默丢弃参数后继续
+  提供未绑定身份的 HTTP RPC。公共 SDK 2.1 仍可在两个开关关闭时正常运行。
+- 新增 `backend/scripts/verify-vps-runtime.sh`，只读检查 `deployer` linger、三个业务
+  systemd 服务、Cloudflare Tunnel、三个本地健康接口和公网 API；不读取或输出敏感配置。
+- 验收结果：后端 `82 passed, 1 skipped`；跳过项是当前 Windows PATH 无 Bash，VPS 脚本已另用
+  Git Bash 完成语法检查和全绿模拟运行；Windows PowerShell 5.1 下 mTLS 预检实际执行成功。
+
+队友操作：
+
+1. 审核并合并 PR #2，部署前确认 VPS 使用的官方 SDK 确实支持所需服务端身份绑定参数。
+2. 恢复 `47.108.92.113:22` 后拉取本提交，在 `/opt/agent-attack-lab` 执行
+   `backend/scripts/verify-vps-runtime.sh`。
+3. 完成一次 VPS 重启并再次执行脚本；只有两次均全部 `PASS` 才确认常驻验收完成。
+
+已知问题：公网 API 当前正常，但 SSH 22 仍连接超时；真实公网 `/rpc`、serverAuth 和端到端
+mTLS 尚未具备。禁止提交或发送 `.env`、API Key、浏览器密码、Tunnel Token、EAB、证书、
+私钥和数据库备份；不得把预检通过表述为真实 mTLS 已验收。
