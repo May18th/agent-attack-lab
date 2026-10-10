@@ -8,8 +8,10 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
-    "acps-sdk>=2.2.0",
-    "wit-framework==2.1.0",
+    # Keep the CI/test baseline installable from the public package index.
+    # Production Wutong 2.2.0 + wit-framework are installed separately by
+    # scripts/install_wit_wheels.ps1 from the private release directory.
+    "acps-sdk>=2.1.0",
     "fastapi>=0.110",
     "httpx>=0.27",
     "pymysql>=1.1",
@@ -19,16 +21,9 @@ dependencies = [
     "uvicorn>=0.29",
 ]
 
-# 梧桐官方 wheel 不在公共 PyPI：acps-sdk 2.2.0 与 wit-framework 2.1.0
-# 必须来自 backend/packages/ 下的官方 wheel（见 scripts/install_wit_wheels.ps1
-# 与 docs/WUTONG_WHEEL_SETUP.md）。固定为本地源后，uv sync / uv run 不会再把
-# venv 静默回滚到 PyPI 的 acps-sdk 2.1.0，也不会移除单独安装的 wit-framework。
-# （2.1.0 的 handle_rpc_request 不支持 local_aic / identity_binding_enabled 参数，
-# 会导致 6 项测试失败且 /rpc AIP 接口 500）。
-# 注意：packages/ 不入 Git，新环境先放置 wheel 再 uv sync。
-[tool.uv.sources]
-acps-sdk = { path = "packages/acps_sdk-2.2.0-py3-none-any.whl" }
-wit-framework = { path = "packages/wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl" }
+# Production Wutong wheels are intentionally not a repository dependency:
+# they are private release artifacts and are installed after platform approval.
+# The code supports both the public SDK 2.1 interface and the locked 2.2 API.
 
 [project.scripts]
 agent-attack-lab = "agent_attack_lab:main"

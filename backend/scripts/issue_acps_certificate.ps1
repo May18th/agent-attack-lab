@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$Aic,
     [ValidateSet("clientAuth", "serverAuth")]

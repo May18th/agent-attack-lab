@@ -14,6 +14,10 @@ uv sync
 .\start.ps1
 ```
 
+`uv sync` 安装 GitHub CI 使用的公共 SDK 基线。生产梧桐部署还需将审核通过的
+`acps_sdk-2.2.0`、`wit_framework-2.1.0` 和 `release-manifest.json` 放入
+`backend/packages/`，再运行 `scripts/install_wit_wheels.ps1`；这些私有文件不提交 Git。
+
 如果服务已经在 8787 端口运行，需要加载最新代码时执行：
 
 ```powershell

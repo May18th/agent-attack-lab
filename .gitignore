@@ -25,6 +25,15 @@ backend/keyfiles/
 backend/acps-cli.toml
 artifacts/
 
+# Local tools, reports, build snapshots, and environment backups
+.workbuddy/
+/tools/
+backend/.env.bak*
+/index-*.js
+/index-*.css
+/yuanyi_home.html
+/yuanyiagentzhandui_巡检报告_*.md
+
 # Codex local handoff state
 codex/
 

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ConfigPath = "C:\Windows\System32\config\systemprofile\.cloudflared\config.yml",
     [string]$ApiUrl = "https://api.yuanyiagentzhandui.cn/health"
 )

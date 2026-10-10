@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     从梧桐官方发行目录获取绑定的 SDK/wit wheel，并按 release-manifest 校验。
 .DESCRIPTION
