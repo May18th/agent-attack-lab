@@ -450,3 +450,4 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 - 新增 `backend/scripts/clean_finetune_dataset.py`，按主题成组移除明显联调、评委、占位和随机噪声；原始 `artifacts/finetune/` 不变。
 - 清洗结果写入本地 `artifacts/finetune_clean/`：105 条保留 72 条，剔除 33 条；攻击/防守样本同步处理，保留 6 个正式安全主题。
 - 规则、数量和审核问题见 [`FINETUNE_CLEANING_20261010.md`](FINETUNE_CLEANING_20261010.md)。清洗后的 JSONL 和 manifest 不提交 Git、不上传云端，队友审核脚本与报告即可复现。
+- 清洗后复核无字段缺失、evidence 错配或 sourceBattle 跨集合泄漏；攻击 low 难度仅 1 条，是否补充 low 样本需队友决定。
