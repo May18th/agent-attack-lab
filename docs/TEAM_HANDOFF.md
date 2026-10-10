@@ -612,5 +612,6 @@ Vulnerabilities JSON（目录版本 `2026.10.08`），导入 1,739 条 CVE 记�
 - 数据库字段明确标记 `provenance_status=verified_primary`、`synthetic=0`；外部事实记录不会被
   自动展示为本项目真实战局或攻击样本。
 - 导入脚本可重复执行，同一来源版本和内容哈希幂等更新；数据文件和凭据均不提交 Git。
+- 记录新增 `record_kind` 分层：`external_fact`、`normalized_case`、`synthetic_scenario`、`observed_event`；`--validate` 只读检查来源元数据、内容哈希、原始 JSON 和合成标记是否一致。当前本机 1,739 条记录全部通过，未把任何外部事实提升为观测事件。
 - 后续接入只允许可核验的一手来源（CISA、NVD、CVE、CERT/厂商公告、OWASP 等），先保留原文
   证据和来源，再人工脱敏、去重和审核；禁止把模型生成内容或无来源转载写入事实库。

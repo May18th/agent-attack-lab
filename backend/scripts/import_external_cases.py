@@ -21,6 +21,12 @@ CISA_KEV_URL = (
     "known_exploited_vulnerabilities.json"
 )
 SCHEMA_VERSION = "1"
+RECORD_KINDS = (
+    "external_fact",
+    "normalized_case",
+    "synthetic_scenario",
+    "observed_event",
+)
 
 
 def fetch_catalog(url: str = CISA_KEV_URL) -> tuple[bytes, dict[str, Any]]:
@@ -74,6 +80,9 @@ def _connect(path: Path) -> sqlite3.Connection:
             source_url TEXT NOT NULL,
             provenance_status TEXT NOT NULL DEFAULT 'verified_primary',
             synthetic INTEGER NOT NULL DEFAULT 0 CHECK (synthetic IN (0, 1)),
+            record_kind TEXT NOT NULL DEFAULT 'external_fact'
+                CHECK (record_kind IN ('external_fact', 'normalized_case',
+                                       'synthetic_scenario', 'observed_event')),
             raw_json TEXT NOT NULL,
             UNIQUE (source_id, external_id)
         );
@@ -82,7 +91,59 @@ def _connect(path: Path) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_external_cases_date ON external_cases (date_added DESC);
         """
     )
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(external_cases)")}
+    if "record_kind" not in columns:
+        # Existing local databases predate the provenance taxonomy. The default
+        # is conservative: imported primary-source rows are external facts.
+        connection.execute(
+            "ALTER TABLE external_cases ADD COLUMN record_kind TEXT NOT NULL DEFAULT 'external_fact'"
+        )
+        connection.commit()
     return connection
+
+
+def validate_database(database: Path) -> dict[str, Any]:
+    """Validate provenance fields without rewriting any records."""
+
+    connection = _connect(database)
+    issues: list[dict[str, Any]] = []
+    try:
+        rows = connection.execute(
+            """
+            SELECT c.id, c.external_id, c.synthetic, c.record_kind,
+                   c.provenance_status, c.raw_json, c.source_url,
+                   s.publisher, s.source_type, s.catalog_version,
+                   s.content_sha256
+            FROM external_cases AS c
+            JOIN external_sources AS s ON s.id = c.source_id
+            ORDER BY c.id
+            """
+        ).fetchall()
+        for row in rows:
+            record = dict(row)
+            kind = record["record_kind"]
+            if kind not in RECORD_KINDS:
+                issues.append({"id": record["id"], "issue": "unknown_record_kind", "value": kind})
+            if kind == "synthetic_scenario" and record["synthetic"] != 1:
+                issues.append({"id": record["id"], "issue": "synthetic_kind_without_flag"})
+            if kind in {"external_fact", "normalized_case", "observed_event"} and record["synthetic"] != 0:
+                issues.append({"id": record["id"], "issue": "non_synthetic_kind_with_synthetic_flag"})
+            if not record["source_url"] or not record["publisher"]:
+                issues.append({"id": record["id"], "issue": "missing_source_metadata"})
+            if len(record["content_sha256"] or "") != 64:
+                issues.append({"id": record["id"], "issue": "invalid_source_hash"})
+            try:
+                json.loads(record["raw_json"])
+            except (TypeError, json.JSONDecodeError):
+                issues.append({"id": record["id"], "issue": "invalid_raw_json"})
+        return {
+            "database": str(database),
+            "records": len(rows),
+            "valid": not issues,
+            "issues": issues,
+        }
+    finally:
+        connection.close()
 
 
 def import_catalog(
@@ -137,8 +198,9 @@ def import_catalog(
                     (source_id, external_id, vendor_project, product, title, date_added,
                      due_date, description, required_action, known_ransomware_use,
                      forensic_triage, cwes_json, notes, source_url, provenance_status,
-                     synthetic, raw_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified_primary', 0, ?)
+                     synthetic, record_kind, raw_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified_primary', 0,
+                        'external_fact', ?)
                 ON CONFLICT (source_id, external_id) DO UPDATE SET
                     vendor_project = excluded.vendor_project,
                     product = excluded.product,
@@ -152,6 +214,9 @@ def import_catalog(
                     cwes_json = excluded.cwes_json,
                     notes = excluded.notes,
                     source_url = excluded.source_url,
+                    provenance_status = excluded.provenance_status,
+                    synthetic = excluded.synthetic,
+                    record_kind = excluded.record_kind,
                     raw_json = excluded.raw_json
                 """,
                 (
@@ -183,7 +248,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, default=Path(".data/external_security_cases.sqlite3"))
     parser.add_argument("--url", default=CISA_KEV_URL)
+    parser.add_argument("--validate", action="store_true", help="validate existing records without fetching data")
     args = parser.parse_args()
+    if args.validate:
+        print(json.dumps(validate_database(args.database), ensure_ascii=False))
+        return
     payload, catalog = fetch_catalog(args.url)
     print(json.dumps(import_catalog(args.database, payload=payload, catalog=catalog, source_url=args.url), ensure_ascii=False))
 
