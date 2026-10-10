@@ -522,3 +522,30 @@ mTLS 尚未具备。禁止提交或发送 `.env`、API Key、浏览器密码、T
 没有新增重复 AIC。已知问题：`47.108.92.113:22` 仍为 TCP 连接超时，尚不能在 VPS 复验；
 serverAuth、稳定 Direct endpoint 和真实端到端 mTLS 仍未完成。禁止提交或发送 Registry 凭据、
 Token、EAB、私钥、证书正文、Tunnel Token、数据库或私有发行物。
+
+### Registry RPC 清单与 Cloudflare 复核（2026-10-11）
+
+队友交付的 `智能体RPC地址清单_20261011.md` 已核对并完成只读复测：
+
+- Leader `https://api.yuanyiagentzhandui.cn/rpc` 的公网路由存活；无凭据请求返回 401，正文为
+  “缺少或无效的 API 密钥”。这不是 mTLS 客户端证书拒绝，不能据此宣称 Leader mTLS 已上线。
+- 攻击、防守登记的同一个 `trycloudflare.com` Quick Tunnel 已无 DNS，两个 Partner 当前不可达。
+- Cloudflare 账号中现有命名隧道 `yuanyi-agent-attack-lab-backend` 状态健康，但仅配置
+  `api.yuanyiagentzhandui.cn -> 127.0.0.1:8787`；`attack`、`defense` 两个子域名没有 DNS
+  记录，也没有 8788/8789 ingress。Cloudflare 文档允许同一命名隧道发布多个 hostname，
+  但必须先保护 Partner 服务再公开路由。
+- 本地攻击/防守 ACS 草稿仍使用 `attacker.kechuang2026.cn`、`defender.kechuang2026.cn` 和
+  `apiKey` 声明；Registry authoritative ACS 与本地草稿均不能未经平台流程直接覆盖彼此。
+
+队友待办：
+
+1. SSH 恢复后检查 8788/8789 的服务端身份绑定；若暂时使用 API Key，确认密钥只在服务端环境
+   和受控调用方保存，不能把未鉴权端口发布到公网。
+2. 在现有命名隧道增加 `attack.yuanyiagentzhandui.cn -> 127.0.0.1:8788`、
+   `defense.yuanyiagentzhandui.cn -> 127.0.0.1:8789`，并创建对应代理 CNAME；完成 DNS、TLS、
+   `/health` 和带正确鉴权的 `/rpc` 验收。
+3. 固定地址验收通过后，更新两个 Agent 的 Registry authoritative ACS，重新审核并确认
+   discovery 同步；最后由 Leader 创建 low/mid/high 战局，验证桌面和移动端完整链路。
+
+本次只做了公网、DNS、Cloudflare 资源和本地代码的只读核验，没有修改 Cloudflare、Registry、VPS
+或服务配置；禁止提交 API Key、浏览器密码、Token、EAB、私钥、证书正文、Tunnel Token 和数据库。

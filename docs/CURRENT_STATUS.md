@@ -15,11 +15,13 @@
 - 新增 VPS 只读常驻验收脚本，可一次检查 linger、三个业务服务、Cloudflare Tunnel 和四个健康接口；仍需 SSH 恢复后在 VPS 实机运行并做重启验收。
 - 新增 WIT Identity 迁移评估：隔离环境确认私有 wheel API 可生成 ACS 草稿，但未发现接管现有 AIC/workspace 的公开 API；在平台确认前禁止重复 `integrated()` 注册。
 - 官方 `release-manifest.json` 已取得，两个正式 wheel 的 SHA-256 与清单一致；使用正式目录安装后版本为 `acps-sdk 2.2.0`、`wit-framework 2.1.0`，WIT API 预检通过，后端全量测试 `82 passed, 1 skipped`。
+- Cloudflare 账号只读核验确认命名隧道 `yuanyi-agent-attack-lab-backend` 健康，但仅发布 `api -> 8787`；`attack`、`defense` 子域名没有 DNS 或 ingress。旧 Registry Partner Quick Tunnel 已无 DNS。主调度 `/rpc` 的 401 正文明确是 API Key 拒绝，不能作为 mTLS 已上线的证据。
 
 ## 当前阻塞
 
 - GitHub Actions 已在 PR `#2` 通过：后端测试、前端构建检查均为 SUCCESS；Cloudflare Pages 与 Workers Preview 也已通过。
 - 稳定 Agent `/rpc` 地址、serverAuth 证书、现有 AIC workspace 接管方案和真实端到端 mTLS 仍未完成；本地回环测试不能替代平台验收。
+- Registry 中攻击/防守 Agent 仍登记同一个已失效 Quick Tunnel；本地 ACS 草稿又指向旧 `kechuang2026.cn` 并声明 `apiKey`，两者均不能直接当作权威可用配置。
 - VPS `47.108.92.113:22` 当前连接超时；公网 API 正常，但无法从本机重新核对 systemd enabled、linger 和重启恢复状态。
 - 正式发行物和本机运行时预检已经通过；该结果只解除发行物完整性阻塞，不代表 Registry 注册、WIT Direct 或生产 mTLS 已完成。
 - Cloudflare Pages 与 Workers Preview 构建已验收；生产域名、Tunnel、DNS/SSL 和公网 API 状态仍需在合并/部署后按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 复验。
@@ -43,8 +45,8 @@
 ## 下一步
 
 1. 队友审核并合并 PR `#2` 到 `main`。
-2. 合并后复验生产域名、Tunnel、DNS/SSL、浏览器主流程和公网 API。
-3. 取得稳定 Agent `/rpc` 与平台 mTLS 条件后，再做真实端到端身份绑定验收。
+2. VPS SSH 恢复后先验收 8788/8789 的服务端身份绑定或受控 API Key，再在现有命名隧道发布 `attack`、`defense` 固定子域名；禁止先暴露未鉴权端口。
+3. 固定 Partner 地址验收通过后更新 Registry authoritative ACS、重新审核并确认 discovery 同步，再执行 low/mid/high 全链路验收。
 
 ## 禁止事项
 
