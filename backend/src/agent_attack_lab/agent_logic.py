@@ -6,7 +6,7 @@ import re
 from typing import Any, Literal
 from urllib.parse import unquote
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES, classify_owasp_llm_text
 
@@ -14,6 +14,14 @@ from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES, classify_owasp_ll
 class AttackRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
+
+    @field_validator("topic")
+    @classmethod
+    def validate_topic(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("topic 不能为空")
+        return value
 
 
 class DefendRequest(BaseModel):

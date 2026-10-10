@@ -18,7 +18,7 @@
 - 生产梧桐发行包 `release-manifest.json`、稳定 Agent `/rpc` 地址和真实端到端 mTLS 仍未完成；本地回环测试不能替代平台验收。
 - Cloudflare 域名、Pages/Tunnel 和公网联调仍依赖有权限的账号负责人，按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 执行。
 - 清洗后攻击样本 low 难度仅 1 条，是否补样由队友审核决定。
-- 外部巡检指出空白 `topic` 仍可绕过前端校验，且没有战局删除接口；代码检查确认这两项尚未实现，但它们不属于本次文件清理和 SDK CI 修复，留作后续后端任务。
+- 空白 `topic` 已在服务端统一拒绝并自动去除首尾空白；已新增 `DELETE /battles/{battle_id}`，删除已结束战局时同步清理事件，运行中战局返回 409。
 
 ## 本次清理
 
@@ -31,7 +31,7 @@
 - 主提交：`5fcdf11`（ACP SDK 2.1/2.2 兼容、PowerShell 编码修复、工作区清理与文档整理）。
 - 验收结果：后端 SDK 2.1/2.2 环境各 `70 passed`；前端 `18 passed`，lint 与 build 通过；17 个 PowerShell 脚本语法检查通过。
 - 审核动作：从 `codex/team-domain-handoff` 按文件审查并合并，不要直接覆盖双方分叉历史。
-- 已知问题：空白 `topic`、无战局删除接口、真实公网 mTLS 尚未验收。
+- 已知问题：真实公网 mTLS 尚未验收；Cloudflare Workers Builds 仍需账号负责人核对 monorepo 根目录配置。
 - 禁止事项：不得补交 `.env`、证书、EAB、私钥、私有 wheel、Tunnel Token 或 JSONL 数据集。
 
 ## 下一步

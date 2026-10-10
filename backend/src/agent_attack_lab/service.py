@@ -23,7 +23,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from acps_sdk.aip import (
     Product,
     StructuredDataItem,
@@ -109,6 +109,14 @@ class JsonRpcRequest(BaseModel):
 class BattleRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
+
+    @field_validator("topic")
+    @classmethod
+    def validate_topic(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("topic 不能为空")
+        return value
 
 
 class BrowserLoginRequest(BaseModel):
@@ -1844,6 +1852,26 @@ def retry_battle(
     payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
     background_tasks.add_task(_run_battle_async, battle_id, payload)
     return BattleRecord.model_validate(record)
+
+
+@app.delete(
+    "/battles/{battle_id}",
+    dependencies=[Depends(_rate_limit_dependency)],
+    status_code=204,
+    summary="删除已结束的战局",
+    description="删除 completed 或 failed 战局及其事件；pending/running 战局必须先结束。",
+    tags=["战局接口"],
+)
+def delete_battle(battle_id: str, request: Request) -> Response:
+    _check_browser_or_api_auth(request)
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    if record["status"] in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail="运行中的战局不能删除")
+    _battle_store.delete(battle_id)
+    _invalidate_leaderboard_cache()
+    return Response(status_code=204)
 
 
 @app.get(

@@ -131,6 +131,8 @@ GET /battles/{battle_id}
 
 查询战局。另有 `GET /battles?limit=50` 可获取最近战局列表，`limit` 范围为 1-200。战局默认保存在项目目录下的 `.data/battles.sqlite3`，服务重启后仍保留。
 
+`DELETE /battles/{battle_id}` 删除已完成或失败的战局及其事件记录，成功返回 HTTP 204；等待中或运行中的战局返回 HTTP 409。该写操作沿用浏览器会话或 API Key 鉴权。
+
 后台的 `GET /dashboard/summary` 汇总数据库中全部已保存战局、样本、规则命中和风险记录，并按本地规则用例编号统计模拟用例库规模；它不计算准确率或拦截率。统计值来自独立字段口径：样本数数 `attackerOut.samples`，规则命中数数 `defenderOut[].caught`，风险数数 `defenderOut[].risks`。`GET /battles?limit=10&offset=0&q=...` 使用 `X-Total-Count` 响应头返回筛选后的记录总数，跨域时会公开该响应头。React 前端选择历史战局后在地址栏写入 `?battle_id=...`；刷新/分享该地址会重新加载所选战局。后台 HTML 页历史回放仍读取 `/battles/{id}/replay` 事件并逐步播放。
 
 ### 健康检查
