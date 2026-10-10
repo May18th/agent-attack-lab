@@ -552,6 +552,9 @@ Token、EAB、私钥、证书正文、Tunnel Token、数据库或私有发行物
 
 ### 现有 AIC 接管 WIT workspace 判定（2026-10-11）
 
+实现提交：`fc169b6`。本机后端测试 `82 passed, 4 skipped`；4 个跳过项均因 Windows 环境没有
+Bash，Linux CI 负责实际执行搜索脚本的 3 个行为测试与既有 VPS 脚本测试。
+
 结论已收口：**仅凭现有 AIC、Registry 账号或单独 clientAuth 材料，不能让空 WIT workspace
 接管旧身份。** 正式 `wit-framework 2.1.0` 字节码显示状态机依赖 `enrollment.json`、
 `registrationId`、EAB、Registry token 和本地生成的证书私钥；缺少本地状态时会进入
