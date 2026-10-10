@@ -14,13 +14,14 @@
 - 身份绑定预检已区分 Leader 与 Partner 开关；开关打开但当前 SDK 不支持服务端身份绑定参数时会失败关闭，不再静默丢弃配置。
 - 新增 VPS 只读常驻验收脚本，可一次检查 linger、三个业务服务、Cloudflare Tunnel 和四个健康接口；仍需 SSH 恢复后在 VPS 实机运行并做重启验收。
 - 新增 WIT Identity 迁移评估：隔离环境确认私有 wheel API 可生成 ACS 草稿，但未发现接管现有 AIC/workspace 的公开 API；在平台确认前禁止重复 `integrated()` 注册。
+- 官方 `release-manifest.json` 已取得，两个正式 wheel 的 SHA-256 与清单一致；使用正式目录安装后版本为 `acps-sdk 2.2.0`、`wit-framework 2.1.0`，WIT API 预检通过，后端全量测试 `82 passed, 1 skipped`。
 
 ## 当前阻塞
 
 - GitHub Actions 已在 PR `#2` 通过：后端测试、前端构建检查均为 SUCCESS；Cloudflare Pages 与 Workers Preview 也已通过。
-- 生产梧桐发行包 `release-manifest.json`、稳定 Agent `/rpc` 地址和真实端到端 mTLS 仍未完成；本地回环测试不能替代平台验收。
+- 稳定 Agent `/rpc` 地址、serverAuth 证书、现有 AIC workspace 接管方案和真实端到端 mTLS 仍未完成；本地回环测试不能替代平台验收。
 - VPS `47.108.92.113:22` 当前连接超时；公网 API 正常，但无法从本机重新核对 systemd enabled、linger 和重启恢复状态。
-- 私有 wheel 虽已在 `backend/packages/`，但官方 `release-manifest.json` 缺失；不得绕过 `wit-release-preflight` 安装或接入 WIT Direct。
+- 正式发行物和本机运行时预检已经通过；该结果只解除发行物完整性阻塞，不代表 Registry 注册、WIT Direct 或生产 mTLS 已完成。
 - Cloudflare Pages 与 Workers Preview 构建已验收；生产域名、Tunnel、DNS/SSL 和公网 API 状态仍需在合并/部署后按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 复验。
 - 清洗后攻击样本 low 难度仅 1 条，是否补样由队友审核决定。
 - 空白 `topic` 已在服务端统一拒绝并自动去除首尾空白；已新增 `DELETE /battles/{battle_id}`，删除已结束战局时同步清理事件，运行中战局返回 409。

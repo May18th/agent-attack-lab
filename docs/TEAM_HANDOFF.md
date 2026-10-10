@@ -350,15 +350,15 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 
 ## 7. 梧桐平台注册准备
 
-后端已加入官方 wheel 安装脚本：`backend/scripts/install_wit_wheels.ps1`。梧桐发行包不在公共 Python 软件源，需将以下两个官方文件放入 `D:\梧桐\backend\packages\` 后执行脚本：
+后端已加入官方 wheel 安装脚本：`backend/scripts/install_wit_wheels.ps1`。梧桐发行包不在公共 Python 软件源，需让以下三个官方文件位于同一目录：
 
 - `acps_sdk-2.2.0-py3-none-any.whl`
 - `wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl`
 - `release-manifest.json`
 
-本机后端虚拟环境已安装 `acps-sdk 2.2.0` 和 `wit-framework 2.1.0`，导入路径均位于 `backend/.venv/site-packages/`。官方 `release-manifest.json` 尚未取得，因此 `wit-release-preflight` 仍未通过；不能把已安装等同于完成发行物哈希验收。
+2026-10-11 已使用用户提供的正式目录和官方 `release-manifest.json` 完成 SHA-256 发行预检；本机后端虚拟环境已安装 `acps-sdk 2.2.0` 和 `wit-framework 2.1.0`，WIT API 预检通过，后端全量测试 `82 passed, 1 skipped`。安装脚本支持 `-PackageDir` 指定正式目录，未指定时仍默认使用 `backend/packages/`。
 
-wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
+wheel 目录和用户提供的正式发行目录均不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
 
 梧桐官方证书流程已补齐：审核通过取得 AIC 后，先用 `acps-cli auth login` 登录，再用 `cert eab fetch` 获取 EAB，最后用 `cert issue -u clientAuth` 签发证书。项目新增 `backend/acps-cli.toml.example`、`backend/scripts/verify_acps_cli.ps1`、`backend/scripts/issue_acps_certificate.ps1` 和 `backend/scripts/inspect_acps_certificate.ps1`；EAB、Agent 私钥、证书和本机配置仅保存在被 Git 忽略的 `backend/.acps-cli/` 与 `backend/acps-cli.toml`，ACME 账户密钥和 CSR 位于同样被忽略的 `backend/keyfiles/`。完整步骤见 [`docs/WUTONG_ACPS_CERT_SETUP.md`](WUTONG_ACPS_CERT_SETUP.md)。
 
@@ -376,12 +376,12 @@ wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装�
 
 ## 8. 梧桐注册当前状态（2026-10-09）
 
-- `acps-sdk 2.2.0` 与 `wit-framework 2.1.0` 已安装并可从后端虚拟环境导入；官方 `release-manifest.json` 因本机到 `wit.ioa.pub` TLS 握手失败尚未取得，因此发行物 SHA-256 和 `wit-release-preflight` 尚未验收。
+- `acps-sdk 2.2.0` 与 `wit-framework 2.1.0` 已安装并可从后端虚拟环境导入；2026-10-11 已取得官方 `release-manifest.json`，两个 wheel 的 SHA-256 与清单一致，`wit-release-preflight` 已通过。
 - 正确 Registry 账号下已查到攻击、防守两个 Agent，状态均为 `APPROVED`；原 ACS 中的 AIC 与 Registry 记录一致。此前另一个账号尝试保存同名草稿得到 403；没有创建重复 Agent，原 ACS 未被修改。
 - 两个 Agent 均已获取 EAB 并签发 Ed25519 `clientAuth` 证书。使用 `cryptography` 验证了 AIC URI SAN、`clientAuth` EKU、私钥匹配及信任链，CA 查询均为 `VALID`。证书有效期截至 2026-11-27；EAB、Agent 私钥和证书在 `backend/.acps-cli/`，ACME 账户密钥和 CSR 在 `backend/keyfiles/`，均已加入 Git 忽略。
 - Registry 记录中的 Agent endpoint 仍指向旧 `trycloudflare.com` 临时隧道；本机直连 DNS 解析失败，经代理 TLS 握手也失败。尚未确认当前稳定公网 endpoint，证书也尚未接入 Agent 服务端或主服务 AIP 客户端，因此**目前不能宣称端到端 mTLS/AIP 已通**。
 - **队友待办**：确认攻击、防守 Agent 的稳定公开 `/rpc` 地址及其 TLS/mTLS 入口；由有权限的负责人按平台流程更新已审核 ACS endpoint。不要把当前临时隧道地址继续作为正式 endpoint，也不要发送或提交密码、Token、EAB、私钥、证书。
-- 后续还需为平台 Leader 身份完成注册/AIC 与 `clientAuth` 证书，并根据最终服务端部署方式申请/配置 `serverAuth` 证书及双向身份校验；另需取得官方 manifest 并通过发行预检。
+- 后续仍需确认现有 AIC 如何接管 WIT workspace，并根据最终服务端部署方式申请/配置 `serverAuth` 证书及双向身份校验；官方 manifest 与本机运行时预检已经完成。
 
 ### 队友 Cloudflare Zero Trust/Tunnel 待办
 
@@ -487,8 +487,9 @@ mTLS 尚未具备。禁止提交或发送 `.env`、API Key、浏览器密码、T
 - 使用隔离临时环境安装现有私有 wheel，确认 `acps-sdk 2.2.0` 与 `wit-framework 2.1.0`
   的 `AcpsConfig`、`AcpsRegistration`、`WitRuntime`、`up_until_ready()` 和
   `serve_direct_partner()` API 与新 Identity 流程匹配；离线 ACS 草稿生成成功。
-- 项目 `.venv` 当前是公共 `acps-sdk 2.1.0`，无法导入私有 `wit-framework`；私有 wheel
-  虽位于被忽略的 `backend/packages/`，但缺少官方 `release-manifest.json`，未绕过预检安装。
+- 官方 `release-manifest.json` 已取得；两个 wheel 的 SHA-256 与清单一致。正式发行目录安装完成后，
+  项目 `.venv` 为 `acps-sdk 2.2.0` 与 `wit-framework 2.1.0`，API 预检通过，后端测试
+  `82 passed, 1 skipped`。
 - 新增 `backend/scripts/verify_wit_runtime_api.py`，并接入 `install_wit_wheels.ps1`；安装通过
   manifest 后还必须验证 Identity/Direct/Group API 完整及协程属性。
 - 当前三个 Agent 已有 AIC 和 clientAuth 材料，但没有 WIT workspace。已检查公开 API，未发现

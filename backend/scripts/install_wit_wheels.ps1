@@ -1,14 +1,26 @@
-﻿$ErrorActionPreference = "Stop"
+﻿param(
+    [string]$PackageDir = ""
+)
+
+$ErrorActionPreference = "Stop"
 
 $backendRoot = (Resolve-Path (Join-Path $PSScriptRoot ".."))
 $python = Join-Path $backendRoot ".venv\Scripts\python.exe"
-$packageDir = Join-Path $backendRoot "packages"
+
+if ([string]::IsNullOrWhiteSpace($PackageDir)) {
+    $packageDir = Join-Path $backendRoot "packages"
+    if (-not (Test-Path -LiteralPath $packageDir)) {
+        New-Item -ItemType Directory -Path $packageDir | Out-Null
+    }
+} else {
+    if (-not (Test-Path -LiteralPath $PackageDir -PathType Container)) {
+        throw "指定的梧桐发行目录不存在或不是目录：$PackageDir"
+    }
+    $packageDir = (Resolve-Path -LiteralPath $PackageDir).Path
+}
 
 if (-not (Test-Path -LiteralPath $python)) {
     throw "未找到后端虚拟环境：$python"
-}
-if (-not (Test-Path -LiteralPath $packageDir)) {
-    New-Item -ItemType Directory -Path $packageDir | Out-Null
 }
 
 $acpsWheel = Get-ChildItem -LiteralPath $packageDir -File -Filter "acps_sdk-2.2.0-*.whl" |

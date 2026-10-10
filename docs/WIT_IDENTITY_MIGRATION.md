@@ -6,8 +6,10 @@
 
 - 官方流程的推荐入口是 `AcpsConfig` + `WitAgent` + `WitRuntime`，状态机通过
   `up_until_ready()` 推进，审核后再 `serve_direct_partner()`。
-- 本机 `backend/packages/` 已有两个私有 wheel，但缺少官方 `release-manifest.json`；不能绕过
-  SHA-256 发行预检直接安装到生产环境。
+- 已取得官方 `release-manifest.json`。2026-10-11 使用用户提供的正式发行目录执行
+  `wit-release-preflight`，两个 wheel 的 SHA-256 与清单完全一致。
+- 正式 wheel 已安装到本机后端 `.venv`：`acps-sdk 2.2.0`、`wit-framework 2.1.0`；使用
+  `.venv` 解释器执行 API 预检和全量后端测试，结果为 `82 passed, 1 skipped`。
 - 在隔离临时虚拟环境中验证了 wheel API：`acps-sdk 2.2.0`、`wit-framework 2.1.0`，
   `WitRuntime` 的注册、服务和停止入口均存在且为协程；离线 ACS 草稿可正常生成。
 - `WitRuntime`/`AcpsRegistration` 公共 API 只有 `integrated()`、`ontology()`、`entity()` 等
@@ -25,14 +27,18 @@ Agent。这样可能创建重复身份、产生新的 AIC，并使已有证书�
 
 1. 负责人在 Registry/官方文档确认“既有 AIC + 证书”如何导入或接管 WIT workspace；如果平台
    不支持接管，应由负责人明确批准新 workspace 和新 Agent ID。
-2. 取得官方 `release-manifest.json`，运行：
+2. 使用带官方清单的发行目录安装并复验（本机已完成）：
 
    ```powershell
    cd D:\梧桐\backend
-   .\scripts\install_wit_wheels.ps1
+   .\scripts\install_wit_wheels.ps1 `
+     -PackageDir "D:\梧桐\wit_v2.1.0_release"
+   .\.venv\Scripts\python.exe .\scripts\verify_wit_runtime_api.py
+   .\.venv\Scripts\python.exe -m pytest -q
    ```
 
-   安装脚本现在会额外执行 `verify_wit_runtime_api.py`，确认 Identity/Direct/Group API 完整。
+   未指定 `-PackageDir` 时，脚本仍默认使用 `backend/packages/`。安装后应直接调用 `.venv`
+   解释器或使用 `uv run --no-sync`；普通 `uv run` 可能按当前锁文件把 `acps-sdk` 同步回 2.1.0。
 3. 为 Direct listener 准备 serverAuth 证书，并确保 `public_endpoint` 的 DNS/IP SAN 匹配；现有
    clientAuth 证书不能替代 serverAuth。
 4. 确认队友 VPS 的 Cloudflare Tunnel/反向代理把公开 `/acps/aip/v1/rpc` 映射到 strict
@@ -42,7 +48,6 @@ Agent。这样可能创建重复身份、产生新的 AIC，并使已有证书�
 
 ## 当前阻塞
 
-- 官方发行清单尚未取得。
 - SSH 22 端口仍不可达，无法在 VPS 安装/验收 strict listener。
 - 稳定的 Direct `/acps/aip/v1/rpc` 地址、serverAuth 证书和现有 AIC 接管流程尚未确认。
 - 在上述条件完成前，线上服务继续使用现有 FastAPI `/rpc` 和 API Key/浏览器会话；不能宣称
