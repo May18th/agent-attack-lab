@@ -1,6 +1,6 @@
 # 当前项目状态
 
-更新时间：2026-10-10
+更新时间：2026-10-11
 
 本文是当前状态的短版事实源；历史细节保留在 `TEAM_HANDOFF.md`、审计报告和 Git 提交记录中。
 
@@ -14,9 +14,9 @@
 
 ## 当前阻塞
 
-- GitHub Actions 曾因 SDK 版本兼容路径失败；本次已加入签名过滤和旧 SDK HTTP 客户端替换，需提交后由 CI 复验。
+- GitHub Actions 已在 PR `#2` 通过：后端测试、前端构建检查均为 SUCCESS；Cloudflare Pages 与 Workers Preview 也已通过。
 - 生产梧桐发行包 `release-manifest.json`、稳定 Agent `/rpc` 地址和真实端到端 mTLS 仍未完成；本地回环测试不能替代平台验收。
-- Cloudflare 域名、Pages/Tunnel 和公网联调仍依赖有权限的账号负责人，按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 执行。
+- Cloudflare Pages 与 Workers Preview 构建已验收；生产域名、Tunnel、DNS/SSL 和公网 API 状态仍需在合并/部署后按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 复验。
 - 清洗后攻击样本 low 难度仅 1 条，是否补样由队友审核决定。
 - 空白 `topic` 已在服务端统一拒绝并自动去除首尾空白；已新增 `DELETE /battles/{battle_id}`，删除已结束战局时同步清理事件，运行中战局返回 409。
 
@@ -29,16 +29,16 @@
 ## 队友审核入口
 
 - 主提交：`5fcdf11`（ACP SDK 2.1/2.2 兼容、PowerShell 编码修复、工作区清理与文档整理）。
-- 验收结果：后端 SDK 2.1/2.2 环境各 `70 passed`；前端 `18 passed`，lint 与 build 通过；17 个 PowerShell 脚本语法检查通过。
-- 审核动作：从 `codex/team-domain-handoff` 按文件审查并合并，不要直接覆盖双方分叉历史。
-- 已知问题：真实公网 mTLS 尚未验收；Cloudflare Workers Builds 仍需账号负责人核对 monorepo 根目录配置。
+- 验收结果：本机后端 `74 passed`；PR `#2` 的后端/前端 GitHub Actions、Cloudflare Pages 和 Workers Preview 全部通过；前端本机 `18 passed`，lint、build 与 Wrangler dry-run 通过。
+- 审核动作：审核并合并 PR `#2`；分支已合入 `main@6d713fb` 并解决冲突，当前 GitHub merge state 为 CLEAN。
+- 已知问题：真实公网 mTLS 尚未验收；清洗后攻击样本 low 难度仅 1 条，是否补样待审核。
 - 禁止事项：不得补交 `.env`、证书、EAB、私钥、私有 wheel、Tunnel Token 或 JSONL 数据集。
 
 ## 下一步
 
-1. 运行 GitHub Actions，确认公开 SDK 基线和 2.1/2.2 兼容修复通过。
-2. 队友审核当前分支改动后，按文件冲突逐项合并到 `main`。
-3. 由账号负责人完成 Cloudflare 和梧桐平台人工步骤，再做公网与真实 mTLS 验收。
+1. 队友审核并合并 PR `#2` 到 `main`。
+2. 合并后复验生产域名、Tunnel、DNS/SSL、浏览器主流程和公网 API。
+3. 取得稳定 Agent `/rpc` 与平台 mTLS 条件后，再做真实端到端身份绑定验收。
 
 ## 禁止事项
 

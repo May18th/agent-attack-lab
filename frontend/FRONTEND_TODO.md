@@ -31,25 +31,13 @@ VITE_AGENT_API=https://api.yuanyiagentzhandui.cn
 
 6. 若公网启用浏览器登录，在页面增加密码登录/退出状态；登录请求调用 `POST /auth/session`，启动时调用 `GET /auth/session`，退出调用 `DELETE /auth/session`。所有需要登录的 API fetch 设置 `credentials: "include"`；不要在 `VITE_*` 中配置后端 API Key。EventSource 使用 `withCredentials: true`。本地 HTTP 联调时前后端 API 使用同一主机名 `localhost`，API 地址可设为 `http://localhost:8787`。
 
-### 当前新增：Cloudflare 构建失败修复（队友执行）
+### Cloudflare 构建状态（2026-10-11 已完成）
 
-GitHub PR `#1` 的代码冲突已由后端负责人合并，当前分支提交为 `7def217`。GitHub 后端测试、前端测试和生产构建均通过；Cloudflare 的 `Workers Builds: agent-attack-lab` 仍失败，需要按下面步骤处理。
-
-1. 打开 Cloudflare `agent-attack-lab` 构建详情，查看提交 `7def217` 的失败日志，并在回执中保留第一条实际错误；不要只回报“Build failed”。
-2. 当前仓库前端是 Vite 静态应用，前端目录为 `frontend/frontend-ui`，仓库没有根目录 `package.json`，也没有 `wrangler.jsonc`。若使用 **Cloudflare Pages**，构建设置固定为：
-
-   ```text
-   Root directory: frontend/frontend-ui
-   Build command: npm ci && npm run build
-   Build output directory: dist
-   ```
-
-3. 如果当前 Cloudflare 项目是 **Workers Builds**，不要直接把整个仓库当 Worker 部署。请先在 Pages 和 Workers Static Assets 之间确认一种方案；改用 Workers 必须补齐 Worker 配置后再部署，不能仅修改构建命令冒充成功。
-4. 前端 API 地址暂时不要填写未验收的公网地址。等后端确认 `https://api.yuanyiagentzhandui.cn/health` 返回 JSON `200` 后，再设置 `VITE_AGENT_API` 并重新构建。
-5. 检查生产访问路径：`frontend/frontend-ui/vite.config.ts` 当前生产 `base` 为 `/ui/`。若最终网站从域名根路径打开，应确认是否访问 `/ui/`；若要求根路径 `/`，先回报后再改 `base`，不要自行改后端路由。
-6. 重新触发 Cloudflare 预览构建，回执必须包含：构建平台（Pages/Workers）、根目录、构建命令、输出目录、预览地址、提交版本和失败日志或成功日志。
-
-本地已补齐 Workers Static Assets 部署配置：`frontend/frontend-ui/wrangler.jsonc` 将 `dist` 声明为静态资源目录，`package.json` 提供 `npm run deploy`。若继续使用 Workers Builds，请将项目根目录设为 `frontend/frontend-ui`，构建命令设为 `npm run build`，部署命令设为 `npx wrangler deploy`（或 `npm run deploy`，二者不要同时执行构建），并确认生产入口仍按当前 Vite 配置使用 `/ui/` 路径。该配置不会创建或修改队友账号中的 Build trigger；线上失败日志仍需在对应 Cloudflare 账号回执。
+- PR `#2` 已解决与 `main` 的冲突，GitHub 后端测试、前端构建检查、Cloudflare Pages 和 Workers Preview 均通过。
+- Workers Builds 根目录已设为 `frontend/frontend-ui`，构建命令为 `npm run build`，分支 Preview 命令为 `npx wrangler preview`。
+- `frontend/frontend-ui/wrangler.jsonc` 已声明 `dist` 静态资源目录、SPA fallback 和 `previews` 配置；Wrangler 版本已锁定在前端开发依赖中。
+- 本地 `npx wrangler deploy --dry-run` 已识别 7 个静态资源并通过；生产入口使用域名根路径 `/`。
+- 后续只需队友审核并合并 PR；不要另建重复的 Pages/Workers Git 集成，也不要把 API Key、Tunnel Token 或私钥写入构建变量。
 
 队友不需要修改后端 Python、DNS、旧 `kcwx.online` 资源，也不要把 API Key、Tunnel Token 或私钥放入仓库或前端变量。
 
