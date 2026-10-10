@@ -12,19 +12,19 @@
 - 本分支补充旧/新 SDK 构造参数兼容和 Partner 独立身份绑定后，本机官方 SDK 2.2 环境和全新公开 SDK 2.1 环境均为 `70 passed`，仅有既有 Starlette/httpx 弃用警告。
 - 微调数据：原始 105 条，保守清洗保留 72 条、剔除 33 条；清洗集未上传 Git、VPS 或训练平台。条件、数量和校验见 `FINETUNE_CLEANING_20261010.md`。
 - 身份绑定预检已区分 Leader 与 Partner 开关；开关打开但当前 SDK 不支持服务端身份绑定参数时会失败关闭，不再静默丢弃配置。
-- 新增 VPS 只读常驻验收脚本，可一次检查 linger、三个业务服务、Cloudflare Tunnel 和四个健康接口；仍需 SSH 恢复后在 VPS 实机运行并做重启验收。
+- 新增 VPS 只读常驻验收脚本；已在 `47.108.92.113` 实机确认 `deployer` 的 `linger=yes`，API/攻击/防守/Tunnel 四个用户级服务均为 `enabled` 且运行中。
 - 新增 WIT Identity 迁移评估：隔离环境确认私有 wheel API 可生成 ACS 草稿，但未发现接管现有 AIC/workspace 的公开 API；在平台确认前禁止重复 `integrated()` 注册。
 - 官方 `release-manifest.json` 已取得，两个正式 wheel 的 SHA-256 与清单一致；使用正式目录安装后版本为 `acps-sdk 2.2.0`、`wit-framework 2.1.0`，WIT API 预检通过，后端全量测试 `82 passed, 1 skipped`。
-- Cloudflare 账号只读核验确认命名隧道 `yuanyi-agent-attack-lab-backend` 健康，但仅发布 `api -> 8787`；`attack`、`defense` 子域名没有 DNS 或 ingress。旧 Registry Partner Quick Tunnel 已无 DNS。主调度 `/rpc` 的 401 正文明确是 API Key 拒绝，不能作为 mTLS 已上线的证据。
+- Cloudflare 命名隧道 `yuanyi-agent-attack-lab-backend` 已增加 `attack -> 8788`、`defense -> 8789` ingress 及两个 Proxied CNAME；固定域名 `/health` 均为 200，Partner 未带 API Key 的 `/rpc` 返回 401，带正确密钥返回 200。旧 Registry Partner Quick Tunnel 已无 DNS；这仍不是平台 mTLS 已上线的证据。
 - 正式 WIT 2.1 字节码与本机文件审计确认：现有 AIC 不能接管空 workspace。本机只有三组 `.acps-cli` clientAuth 材料，没有 `enrollment.json`、authoritative ACS、Registry token、serverAuth 或 WIT AIP 状态；必须先在原部署机/容器卷/备份找完整 `acps/`，找不到则只能经负责人批准重新注册新 AIC。
 
 ## 当前阻塞
 
 - GitHub Actions 已在 PR `#2` 通过：后端测试、前端构建检查均为 SUCCESS；Cloudflare Pages 与 Workers Preview 也已通过。
-- 稳定 Agent `/rpc` 地址、serverAuth 证书和真实端到端 mTLS 仍未完成；现有 AIC 已确认不能接管空 workspace，本地回环测试不能替代平台验收。
-- Registry 中攻击/防守 Agent 仍登记同一个已失效 Quick Tunnel；本地 ACS 草稿又指向旧 `kechuang2026.cn` 并声明 `apiKey`，两者均不能直接当作权威可用配置。
+- 稳定 Agent `/rpc` 地址已部署并验收；serverAuth 证书和真实端到端 mTLS 仍未完成，本地 API Key 验收不能替代平台 mTLS 验收。
+- Registry authoritative ACS 仍登记已失效 Quick Tunnel；平台客户端接口规定 APPROVED Agent 不能由普通账号更新，需平台工作人员保留原 AIC 执行端点迁移并同步 Discovery。当前本地 ACS 文件已改为固定域名，但不代表 Registry 已更新。
 - 原 VPS、容器卷、快照和备份尚未完成完整 `acps/` 搜索；这是决定保留旧 AIC 还是重新注册的前置判定。
-- VPS `47.108.92.113:22` 当前连接超时；公网 API 正常，但无法从本机重新核对 systemd enabled、linger 和重启恢复状态。
+- VPS `47.108.92.113:22` 已恢复；公网 API、固定 Partner 域名和用户级服务常驻状态均已核验。
 - 正式发行物和本机运行时预检已经通过；该结果只解除发行物完整性阻塞，不代表 Registry 注册、WIT Direct 或生产 mTLS 已完成。
 - Cloudflare Pages 与 Workers Preview 构建已验收；生产域名、Tunnel、DNS/SSL 和公网 API 状态仍需在合并/部署后按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 复验。
 - 清洗后攻击样本 low 难度仅 1 条，是否补样由队友审核决定。
@@ -46,9 +46,9 @@
 
 ## 下一步
 
-1. 队友审核并合并 PR `#2` 到 `main`。
-2. VPS SSH 恢复后先运行 `backend/scripts/find-wit-workspaces.sh`，并检查停止容器、Docker volume、快照和备份；不得读取或回传凭据正文。
-3. 找到完整 workspace 则恢复原状态并按平台流程变更；找不到则由负责人批准新 AIC。之后再验收 8788/8789 服务端鉴权、发布固定子域名、更新 discovery，并执行 low/mid/high 全链路验收。
+1. 将攻击、防守两个 AIC 和固定 endpoint 发给 Registry 管理员，请其执行已审核 Agent 的端点迁移并同步 Discovery；禁止新建重复 Agent。
+2. 平台变更完成后，按 AIC 查询 authoritative ACS，并执行 low/mid/high 全链路验收。
+3. 仍需在原 VPS、容器卷、快照和备份中搜索完整 `acps/` workspace；不得读取或回传凭据正文。
 
 ## 禁止事项
 
