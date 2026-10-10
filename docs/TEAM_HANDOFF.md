@@ -582,3 +582,22 @@ bash backend/scripts/find-wit-workspaces.sh
 
 未完成上述判定前，禁止在空 workspace 运行 `up_until_ready()`；也不得发送或提交
 `enrollment.json`、Registry token、EAB、私钥、证书正文、整个 workspace 压缩包或数据库。
+
+### 固定 Partner 域名与鉴权已落地（2026-10-11）
+
+本机已通过密钥 `id_aliyun_deploy` 恢复登录 `47.108.92.113`；目标机主机名为
+`iZ2vcics71o84b4g71yhivZ`。三个用户级 systemd 服务均已正常运行：API `8787`、攻击 `8788`、
+防守 `8789`，Cloudflare 命名隧道保持 healthy。
+
+- 服务器 `/opt/agent-attack-lab/backend/.env` 已生成随机 `AGENT_RPC_API_KEY`，并重启 API、攻击、
+  防守服务；密钥未回显、未提交 Git。
+- 未带密钥访问两个 Partner `/rpc` 返回 `401`；带正确密钥访问固定公网地址返回 `200`，两个
+  `/health` 均返回 `200`。
+- Cloudflare Tunnel 已增加：`attack.yuanyiagentzhandui.cn -> 127.0.0.1:8788`、
+  `defense.yuanyiagentzhandui.cn -> 127.0.0.1:8789`；对应 Proxied CNAME 已创建。
+- 本地 `backend/acs-attack-trusted-registration.json`、`backend/acs-defender-trusted-registration.json`
+  及 `.data/acps-registration/` 草稿已改为上述固定地址；这些文件不含运行时密钥。
+
+仍需平台侧完成：用 Registry authoritative ACS 更新两个 `endPoints.url`，重新审核并确认 discovery
+同步；不能把本地文件修改视为 Registry 已更新。`deployer` 当前无免密 sudo，用户级 systemd
+可由该账号管理。禁止提交 `backend/.env`、API Key、Token、EAB、私钥、证书正文和 Tunnel Token。
