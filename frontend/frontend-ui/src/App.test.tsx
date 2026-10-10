@@ -185,11 +185,14 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { name: '登录控制台（Sign in）' })).toBeInTheDocument()
+    expect(document.querySelector('.login-page')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '开始新战局（New battle）' })).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/battles?'), expect.anything())
     fireEvent.change(screen.getByLabelText(/浏览器密码/), { target: { value: 'browser-secret' } })
     fireEvent.click(screen.getByRole('button', { name: /登录（Sign in）/ }))
 
     expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
+    expect(document.querySelector('.login-page')).not.toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/auth/session'), expect.objectContaining({ method: 'POST', credentials: 'include' }))
   })
 })
