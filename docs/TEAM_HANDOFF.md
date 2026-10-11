@@ -718,13 +718,13 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 禁止提交 `.env`、API Key、Registry token、EAB、证书/私钥、Tunnel token、数据库或训练 JSONL；不得批量删除战局或改动 Cloudflare/Registry 权威记录。
 
-### 本机复核与队友审核入口（2026-10-11）
+### 合并与公网部署复核（2026-10-11）
 
-- 当前协作分支 `codex/team-domain-handoff` 的 HEAD 为 `03c935c`，与远端同步；PR #2 为 OPEN/CLEAN，GitHub 后端测试、前端检查、Cloudflare Pages、Workers Builds 均成功，尚无 review。
-- 本机重新验证：后端 `96 passed, 4 skipped`；前端 `19 passed`；lint/build 与跟踪及暂存区敏感文件检查均通过。
-- CISA 官方 KEV 源版本 `2026.10.08`，1,739 条；与本机快照差异为新增 0、删除 0、变更 0，官方源 SHA-256 为 `fb1621beec7db19d99c1f919dede3d4cc01ad88acd16f79f1592929c4826dfee`。
-- 当前代码包含空白 topic 422 校验和 DELETE 战局接口；生产是否已部署到含这些接口的提交，必须在队友合并/部署后检查 OpenAPI 与状态码。本轮没有操作或重新测试 VPS、Cloudflare、Registry。
-- 生产 Partner mTLS 和端到端结果沿用本文件前文的 2026-10-11 验收记录，不把它描述为本轮重新验收。外部 LLM 仍按负责人决定暂不配置；每小时巡检的外部调度状态仍未确认。
-- 本机未跟踪材料（含发行 wheel 与队友文档/代码副本）未改动、未暂存、未提交。长期记忆、密钥、证书、数据库、JSONL 和私有发行物不进入 Git。
+- PR #2 已于 `2026-10-11T15:16:01Z` 合并，合并提交 `ae959fb6a11bbe398e914dd9b2bb5f0c606f24a7`，PR head `47d5916e59dd2433aa7a70ac10ed224f39bd3ec9`。后端测试、前端检查、Cloudflare Pages、Workers Builds 四项 CI 均成功。
+- 正式前端 `https://yuanyiagentzhandui.cn` 与 `https://www.yuanyiagentzhandui.cn` 本轮只读请求均为 HTTP 200，首页加载 `/assets/index-BzFvd3kT.js`。检查该 JS bundle 未发现密码输入表单、`/auth/session` 调用或管理员登录文案；大众前端免密码，后台保护仍由 API 鉴权承担。
+- 正式 API 本轮只读结果：`/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1` 均为 HTTP 200；`/openapi.json` 已包含 `DELETE /battles/{battle_id}`。未登录请求 `/dashboard` 和战局回放返回 401，符合后台鉴权边界。
+- 本轮没有创建、修改或删除生产战局，没有操作数据库、VPS 配置、Cloudflare、Registry 或 Discovery。尚未在安全环境重新执行 topic 422、battle create/delete 204/409 等写接口验收。
+- Partner mTLS、Discovery 和桌面/移动端 low/mid/high 全链路结论沿用本文件前文历史记录；这些项目本轮没有复测，不将其描述为当前验收。
+- 当前协作分支仍为 `codex/team-domain-handoff`，HEAD `47d5916`；本机未跟踪队友材料及 WIT wheel 保持原样，不纳入本次同步。长期记忆、凭据、证书/私钥、数据库、日志、JSONL 和私有发行物禁止提交。
 
-队友后续动作：正常审核并合并 PR #2；部署经审核提交后验证空 topic 422、创建 201、已结束删除 204、运行中删除 409，并回归双 Partner mTLS、Discovery 和 low/mid/high 战局。不得绕过审核或按旧记录删除未定位战局。
+下一步：由负责人安排隔离测试数据源，验证空白 topic 返回 422、合法创建返回 201、已完成战局删除返回 204 且关联事件清理、运行中战局删除返回 409；避免对生产业务数据做破坏性验收。若尚无隔离环境，先由队友确认测试环境/数据库，不创建或删除生产战局。
