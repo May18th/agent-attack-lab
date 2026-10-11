@@ -715,3 +715,14 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 已知待决：攻击/防守 Agent 当前使用规则兜底，外部 LLM 是否接入由负责人决定；负责人确认停用每小时巡检，但本机和 VPS 可见的任务计划均未找到对应项，因此外部调度状态未确认。不要擅自停用其他任务。
 
 禁止提交 `.env`、API Key、Registry token、EAB、证书/私钥、Tunnel token、数据库或训练 JSONL；不得批量删除战局或改动 Cloudflare/Registry 权威记录。
+
+### 本机复核与队友审核入口（2026-10-11）
+
+- 当前协作分支 `codex/team-domain-handoff` 的 HEAD 为 `03c935c`，与远端同步；PR #2 为 OPEN/CLEAN，GitHub 后端测试、前端检查、Cloudflare Pages、Workers Builds 均成功，尚无 review。
+- 本机重新验证：后端 `96 passed, 4 skipped`；前端 `19 passed`；lint/build 与跟踪及暂存区敏感文件检查均通过。
+- CISA 官方 KEV 源版本 `2026.10.08`，1,739 条；与本机快照差异为新增 0、删除 0、变更 0，官方源 SHA-256 为 `fb1621beec7db19d99c1f919dede3d4cc01ad88acd16f79f1592929c4826dfee`。
+- 当前代码包含空白 topic 422 校验和 DELETE 战局接口；生产是否已部署到含这些接口的提交，必须在队友合并/部署后检查 OpenAPI 与状态码。本轮没有操作或重新测试 VPS、Cloudflare、Registry。
+- 生产 Partner mTLS 和端到端结果沿用本文件前文的 2026-10-11 验收记录，不把它描述为本轮重新验收。外部 LLM 仍按负责人决定暂不配置；每小时巡检的外部调度状态仍未确认。
+- 本机未跟踪材料（含发行 wheel 与队友文档/代码副本）未改动、未暂存、未提交。长期记忆、密钥、证书、数据库、JSONL 和私有发行物不进入 Git。
+
+队友后续动作：正常审核并合并 PR #2；部署经审核提交后验证空 topic 422、创建 201、已结束删除 204、运行中删除 409，并回归双 Partner mTLS、Discovery 和 low/mid/high 战局。不得绕过审核或按旧记录删除未定位战局。
