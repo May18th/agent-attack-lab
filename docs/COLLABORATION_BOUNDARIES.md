@@ -66,6 +66,7 @@
 - `POST /agent/attack`
 - `POST /agent/defend`
 - `POST /rpc`
+- `GET /external-cases`（外部来源案例只读查询）
 
 未经双方确认，不删除或重命名已有字段。
 
@@ -174,6 +175,7 @@ cd "D:\梧桐\backend"
 | BE-12 | 已完成 | 所有响应带 `X-Request-ID`，日志记录请求方法、路径、状态和耗时 |
 | BE-13 | 后续 | arbiter 扩展边界暂不实现 |
 | BE-14 | 已完成 | `docs/DEPLOYMENT.md` 已提供公网服务、Quick Tunnel、稳定 Tunnel、限流和备份说明 |
+| BE-15 | 已完成 | 外部案例库只读查询、来源元数据展示和来源边界测试已完成 |
 
 ### 前端 P0
 

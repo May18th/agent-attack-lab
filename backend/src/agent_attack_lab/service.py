@@ -45,6 +45,7 @@ from agent_attack_lab.acp_agents import (
     is_configured as acp_agent_configured,
 )
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend, local_rule_case_count
+from agent_attack_lab.external_cases import query_external_cases
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 from agent_attack_lab.storage import BattleStore
 
@@ -211,6 +212,9 @@ _cloudflare_jwk_lock = Lock()
 
 _rate_limit_per_minute = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 60)
 _event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=1024)
+_external_cases_database = Path(
+    os.getenv("AGENT_EXTERNAL_CASE_DB", ".data/external_security_cases.sqlite3")
+)
 _rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _rate_lock = Lock()
 
@@ -634,6 +638,7 @@ def index() -> dict[str, Any]:
             "/health", "/metrics", "/battles", "/battles/{id}/events",
             "/battles/{id}/report", "/leaderboard", "/agent/attack",
             "/agent/defend", "/rpc", "/docs",
+            "/external-cases",
         ],
         "note": "当前提供 JSON-RPC 2.0 和兼容的 HTTP JSON 接口；平台审核通过并下发证书后再启用 mTLS。",
     }
@@ -1748,6 +1753,33 @@ def dashboard_summary() -> dict[str, int]:
         "ruleLibraryCaseCount": local_rule_case_count(),
         "owaspLlmRuleCount": len(OWASP_LLM_CATEGORIES),
     }
+
+
+@app.get(
+    "/external-cases",
+    summary="查询外部安全案例",
+    description=(
+        "只读查询已导入的外部安全案例；每条记录保留来源、版本和内容哈希，"
+        "不把外部事实当作本项目战局或攻击样本。"
+    ),
+    tags=["外部案例"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def list_external_cases(
+    q: str | None = Query(default=None, max_length=200, description="按 CVE、标题、厂商或产品检索"),
+    vendor: str | None = Query(default=None, max_length=200),
+    product: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return query_external_cases(
+        _external_cases_database,
+        query=q.strip() if q else None,
+        vendor=vendor.strip() if vendor else None,
+        product=product.strip() if product else None,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @app.post(

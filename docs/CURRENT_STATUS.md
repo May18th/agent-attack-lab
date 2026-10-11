@@ -58,7 +58,7 @@ low/mid/high 六场战局，全部为 `completed`。移动自动化改用 `devic
 - 正式发行物和本机运行时预检已经通过；该结果只解除发行物完整性阻塞，不代表 Registry 注册、WIT Direct 或生产 mTLS 已完成。
 - Cloudflare Pages 与 Workers Preview 构建已验收；生产域名、Tunnel、DNS/SSL 和公网 API 状态仍需在合并/部署后按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 复验。
 - 清洗后攻击样本 low 难度仅 1 条，是否补样由队友审核决定。
-- 已建立独立外部安全案例库导入脚本 `backend/scripts/import_external_cases.py`；首批从 CISA 官方 KEV JSON 导入目录版本 `2026.10.08` 的 1,739 条记录，全部标记 `verified_primary`、`synthetic=0`，数据库位于被忽略的 `.data/external_security_cases.sqlite3`。新增 `record_kind` 来源分层和只读 `--validate` 校验，当前 1,739 条全部通过；这些记录是外部事实参考，不自动视为本项目战局或攻击样本。
+- 已建立独立外部安全案例库导入脚本 `backend/scripts/import_external_cases.py` 和只读查询接口 `GET /external-cases`；首批从 CISA 官方 KEV JSON 导入目录版本 `2026.10.08` 的 1,739 条记录，全部标记 `verified_primary`、`synthetic=0`，数据库位于被忽略的 `.data/external_security_cases.sqlite3`。查询会返回来源版本、发布时间、抓取时间、URL 和内容 SHA-256，但不返回原始 JSON；导入和查询测试已覆盖来源保留、筛选、缺库和只读行为。当前 1,739 条全部通过 `--validate`；这些记录是外部事实参考，不自动视为本项目战局或攻击样本。
 - 本机针对空白 topic 与删除战局的定向测试均通过（2 passed）。VPS 当前提交 `61beebe` 的 OpenAPI 不含 `DELETE /battles/{battle_id}`；本地实现提交 `7edf500` 不在当前 `origin/main`（`6d713fb`），与生产 405 相符。生产空主题 POST 未直接测试，避免旧版本接受请求时创建真实战局。
 
 ## 本次清理
@@ -79,7 +79,7 @@ low/mid/high 六场战局，全部为 `completed`。移动自动化改用 `devic
 
 1. 通过团队审核把包含 `7edf500` 的正确代码合入部署分支并更新 VPS；随后验证 DELETE 路由，再在安全环境验证空白 topic POST 返回 422。
 2. 既有验收记录中的 `battle-694dce7f` 在本机数据库和 VPS 默认 `backend/.data/battles.sqlite3` 均未找到，无需执行删除；若它来自其他数据库，需先确认数据源再清理。
-3. 由负责人决定是否接入外部 LLM；当前攻击/防守 Agent 使用规则兜底。外部案例库后续只接入可核验的一手来源，并经人工复核。
+3. 由负责人决定是否接入外部 LLM；当前攻击/防守 Agent 使用规则兜底。外部案例库查询已完成，后续新增来源仍只接入可核验的一手来源，并经人工复核。
 4. 负责人已确认停用每小时巡检；本机 Windows 任务计划和 VPS systemd timers/user crontab 均未找到对应任务，因此本轮未能停用。实际任务若位于外部平台，需由该平台所有者在其控制台停止。
 
 ## 禁止事项

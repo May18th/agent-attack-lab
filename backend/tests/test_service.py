@@ -213,6 +213,48 @@ def test_background_battle_persists_staged_events() -> None:
         for event in defended
         for finding in event["data"]["caught"]
     )
+    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+    assert all(event["battleId"] == battle_id for event in events)
+    assert all(event["status"] for event in events)
+
+
+def test_external_case_route_is_read_only_and_keeps_provenance(tmp_path, monkeypatch) -> None:
+    import json
+    from scripts.import_external_cases import import_catalog
+
+    catalog = {
+        "catalogVersion": "service-query-1",
+        "dateReleased": "2026-10-11T00:00:00Z",
+        "vulnerabilities": [{
+            "cveID": "CVE-2099-0100",
+            "vendorProject": "Example Vendor",
+            "product": "Example Product",
+            "vulnerabilityName": "Example issue",
+            "dateAdded": "2026-10-11",
+            "shortDescription": "An external documented issue.",
+            "requiredAction": "Apply the vendor fix.",
+            "cwes": ["CWE-89"],
+        }],
+    }
+    database = tmp_path / "external.sqlite3"
+    import_catalog(
+        database,
+        payload=json.dumps(catalog, sort_keys=True).encode(),
+        catalog=catalog,
+        source_url="https://example.invalid/catalog.json",
+    )
+    monkeypatch.setattr(service, "_external_cases_database", database)
+
+    response = client.get("/external-cases", params={"q": "CVE-2099", "limit": 1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["total"] == 1
+    assert body["items"][0]["recordKind"] == "external_fact"
+    assert body["items"][0]["source"]["catalogVersion"] == "service-query-1"
+    assert "rawJson" not in body["items"][0]
+    assert "/external-cases" in client.get("/openapi.json").json()["paths"]
 
 
 def test_battle_list_limit_is_validated() -> None:
@@ -491,6 +533,7 @@ def test_read_routes_can_be_protected_together(monkeypatch) -> None:
         f"/reports/{battle_id}",
         "/leaderboard",
         "/dashboard/summary",
+        "/external-cases",
     ):
         assert client.get(path).status_code == 401
         assert client.get(path, headers={"X-API-Key": "read-secret"}).status_code == 200
