@@ -12,6 +12,15 @@
 - Preview URL 公开可访问。构建环境未配置 `VITE_AGENT_API`，前端默认请求 `http://127.0.0.1:8787`，因此 Preview 首页可打开不代表浏览器能连到后端。生产 API `/health` 的只读请求返回 200，但没有把公开 Preview 指向生产 API，以避免预览写请求污染正式数据。后续前后端联调需使用隔离 API，并明确其数据与访问控制。
 - 本次没有改生产部署命令、DNS、Worker 生产代码或其他分支，也没有创建、修改或删除生产战局。
 
+## 2026-10-12 隔离 Preview API 已部署
+
+- VPS 已启用用户级 `agent-attack-lab-preview.service`，监听 `127.0.0.1:8790`，使用独立 SQLite，不连接生产数据库或生产 Partner RPC。
+- Cloudflare Tunnel 已新增 `preview-api.yuanyiagentzhandui.cn -> http://127.0.0.1:8790`，并创建 Proxied CNAME；VPS cloudflared 已加载 Tunnel 版本 4。
+- Preview API 的 CORS 正则已支持多级 `workers.dev/pages.dev` Preview 来源；生产 CORS 白名单未改。
+- 账户 5ae 的 `codex/preview-isolation` Workers Preview 已设置：根目录 `frontend/frontend-ui`、构建 `npm ci && npm run build:preview`、部署 `npx wrangler preview`、`VITE_AGENT_API=https://preview-api.yuanyiagentzhandui.cn`。构建 UUID：`91e5d0de-2b9a-46d3-8b80-a985c1a63f25`，结果 success。
+- 公网隔离 API 验收：`/health` 返回 200；CORS 预检返回 200；空 topic 返回 422；合法 low 创建返回 201；完成战局删除返回 204。测试战局已清理，未触碰生产业务数据。
+- 尚未宣称浏览器端 Preview 完成验收：当前执行环境直连 `workers.dev` Preview URL 超时，需要在能访问该 URL 的浏览器网络边界复验页面加载和脚本 API 指向。
+
 ## 1. 分工
 
 前端负责页面、输入控件、加载状态、错误提示，以及攻击样本和防守结果展示。
