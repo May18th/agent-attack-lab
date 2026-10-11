@@ -723,8 +723,10 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - PR #2 已于 `2026-10-11T15:16:01Z` 合并，合并提交 `ae959fb6a11bbe398e914dd9b2bb5f0c606f24a7`，PR head `47d5916e59dd2433aa7a70ac10ed224f39bd3ec9`。后端测试、前端检查、Cloudflare Pages、Workers Builds 四项 CI 均成功。
 - 正式前端 `https://yuanyiagentzhandui.cn` 与 `https://www.yuanyiagentzhandui.cn` 本轮只读请求均为 HTTP 200，首页加载 `/assets/index-BzFvd3kT.js`。检查该 JS bundle 未发现密码输入表单、`/auth/session` 调用或管理员登录文案；大众前端免密码，后台保护仍由 API 鉴权承担。
 - 正式 API 本轮只读结果：`/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1` 均为 HTTP 200；`/openapi.json` 已包含 `DELETE /battles/{battle_id}`。未登录请求 `/dashboard` 和战局回放返回 401，符合后台鉴权边界。
-- 本轮没有创建、修改或删除生产战局，没有操作数据库、VPS 配置、Cloudflare、Registry 或 Discovery。尚未在安全环境重新执行 topic 422、battle create/delete 204/409 等写接口验收。
-- Partner mTLS、Discovery 和桌面/移动端 low/mid/high 全链路结论沿用本文件前文历史记录；这些项目本轮没有复测，不将其描述为当前验收。
+- Partner mTLS 本轮进行了只读复核：attack/defense DNS 均解析至 `47.108.92.113`；VPS nginx、443 listener 和 API/攻击/防守 systemd 用户服务均 active，nginx 配置检查通过。使用本机梧桐 trust bundle，无客户端证书访问两个 `/health` 均为 200、`/rpc` 均为 403；使用 Leader clientAuth 证书访问时 `/health` 均为 200，`/rpc` TLS 握手成功（GET 返回 405，仅说明 GET 方法不适用于 RPC，不代表完成 AIP 调用）。因此较早资料里的 525/不可达与本轮结果不一致；私有 CA 客户端需显式使用梧桐 trust bundle。本轮未调用 Registry/Discovery，也未创建或删除生产战局。
+- 本轮未重新执行 topic 422、battle create/delete 204/409 写接口验收，也未重跑生产 low/mid/high 和桌面/移动全链路；这些结论仍引用本文件前文历史记录。
+- PR #3 文档同步分支 `codex/deployment-status-sync` 的后端测试、前端构建检查、Cloudflare Pages 均通过；Workers Builds 失败。Cloudflare build 记录显示 checkout 后在根目录 `/` 运行 `npx wrangler preview`，未找到前端子目录中的 `frontend/frontend-ui/wrangler.jsonc` 并报缺少 `previews` 配置。仓库中的该配置已有空 `previews` block；需队友确认 Workers Builds 的 root directory/preview command 配置。未修改 Cloudflare 构建设置；启用 Preview 前要确认预览公开性及是否绑定生产资源。
+- 本轮没有创建、修改或删除生产战局，没有操作数据库、VPS 配置、Cloudflare 配置、Registry 或 Discovery。生产只读请求未改变服务状态。
 - 当前协作分支仍为 `codex/team-domain-handoff`，HEAD `47d5916`；本机未跟踪队友材料及 WIT wheel 保持原样，不纳入本次同步。长期记忆、凭据、证书/私钥、数据库、日志、JSONL 和私有发行物禁止提交。
 
 下一步：由负责人安排隔离测试数据源，验证空白 topic 返回 422、合法创建返回 201、已完成战局删除返回 204 且关联事件清理、运行中战局删除返回 409；避免对生产业务数据做破坏性验收。若尚无隔离环境，先由队友确认测试环境/数据库，不创建或删除生产战局。
