@@ -9,7 +9,21 @@
 - 计划 API：`https://api.yuanyiagentzhandui.cn`。验收完成前不可配置为已用地址。
 - `kcwx.online` 是用户原有域名，已从本项目退役，不得作为 API、备用地址或 Tunnel 配置。
 
-## 后端浏览器会话接口
+## 公网浏览器认证
+
+正式公网方案使用 Cloudflare Access。前端不显示密码输入框，也不保存服务端 API Key；前端与 API hostname
+均应纳入 Access Self-hosted application 和 Allow policy。后端配置以下变量后，会验证 Cloudflare 注入的
+`Cf-Access-Jwt-Assertion`，包括 JWKS、issuer、audience 和过期时间：
+
+```env
+CF_ACCESS_TEAM_DOMAIN=https://<team-name>.cloudflareaccess.com
+CF_ACCESS_AUDIENCE=<Access application AUD tag>
+```
+
+两个变量必须同时配置。正式部署仍配置 `AGENT_API_KEY`，用于 `/agent/*`、`/rpc` 和 `/metrics` 等非浏览器入口；
+不要把任何 Access token、API Token 或 API Key 写入 `VITE_*` 或仓库。
+
+## 兼容的后端浏览器会话接口
 
 后端提供单密码登录会话，避免把 `AGENT_API_KEY` 编译到 Vite：
 
@@ -25,7 +39,8 @@
 
 ## 后端部署配置
 
-后端负责人在服务器本地 `.env` 设置，不要把实际密码发到聊天或提交 GitHub：
+若暂时不能使用 Cloudflare Access，后端负责人可在服务器本地 `.env` 启用兼容密码会话；这不是正式公网前端方案，
+不要把实际密码发到聊天或提交 GitHub：
 
 ```env
 AGENT_API_KEY=<服务端生成的高强度随机密钥>
@@ -45,7 +60,7 @@ Cookie 使用 HTTPS。若前端最终使用 `www` 或其他 Origin，将确切 O
 队友确认域名托管完成并开放所需 Zone 权限后，后端负责人配置 `api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787`。验收顺序：
 
 1. HTTPS 页面与 `GET /health` 均可访问。
-2. 未登录访问战局 REST 读写接口为 `401`；正确登录后 Cookie 访问成功。
-3. 非允许 Origin 的会话写请求被拒绝；浏览器预检返回精确的 CORS Origin 和 `Access-Control-Allow-Credentials: true`。
+2. 未通过 Cloudflare Access 的战局 REST 读写接口为 `401`；组织认证后浏览器请求成功。
+3. 后端拒绝无效/过期 Access JWT，并拒绝非允许 Origin 的跨站写请求；预检返回精确的 CORS Origin 和 `Access-Control-Allow-Credentials: true`。
 4. `low`、`mid`、`high` 战局创建、历史列表、详情和 SSE 均通过。
 5. `/metrics`、`/rpc` 与 `/agent/*` 未被浏览器会话开放；记录提交版本及失败请求 `X-Request-ID`。

@@ -29,7 +29,7 @@ VITE_AGENT_API=https://api.yuanyiagentzhandui.cn
 
 5. 重新启动前端并验收：网页可通过 HTTPS 打开，能读取 `/health`、`/dashboard/summary`、创建和查询战局；记录前端地址、API 地址、Git 提交版本和失败请求的 `X-Request-ID`。
 
-6. 若公网启用浏览器登录，在页面增加密码登录/退出状态；登录请求调用 `POST /auth/session`，启动时调用 `GET /auth/session`，退出调用 `DELETE /auth/session`。所有需要登录的 API fetch 设置 `credentials: "include"`；不要在 `VITE_*` 中配置后端 API Key。EventSource 使用 `withCredentials: true`。本地 HTTP 联调时前后端 API 使用同一主机名 `localhost`，API 地址可设为 `http://localhost:8787`。
+6. 公网认证由 Cloudflare Access/后端完成，前端不渲染密码输入框，也不保存 API Key。启动时调用 `GET /auth/session`，未认证时只显示组织认证提示和重试按钮；所有需要登录的 API fetch 设置 `credentials: "include"`。EventSource 使用 `withCredentials: true`。本地 HTTP 联调时前后端 API 使用同一主机名 `localhost`，API 地址可设为 `http://localhost:8787`。
 
 ### Cloudflare 构建状态（2026-10-11 已完成）
 

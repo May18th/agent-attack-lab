@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict, deque
 import asyncio
+import time
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.storage import BattleStore
 import agent_attack_lab.service as service
@@ -577,6 +578,80 @@ def test_browser_login_rate_limit_returns_retry_after(monkeypatch) -> None:
     limited = browser.post("/auth/session", json={"password": "wrong"})
     assert limited.status_code == 429
     assert int(limited.headers["Retry-After"]) > 0
+
+
+def test_cloudflare_access_jwt_authenticates_without_browser_password(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_api_key", "")
+    monkeypatch.setattr(service, "_browser_password", "")
+    monkeypatch.setattr(service, "_cloudflare_access_configured", True)
+    monkeypatch.setattr(
+        service,
+        "_verify_cloudflare_access_jwt",
+        lambda token: token == "valid-access-jwt",
+    )
+
+    denied = client.post(
+        "/battles",
+        json={"topic": "未认证"},
+        headers={"Origin": "http://localhost:5173", "Cf-Access-Jwt-Assertion": "invalid"},
+    )
+    assert denied.status_code == 401
+
+    allowed = client.post(
+        "/battles",
+        json={"topic": "组织认证"},
+        headers={
+            "Origin": "http://localhost:5173",
+            "Cf-Access-Jwt-Assertion": "valid-access-jwt",
+        },
+    )
+    assert allowed.status_code == 201
+
+    status = client.get(
+        "/auth/session",
+        headers={"Cf-Access-Jwt-Assertion": "valid-access-jwt"},
+    )
+    assert status.json() == {"enabled": True, "authenticated": True}
+
+    csrf = client.post(
+        "/battles",
+        json={"topic": "跨站请求"},
+        headers={
+            "Origin": "https://attacker.example",
+            "Cf-Access-Jwt-Assertion": "valid-access-jwt",
+        },
+    )
+    assert csrf.status_code == 403
+
+
+def test_cloudflare_access_jwt_verifies_signature_claims_and_expiry(monkeypatch) -> None:
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+
+    class FakeJwkClient:
+        def get_signing_key_from_jwt(self, token: str):
+            return type("SigningKey", (), {"key": public_key})()
+
+    monkeypatch.setattr(service, "_cloudflare_access_configured", True)
+    monkeypatch.setattr(service, "_cloudflare_access_team_domain", "https://team.example.cloudflareaccess.com")
+    monkeypatch.setattr(service, "_cloudflare_access_audience", "audience-1")
+    monkeypatch.setattr(service, "_cloudflare_jwk_client", FakeJwkClient())
+    now = int(time.time())
+
+    def token(**claims: object) -> str:
+        return jwt.encode(
+            {"iss": "https://team.example.cloudflareaccess.com", "aud": "audience-1", "iat": now, **claims},
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "test-key"},
+        )
+
+    assert service._verify_cloudflare_access_jwt(token(exp=now + 300)) is True
+    assert service._verify_cloudflare_access_jwt(token(aud="other", exp=now + 300)) is False
+    assert service._verify_cloudflare_access_jwt(token(exp=now - 1)) is False
 
 
 def test_browser_login_limit_uses_cloudflare_ip_only_from_loopback() -> None:

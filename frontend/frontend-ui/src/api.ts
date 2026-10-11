@@ -120,19 +120,6 @@ export async function getBrowserSession(): Promise<BrowserSession> {
   return api<BrowserSession>('/auth/session')
 }
 
-export async function loginBrowser(password: string): Promise<BrowserSession> {
-  await api<{ authenticated: boolean; expiresInSeconds: number }>('/auth/session', {
-    method: 'POST',
-    body: JSON.stringify({ password }),
-  })
-  return getBrowserSession()
-}
-
-export async function logoutBrowser(): Promise<BrowserSession> {
-  await api<{ authenticated: boolean }>('/auth/session', { method: 'DELETE' })
-  return getBrowserSession()
-}
-
 export function errorMessage(status: number, detail?: string): string {
   if (status === 400 || status === 422) return detail ? `输入不符合要求：${detail}` : '输入不符合要求，请检查主题和难度'
   if (status === 404) return '战局不存在或已被删除'

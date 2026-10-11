@@ -79,11 +79,21 @@ _cors_origin_regex = os.getenv(
     "AGENT_CORS_ORIGIN_REGEX",
     r"^https://[a-z0-9-]+\.trycloudflare\.com$",
 )
-_browser_auth_configured = bool(os.getenv("AGENT_BROWSER_PASSWORD", ""))
+_cloudflare_access_team_domain = os.getenv("CF_ACCESS_TEAM_DOMAIN", "").strip().rstrip("/")
+_cloudflare_access_audience = os.getenv("CF_ACCESS_AUDIENCE", "").strip()
+if bool(_cloudflare_access_team_domain) != bool(_cloudflare_access_audience):
+    raise RuntimeError(
+        "Cloudflare Access 鉴权必须同时配置 CF_ACCESS_TEAM_DOMAIN 和 CF_ACCESS_AUDIENCE"
+    )
+_cloudflare_access_configured = bool(
+    _cloudflare_access_team_domain and _cloudflare_access_audience
+)
+_browser_auth_configured = bool(os.getenv("AGENT_BROWSER_PASSWORD", "")) or _cloudflare_access_configured
 if _browser_auth_configured and "*" in _cors_origins:
     raise RuntimeError("启用浏览器会话时 AGENT_CORS_ORIGINS 必须使用精确来源")
 if _browser_auth_configured and not os.getenv("AGENT_API_KEY", "").strip():
-    raise RuntimeError("启用浏览器会话时必须同时配置服务端 AGENT_API_KEY")
+    if bool(os.getenv("AGENT_BROWSER_PASSWORD", "")):
+        raise RuntimeError("启用浏览器会话时必须同时配置服务端 AGENT_API_KEY")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=sorted(_cors_origins),
@@ -196,6 +206,8 @@ _browser_sessions: dict[str, float] = {}
 _browser_sessions_lock = Lock()
 _browser_login_attempts: dict[str, deque[float]] = defaultdict(deque)
 _browser_login_lock = Lock()
+_cloudflare_jwk_client: Any | None = None
+_cloudflare_jwk_lock = Lock()
 
 _rate_limit_per_minute = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 60)
 _event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=1024)
@@ -256,8 +268,40 @@ def _check_api_key(request: Request) -> None:
     supplied = request.headers.get("x-api-key", "")
     if _api_key and not hmac.compare_digest(supplied.encode("utf-8"), _api_key.encode("utf-8")):
         raise HTTPException(status_code=401, detail="缺少或无效的 API 密钥")
-    if not _api_key and _browser_password:
+    if not _api_key and (_browser_password or _cloudflare_access_configured):
         raise HTTPException(status_code=401, detail="服务端 API 密钥未配置")
+
+
+def _verify_cloudflare_access_jwt(token: str) -> bool:
+    """Verify the Access assertion against the configured team JWKS and audience."""
+    if not _cloudflare_access_configured or not token:
+        return False
+    try:
+        import jwt
+        from jwt import PyJWKClient
+
+        global _cloudflare_jwk_client
+        with _cloudflare_jwk_lock:
+            if _cloudflare_jwk_client is None:
+                _cloudflare_jwk_client = PyJWKClient(
+                    f"{_cloudflare_access_team_domain}/cdn-cgi/access/certs",
+                    cache_jwk_set=True,
+                    lifespan=300,
+                )
+            jwk_client = _cloudflare_jwk_client
+        signing_key = jwk_client.get_signing_key_from_jwt(token).key
+        jwt.decode(
+            token,
+            signing_key,
+            algorithms=["RS256"],
+            audience=_cloudflare_access_audience,
+            issuer=_cloudflare_access_team_domain,
+            options={"require": ["exp", "iat", "iss", "aud"]},
+        )
+        return True
+    except Exception as exc:
+        logger.warning("Cloudflare Access JWT rejected reason=%s", type(exc).__name__)
+        return False
 
 
 def _browser_origin_allowed(origin: str) -> bool:
@@ -316,12 +360,17 @@ def _check_browser_or_api_auth(request: Request) -> None:
         supplied_api_key.encode("utf-8"), _api_key.encode("utf-8")
     ):
         return
+    access_token = request.headers.get("cf-access-jwt-assertion", "")
+    if _verify_cloudflare_access_jwt(access_token):
+        if request.headers.get("origin"):
+            _check_browser_session_origin(request)
+        return
     if _browser_password and _has_browser_session(request):
         _check_browser_session_origin(request)
         return
-    if not _api_key and not _browser_password:
+    if not _api_key and not _browser_password and not _cloudflare_access_configured:
         return
-    raise HTTPException(status_code=401, detail="需要有效的 API 密钥或浏览器登录会话")
+    raise HTTPException(status_code=401, detail="需要有效的 API 密钥、Cloudflare Access 身份或浏览器登录会话")
 
 
 def _browser_client_ip(request: Request) -> str:
@@ -362,7 +411,7 @@ def _api_key_dependency(request: Request) -> None:
 
 
 def _read_auth_dependency(request: Request) -> None:
-    if _protect_read_routes or _browser_password:
+    if _protect_read_routes or _browser_password or _cloudflare_access_configured:
         _check_browser_or_api_auth(request)
 
 
@@ -1606,9 +1655,12 @@ def health(request: Request) -> dict[str, Any]:
 @app.get("/auth/session", summary="查询浏览器登录状态", tags=["浏览器鉴权"])
 def browser_session_status(request: Request, response: Response) -> dict[str, bool]:
     response.headers["Cache-Control"] = "no-store"
+    authenticated = bool(_browser_password) and _has_browser_session(request)
+    if _verify_cloudflare_access_jwt(request.headers.get("cf-access-jwt-assertion", "")):
+        authenticated = True
     return {
-        "enabled": bool(_browser_password),
-        "authenticated": bool(_browser_password) and _has_browser_session(request),
+        "enabled": bool(_browser_password) or _cloudflare_access_configured,
+        "authenticated": authenticated,
     }
 
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
-import { api, apiErrorMessage, apiPage, getBrowserSession, loginBrowser, logoutBrowser } from './api'
+import { api, apiErrorMessage, apiPage, getBrowserSession } from './api'
 import type { AgentSource, Battle, BrowserSession, DashboardSummary, Difficulty } from './api'
 import LoginPage from './LoginPage'
 const PAGE_SIZE = 10
@@ -64,19 +64,19 @@ function App() {
   const [message, setMessage] = useState('')
   const [session, setSession] = useState<BrowserSession | null>(null)
   const [sessionLoading, setSessionLoading] = useState(true)
-  const [loginPassword, setLoginPassword] = useState('')
-  const [loginBusy, setLoginBusy] = useState(false)
-  const [loginError, setLoginError] = useState('')
+  const [sessionError, setSessionError] = useState('')
   const historyRequestId = useRef(0)
 
   const refreshSession = useCallback(async () => {
     try {
       const current = await getBrowserSession()
       setSession(current)
+      setSessionError('')
       return current
     } catch (error) {
-      setSession(null)
-      setMessage('登录状态检查失败：' + apiErrorMessage(error))
+      // Keep protected data behind the gate when the auth probe itself fails.
+      setSession({ enabled: true, authenticated: false })
+      setSessionError('组织认证状态检查失败：' + apiErrorMessage(error))
       return null
     } finally {
       setSessionLoading(false)
@@ -214,53 +214,19 @@ function App() {
     link.download = selected.topic + '.md'; link.click(); URL.revokeObjectURL(link.href)
   }
 
-  const submitLogin = async (event: FormEvent) => {
-    event.preventDefault()
-    if (loginBusy || !loginPassword) return
-    setLoginBusy(true)
-    setLoginError('')
-    try {
-      const current = await loginBrowser(loginPassword)
-      setSession(current)
-      setLoginPassword('')
-      if (!current.authenticated) setLoginError('登录未完成，请重试')
-    } catch (error) {
-      setLoginError('登录失败：' + apiErrorMessage(error))
-    } finally {
-      setLoginBusy(false)
-    }
-  }
-
-  const submitLogout = async () => {
-    try {
-      const current = await logoutBrowser()
-      setSession(current)
-      setSelected(null)
-      setBattles([])
-      setSummary(null)
-      setHistoryTotal(0)
-      setMessage('已退出登录')
-    } catch (error) {
-      setMessage('退出登录失败：' + apiErrorMessage(error))
-    }
-  }
-
   const requiresLogin = Boolean(session?.enabled && !session.authenticated)
 
   if (sessionLoading || requiresLogin) {
     return <LoginPage
       status={status}
       onRetryHealth={() => void checkHealth()}
-      onSubmit={submitLogin}
-      password={loginPassword}
-      onPasswordChange={setLoginPassword}
-      busy={loginBusy}
-      error={sessionLoading ? '' : loginError}
+      onRetryAuth={() => void refreshSession()}
+      error={sessionLoading ? '' : sessionError}
     />
   }
 
   return <div className="page">
-    <header className="topbar"><div><div className="eyebrow">智能体攻防实验室（AGENT ATTACK LAB）</div><h1>智能体<em>攻防实验室</em></h1><p className="sub">后端联调控制台（Backend console） · 实时战局（Live battles） · 风险复盘（Risk review）</p></div><div className="topbar-actions">{session?.enabled && session.authenticated && <button className="btn-ghost auth-logout" type="button" onClick={() => void submitLogout()}>退出登录（Logout）</button>}<button className={'status ' + status} type="button" onClick={() => status === 'error' && void checkHealth()} disabled={status === 'loading'}><span className="dot" />{status === 'loading' ? '正在检查服务（Checking service）' : status === 'ok' ? '服务运行正常（Service healthy）' : '服务连接失败（Connection failed）· 点击重试（Retry）'}</button></div></header>
+    <header className="topbar"><div><div className="eyebrow">智能体攻防实验室（AGENT ATTACK LAB）</div><h1>智能体<em>攻防实验室</em></h1><p className="sub">后端联调控制台（Backend console） · 实时战局（Live battles） · 风险复盘（Risk review）</p></div><div className="topbar-actions"><button className={'status ' + status} type="button" onClick={() => status === 'error' && void checkHealth()} disabled={status === 'loading'}><span className="dot" />{status === 'loading' ? '正在检查服务（Checking service）' : status === 'ok' ? '服务运行正常（Service healthy）' : '服务连接失败（Connection failed）· 点击重试（Retry）'}</button></div></header>
     <section className="stats" aria-label="真实统计口径（Persisted statistics）">{[
       ['已保存战局（Saved battles）', summary?.totalBattles ?? '—', '全部已保存战局数量', '#4da3ff'],
       ['规则库本地模拟用例（Rule cases）', summary?.ruleLibraryCaseCount ?? '—', '当前规则库中的唯一用例编号数', '#ffb54d'],

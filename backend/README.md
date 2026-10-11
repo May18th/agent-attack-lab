@@ -72,7 +72,23 @@ cd "D:\梧桐\backend"
 
 部署到公网时可设置 `AGENT_API_KEY`。设置后，`POST /battles`、`POST /agent/*`、`POST /rpc` 和内部统计接口 `GET /metrics` 必须携带 `X-API-Key` 请求头；本地未设置时保持免密开发模式。
 
-### 浏览器登录会话
+### 浏览器组织认证（Cloudflare Access）
+
+公开前端不收集密码。正式公网部署时，建议在 Cloudflare Zero Trust 中为前端和 API hostname 配置
+Self-hosted application 与 Allow policy，并在后端配置 `CF_ACCESS_TEAM_DOMAIN` 和
+`CF_ACCESS_AUDIENCE`。后端会校验 Cloudflare 注入的 `Cf-Access-Jwt-Assertion`（JWKS、issuer、audience、
+过期时间），不会仅凭请求经过 Cloudflare 就放行。未完成组织认证时，前端只显示认证提示和重试按钮。
+
+```text
+CF_ACCESS_TEAM_DOMAIN=https://<team-name>.cloudflareaccess.com
+CF_ACCESS_AUDIENCE=<Access application AUD tag>
+```
+
+`CF_ACCESS_TEAM_DOMAIN` 与 `CF_ACCESS_AUDIENCE` 必须同时配置；不要把任何 Access token、API Token 或
+服务端 API Key 放入 `VITE_*` 或提交到 GitHub。正式部署仍应配置服务端 `AGENT_API_KEY`，供 `/agent/*`、`/rpc`
+和 `/metrics` 等非浏览器入口使用；`/health` 仍可用于公开健康检查。
+
+### 兼容的浏览器登录会话
 
 公开 Vite 前端不能保存 `AGENT_API_KEY`。需要浏览器直接访问 API 时，在后端同时配置 `AGENT_BROWSER_PASSWORD` 和 `AGENT_API_KEY`，前端通过 `POST /auth/session` 提交登录密码，服务端返回 `HttpOnly` 会话 Cookie。会话认证仅适用于战局 REST 读写接口；`/agent/*`、`/rpc` 和 `/metrics` 仍要求服务端 `X-API-Key`。配置浏览器密码后，战局读写接口自动要求 API Key 或有效浏览器会话。
 

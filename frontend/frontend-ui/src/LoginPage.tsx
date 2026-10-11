@@ -1,4 +1,3 @@
-import type { FormEvent } from 'react'
 import './LoginPage.css'
 
 type ServiceStatus = 'loading' | 'ok' | 'error'
@@ -6,20 +5,14 @@ type ServiceStatus = 'loading' | 'ok' | 'error'
 type LoginPageProps = {
   status: ServiceStatus
   onRetryHealth: () => void
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void
-  password: string
-  onPasswordChange: (value: string) => void
-  busy: boolean
+  onRetryAuth: () => void
   error: string
 }
 
 export default function LoginPage({
   status,
   onRetryHealth,
-  onSubmit,
-  password,
-  onPasswordChange,
-  busy,
+  onRetryAuth,
   error,
 }: LoginPageProps) {
   const statusLabel = status === 'loading'
@@ -45,27 +38,12 @@ export default function LoginPage({
 
       <div className="login-card glass">
         <div className="en">SECURE ACCESS</div>
-        <h2 id="login-title">登录控制台（Sign in）</h2>
-        <p className="login-subtitle">输入访问密码以继续。</p>
-        <form className="auth-form" onSubmit={onSubmit} noValidate>
-          <label htmlFor="browser-password">浏览器密码（Browser password）
-            <input
-              id="browser-password"
-              className="input"
-              type="password"
-              autoComplete="current-password"
-              autoFocus
-              value={password}
-              onChange={(event) => onPasswordChange(event.target.value)}
-              aria-invalid={Boolean(error)}
-              aria-describedby={error ? 'login-error' : undefined}
-            />
-          </label>
-          {error && <div className="field-error" id="login-error" role="alert">{error}</div>}
-          <button className="btn-primary login-submit" type="submit" disabled={busy || !password}>
-            {busy ? '登录中（Signing in）...' : '登录（Sign in）'}
-          </button>
-        </form>
+        <h2 id="login-title">等待组织认证（Awaiting sign-in）</h2>
+        <p className="login-subtitle">请先在当前浏览器完成 Cloudflare Access 组织认证，认证由后台策略处理，页面不收集密码。</p>
+        {error && <div className="field-error" id="login-error" role="alert">{error}</div>}
+        <button className="btn-primary login-submit" type="button" onClick={onRetryAuth}>
+          我已完成认证，重新检查（Check access）
+        </button>
         <button
           className={'login-health status ' + status}
           type="button"

@@ -12,6 +12,8 @@ npm run dev
 
 默认页面为 `http://localhost:5173/`。跨电脑联调时，将 `VITE_AGENT_API` 设置为队友提供的后端 HTTPS 地址；不要把 API 密钥写进公开前端环境变量。
 
+正式公网访问由 Cloudflare Access 和后端校验完成。前端不提供密码输入框、不保存 API Key；未通过组织认证时只显示认证状态与重新检查按钮。
+
 ## 校验
 
 ```powershell
