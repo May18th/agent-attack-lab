@@ -96,7 +96,7 @@ $env:AGENT_EVENT_DATA_MAX_BYTES = "32768"
 
 将 `AGENT_API_KEY` 替换为自行生成的高强度随机密钥，不要使用示例文字。`AGENT_PROTECT_READS=1` 保护后台事件、回放、战报、排行榜、审计和 SSE 等接口；公开前端所需的统计、案例、战局列表/详情和创建接口不受影响。公开创建战局默认每客户端每分钟限 10 次；若反向代理在 loopback 上，应覆盖 `X-Real-IP` 为实际客户端 IP，供后端限流使用。不要把服务端 API Key 编译进公开前端或提交到 GitHub。
 
-当前提供单密码浏览器会话供后台管理：在后端同时配置 `AGENT_BROWSER_PASSWORD` 和 `AGENT_API_KEY`，管理客户端调用 `POST /auth/session` 登录并接收 `HttpOnly` Cookie，通过 `GET /auth/session` 查询、`DELETE /auth/session` 退出。公开前端不调用此接口。部署时精确设置 `AGENT_CORS_ORIGINS`；生产必须使用 `AGENT_BROWSER_COOKIE_SECURE=1`。启用后 Quick Tunnel 通配来源关闭，只接受精确 CORS Origin。`/agent/*`、`/rpc`、`/metrics` 仍使用服务端 API Key。会话当前只保存在单进程内存中，服务重启会使会话失效，不可直接用于多 worker 或多实例部署。
+当前提供单密码浏览器会话供后台管理：在后端同时配置 `AGENT_BROWSER_PASSWORD` 和 `AGENT_API_KEY`，直接访问 `/dashboard` 会跳转到同源 `/login` 页面；登录后以 `HttpOnly` Cookie 返回原后台地址。登录页调用 `POST /auth/session`，通过 `GET /auth/session` 查询、`DELETE /auth/session` 退出。公开前端不调用此接口，也不保存后台密码。部署时精确设置 `AGENT_CORS_ORIGINS`；生产必须使用 `AGENT_BROWSER_COOKIE_SECURE=1`。启用后 Quick Tunnel 通配来源关闭，只接受精确 CORS Origin。`/agent/*`、`/rpc`、`/metrics` 仍使用服务端 API Key。会话当前只保存在单进程内存中，服务重启会使会话失效，不可直接用于多 worker 或多实例部署。
 
 事件单条数据默认不超过 32 KB。过长攻击样本会截短，返回数据包含 `dataTruncated` 和 `originalBytes`，避免数据库被超大输入拖大。
 

@@ -17,9 +17,10 @@ from html import escape as escape_html
 from pathlib import Path
 from threading import Lock
 from typing import Any, Literal
+from urllib.parse import quote, urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -312,8 +313,33 @@ def _verify_cloudflare_access_jwt(token: str) -> bool:
         return False
 
 
-def _browser_origin_allowed(origin: str) -> bool:
-    return origin in _cors_origins
+def _browser_origin_allowed(origin: str, request: Request | None = None) -> bool:
+    if origin in _cors_origins:
+        return True
+    if request is None:
+        return False
+    try:
+        parsed_origin = urlsplit(origin)
+        if parsed_origin.scheme.lower() not in {"http", "https"} or not parsed_origin.netloc or parsed_origin.path not in ("", "/"):
+            return False
+        if parsed_origin.query or parsed_origin.fragment or parsed_origin.username or parsed_origin.password:
+            return False
+        peer_host = request.client.host if request.client else ""
+        try:
+            trusted_proxy = ipaddress.ip_address(peer_host).is_loopback
+        except ValueError:
+            trusted_proxy = False
+        request_host = request.headers.get("host", "")
+        request_scheme = request.url.scheme
+        if trusted_proxy:
+            request_host = request.headers.get("x-forwarded-host", request_host).split(",", 1)[0].strip()
+            request_scheme = request.headers.get("x-forwarded-proto", request_scheme).split(",", 1)[0].strip()
+        return (
+            parsed_origin.scheme.lower() == request_scheme.lower()
+            and parsed_origin.netloc.lower() == request_host.lower()
+        )
+    except ValueError:
+        return False
 
 
 def _browser_session_digest(token: str) -> str:
@@ -358,7 +384,9 @@ def _revoke_browser_session(request: Request) -> None:
 
 def _check_browser_session_origin(request: Request) -> None:
     origin = request.headers.get("origin", "")
-    if not origin or not _browser_origin_allowed(origin):
+    if not origin and request.method in {"GET", "HEAD", "OPTIONS"}:
+        return
+    if not origin or not _browser_origin_allowed(origin, request):
         raise HTTPException(status_code=403, detail="浏览器来源未获允许")
 
 
@@ -678,7 +706,19 @@ def dashboard(
     topic: str | None = Query(default=None, max_length=200),
     difficulty: Literal["low", "mid", "high"] | None = Query(default=None),
 ) -> str:
-    _check_browser_or_api_auth(request)
+    try:
+        _check_browser_or_api_auth(request)
+    except HTTPException as exc:
+        if exc.status_code == 401 and _browser_password:
+            destination = request.url.path
+            if request.url.query:
+                destination += "?" + request.url.query
+            return RedirectResponse(
+                url="/login?next=" + quote(destination, safe=""),
+                status_code=303,
+                headers={"Cache-Control": "no-store"},
+            )
+        raise
     topic_value = escape_html(topic or "通用安全测试", quote=True)
     selected_difficulty = difficulty or "mid"
     return """<!doctype html>
@@ -1687,6 +1727,108 @@ def health(request: Request) -> dict[str, Any]:
     }
 
 
+@app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+def browser_login_page(
+    request: Request,
+    next: str = Query(default="/dashboard", max_length=2048),
+) -> Response:
+    destination = next or "/dashboard"
+    if (
+        not destination.startswith("/")
+        or destination.startswith("//")
+        or "\\" in destination
+        or destination.startswith("/login")
+        or any(ord(char) < 32 for char in destination)
+    ):
+        destination = "/dashboard"
+    if _browser_password and _has_browser_session(request):
+        return RedirectResponse(destination, status_code=303, headers={"Cache-Control": "no-store"})
+    login_enabled = bool(_browser_password)
+    disabled_message = (
+        "浏览器密码登录尚未启用，请联系服务管理员配置。"
+        if not login_enabled
+        else "使用后台管理密码建立安全浏览器会话。"
+    )
+    page = """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>后台登录 · 智能体攻防实验室</title>
+  <style>
+    :root { color-scheme: light; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; color: #17202a; background: #f2f5f7; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #eaf3fb, #f7f8f8 55%, #e8f4ee); }
+    main { width: min(100%, 420px); }
+    .brand { margin: 0 0 20px; color: #52616d; font-size: 13px; letter-spacing: .08em; }
+    .brand strong { display: block; margin-top: 7px; color: #17202a; font-size: 25px; letter-spacing: 0; }
+    form { padding: 28px; border: 1px solid #d6e0e5; border-radius: 8px; background: #fff; box-shadow: 0 16px 40px #1e354510; }
+    h1 { margin: 0 0 7px; font-size: 21px; }
+    .hint { margin: 0 0 23px; color: #667580; font-size: 13px; line-height: 1.6; }
+    label { display: block; margin-bottom: 8px; color: #35434e; font-size: 13px; font-weight: 600; }
+    input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #bfcbd2; border-radius: 5px; font: inherit; }
+    input:focus { border-color: #1673b8; outline: 3px solid #1673b822; }
+    button { width: 100%; min-height: 44px; margin-top: 18px; border: 0; border-radius: 5px; background: #176fae; color: white; font: inherit; font-weight: 600; cursor: pointer; }
+    button:hover { background: #105e96; }
+    button:disabled { cursor: wait; opacity: .65; }
+    [role=alert] { min-height: 20px; margin-top: 12px; color: #b42318; font-size: 13px; }
+    .disabled { padding: 12px; border: 1px solid #e5c981; border-radius: 5px; background: #fff9e8; color: #705314; font-size: 13px; line-height: 1.6; }
+    @media (max-width: 480px) { body { padding: 18px; } form { padding: 23px 19px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="brand">AGENT ATTACK LAB<strong>后台管理登录</strong></p>
+    <form id="login-form" data-next="__NEXT__" autocomplete="on">
+      <h1>登录管理后台</h1>
+      <p class="hint">__MESSAGE__</p>
+      __FORM_CONTENT__
+      <div id="error" role="alert" aria-live="polite"></div>
+    </form>
+  </main>
+  <script>
+    const form = document.getElementById("login-form");
+    const passwordInput = document.getElementById("password");
+    if (form && passwordInput) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = form.querySelector("button");
+        const error = document.getElementById("error");
+        button.disabled = true;
+        error.textContent = "";
+        try {
+          const response = await fetch("/auth/session", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: passwordInput.value }),
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.detail || "登录失败，请重试");
+          window.location.replace(form.dataset.next || "/dashboard");
+        } catch (failure) {
+          error.textContent = failure instanceof Error ? failure.message : "登录失败，请重试";
+          button.disabled = false;
+          passwordInput.focus();
+        }
+      });
+    }
+  </script>
+</body>
+</html>"""
+    form_content = (
+        '<label for="password">后台管理密码</label><input id="password" name="password" type="password" '
+        'autocomplete="current-password" required maxlength="256" autofocus><button type="submit">登录</button>'
+        if login_enabled
+        else f'<div class="disabled">{escape_html(disabled_message)}</div>'
+    )
+    page = page.replace("__NEXT__", escape_html(destination, quote=True))
+    page = page.replace("__MESSAGE__", escape_html(disabled_message))
+    page = page.replace("__FORM_CONTENT__", form_content)
+    return HTMLResponse(page, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/auth/session", summary="查询浏览器登录状态", tags=["浏览器鉴权"])
 def browser_session_status(request: Request, response: Response) -> dict[str, bool]:
     response.headers["Cache-Control"] = "no-store"
@@ -1713,7 +1855,7 @@ def create_browser_session(
     if not _browser_password:
         raise HTTPException(status_code=503, detail="浏览器登录尚未启用")
     origin = request.headers.get("origin", "")
-    if origin and not _browser_origin_allowed(origin):
+    if origin and not _browser_origin_allowed(origin, request):
         raise HTTPException(status_code=403, detail="浏览器来源未获允许")
     if not hmac.compare_digest(
         payload.password.encode("utf-8"), _browser_password.encode("utf-8")
@@ -1736,7 +1878,7 @@ def create_browser_session(
 @app.delete("/auth/session", summary="退出浏览器登录", tags=["浏览器鉴权"])
 def delete_browser_session(request: Request, response: Response) -> dict[str, bool]:
     origin = request.headers.get("origin", "")
-    if origin and not _browser_origin_allowed(origin):
+    if origin and not _browser_origin_allowed(origin, request):
         raise HTTPException(status_code=403, detail="浏览器来源未获允许")
     _revoke_browser_session(request)
     response.delete_cookie(

@@ -106,6 +106,48 @@ def test_dashboard_prefills_query_params_and_escapes_topic() -> None:
     assert 'id="mid" name="difficulty" value="mid" type="radio" checked' in default_response.text
 
 
+def test_browser_login_page_redirects_to_safe_dashboard_destination(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_browser_password", "browser-secret")
+    browser = TestClient(service.app, follow_redirects=False, base_url="https://api.example.test")
+
+    denied = browser.get("/dashboard?topic=安全测试&difficulty=high")
+    assert denied.status_code == 303
+    assert denied.headers["location"] == "/login?next=%2Fdashboard%3Ftopic%3D%25E5%25AE%2589%25E5%2585%25A8%25E6%25B5%258B%25E8%25AF%2595%26difficulty%3Dhigh"
+
+    login_page = browser.get(denied.headers["location"])
+    assert login_page.status_code == 200
+    assert login_page.headers["cache-control"] == "no-store"
+    assert 'type="password"' in login_page.text
+    assert 'data-next="/dashboard?topic=%E5%AE%89%E5%85%A8%E6%B5%8B%E8%AF%95&amp;difficulty=high"' in login_page.text
+    assert "AGENT_API_KEY" not in login_page.text
+
+    unsafe = browser.get("/login?next=https://attacker.example")
+    assert 'data-next="/dashboard"' in unsafe.text
+
+
+def test_same_origin_browser_login_authenticates_dashboard_and_mutations(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_api_key", "server-only-secret")
+    monkeypatch.setattr(service, "_browser_password", "browser-secret")
+    monkeypatch.setattr(service, "_browser_cookie_secure", False)
+    monkeypatch.setattr(service, "_protect_read_routes", False)
+    monkeypatch.setattr(service, "_browser_sessions", {})
+    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    browser = TestClient(service.app, base_url="https://api.example.test")
+
+    login = browser.post(
+        "/auth/session",
+        json={"password": "browser-secret"},
+        headers={"Origin": "https://api.example.test"},
+    )
+    assert login.status_code == 200
+    assert browser.get("/dashboard").status_code == 200
+    assert browser.post(
+        "/battles",
+        json={"topic": "同源会话创建"},
+        headers={"Origin": "https://api.example.test"},
+    ).status_code == 201
+
+
 def test_attack_by_difficulty() -> None:
     response = client.post("/agent/attack", json={"difficulty": "high", "topic": "SQL 注入"})
     assert response.status_code == 200
@@ -550,7 +592,7 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
     monkeypatch.setattr(service, "_protect_read_routes", False)
     monkeypatch.setattr(service, "_browser_sessions", {})
     monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
-    browser = TestClient(service.app)
+    browser = TestClient(service.app, follow_redirects=False)
     origin = "http://localhost:5173"
 
     denied = browser.post(
@@ -562,7 +604,7 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
     anonymous_create = browser.post("/battles", json={"topic": "公开用户"})
     assert anonymous_create.status_code == 201
     assert browser.get("/battles").status_code == 200
-    assert browser.get("/dashboard").status_code == 401
+    assert browser.get("/dashboard").status_code == 303
 
     login = browser.post(
         "/auth/session",
@@ -591,7 +633,7 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
     logout = browser.delete("/auth/session", headers={"Origin": origin})
     assert logout.status_code == 200
     assert browser.get("/battles", headers={"Origin": origin}).status_code == 200
-    assert browser.get("/dashboard").status_code == 401
+    assert browser.get("/dashboard").status_code == 303
 
 
 def test_browser_login_requires_configured_password_and_trusted_origin(monkeypatch) -> None:

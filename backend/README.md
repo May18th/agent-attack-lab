@@ -89,11 +89,11 @@ CF_ACCESS_AUDIENCE=<Access application AUD tag>
 
 公开 Vite 前端不要求登录，且不能保存 `AGENT_API_KEY`。公开业务接口包括战局创建、列表与详情、统计摘要和外部案例查询；创建战局默认每客户端每分钟最多 10 次，可用 `AGENT_PUBLIC_BATTLE_LIMIT_PER_MINUTE` 调整。该限流保存在单进程内存中，多 worker/多实例部署还应在入口代理配置限流。反向代理必须覆盖 `X-Real-IP` 为实际客户端地址，后端仅在请求来自 loopback 代理时信任该头。
 
-后台 HTML 页面 `/dashboard`、战局重试/删除、审计/报告/事件回放/SSE，以及 `/agent/*`、`/rpc` 和 `/metrics` 继续使用后端认证。配置 `AGENT_BROWSER_PASSWORD` 后，可用 `/auth/session` 建立 HttpOnly 会话；内部 API 仍使用服务端 `X-API-Key`。不得把服务端密钥写入 `VITE_*` 或前端构建产物。
+后台 HTML 页面 `/dashboard`、战局重试/删除、审计/报告/事件回放/SSE，以及 `/agent/*`、`/rpc` 和 `/metrics` 继续使用后端认证。配置 `AGENT_BROWSER_PASSWORD` 后，未登录访问 `/dashboard` 会跳转到同源 `/login` 页面；登录成功后回到原页面，并建立 HttpOnly 会话。公开前端保持免登录，不能接收或保存后台密码。内部 API 仍使用服务端 `X-API-Key`。不得把服务端密钥写入 `VITE_*` 或前端构建产物。
 
-后台登录接口为 `POST /auth/session`（JSON：`{"password":"..."}`），`GET /auth/session` 查询状态，`DELETE /auth/session` 退出。会话默认 8 小时、最多 24 小时，服务进程重启后失效；当前会话保存在单进程内存中，多 worker/多实例部署前需改用共享会话存储。登录每个客户端 IP 最多 5 次/5 分钟；会话写请求要求 `Origin` 命中 CORS 允许来源。
+后台登录接口为 `POST /auth/session`（JSON：`{"password":"..."}`），`GET /auth/session` 查询状态，`DELETE /auth/session` 退出。会话默认 8 小时、最多 24 小时，服务进程重启后失效；当前会话保存在单进程内存中，多 worker/多实例部署前需改用共享会话存储。登录每个客户端 IP 最多 5 次/5 分钟；会话写请求要求 `Origin` 是配置的允许来源或通过可信反代校验的同源地址。
 
-后台浏览器会话请求使用 `credentials: "include"`。公网设置精确的 `AGENT_CORS_ORIGINS=https://<前端域名>`，使用 HTTPS，并保持 `AGENT_BROWSER_COOKIE_SECURE=1`、`AGENT_BROWSER_COOKIE_SAMESITE=lax`。启用后台浏览器登录后会关闭 Quick Tunnel 通配正则；登录 Origin 必须精确匹配白名单。本地 HTTP 开发可设置 `AGENT_BROWSER_COOKIE_SECURE=0`，并让前后端使用同一主机名，例如前端 `localhost:5173`、API `localhost:8787`；不要混用 `localhost` 和 `127.0.0.1`。登录密码与 API Key 仅写在后端 `.env`，不要放入 `VITE_*` 或提交到 GitHub。
+后台浏览器会话请求使用 `credentials: "include"`。公网设置精确的 `AGENT_CORS_ORIGINS=https://<前端域名>`，使用 HTTPS，并保持 `AGENT_BROWSER_COOKIE_SECURE=1`、`AGENT_BROWSER_COOKIE_SAMESITE=lax`。启用后台浏览器登录后会关闭 Quick Tunnel 通配正则；跨域登录 Origin 必须精确匹配白名单，同源登录则校验当前请求主机与可信反代协议。本地 HTTP 开发可设置 `AGENT_BROWSER_COOKIE_SECURE=0`，并让前后端使用同一主机名，例如前端 `localhost:5173`、API `localhost:8787`；不要混用 `localhost` 和 `127.0.0.1`。登录密码与 API Key 仅写在后端 `.env`，不要放入 `VITE_*` 或提交到 GitHub。
 
 SQLite 开发库默认启用 WAL 和 5 秒忙等待，并为时间、难度和状态筛选建立索引，以降低并发读写时的锁冲突。
 
