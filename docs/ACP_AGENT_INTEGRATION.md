@@ -14,9 +14,26 @@
 
 ## 已查到的地址边界
 
-本地 `backend/acs-attack-trusted-registration.json` 与 `backend/acs-defender-trusted-registration.json` 的 `endPoints.url` 指向同一个临时 Cloudflare `/rpc`。当前仓库 `/rpc` 的 AIP `on_start` 处理器执行的是本地 `attack()` / `defend()`，所以这是本项目的演示入口，不是队友分别部署的独立攻击/防守 Agent 地址；不要把它配置成 `AGENT_ATTACKER_RPC_URL` 或 `AGENT_DEFENDER_RPC_URL`，否则会回调本服务自身。该临时域名是否仍在线无法仅由登记 JSON 确认。
+2026-10-11 队友导出的 Registry 清单显示：Leader 登记为
+`https://api.yuanyiagentzhandui.cn/rpc`，攻击和防守登记为同一个已经失效的
+`trycloudflare.com/rpc`。本机复测确认旧 Quick Tunnel 域名已无 DNS 记录，因此两个 Partner
+登记地址当前不可用。
 
-已通过 GitHub CLI 检查 `May18th/agent-attack-lab` 私有仓库的 `main` 文件树与关键配置名；当前未发现独立攻击/防守 Agent 地址或 URL 配置。梧桐平台注册目录需要实际的平台登录会话，本地没有可验证的平台目录结果。
+同日对 Cloudflare 账号做只读核验：命名隧道 `yuanyi-agent-attack-lab-backend` 状态为
+`healthy`，但仅发布 `api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787`；
+`attack.yuanyiagentzhandui.cn` 与 `defense.yuanyiagentzhandui.cn` 尚无 DNS 记录或 ingress。
+同一个命名隧道可以发布多个 hostname，因此无需再安装第二个 cloudflared 服务；待 Partner
+服务端鉴权准备好后，再分别映射到 `127.0.0.1:8788` 和 `127.0.0.1:8789`。
+
+主调度 `/rpc` 未带凭据返回 HTTP 401，但响应正文是“缺少或无效的 API 密钥”，不是客户端证书
+校验错误；这只能证明公网路由和 API Key 鉴权存活，不能证明 mTLS 已上线。当前本地攻击/防守
+ACS 草稿仍指向 `attacker.kechuang2026.cn`、`defender.kechuang2026.cn` 并声明 `apiKey`，与
+Registry 导出的旧 Quick Tunnel 记录也不一致。修复时必须以平台 authoritative ACS 为起点，
+不能直接上传本地草稿覆盖。
+
+发布固定 Partner 地址前，须先在 VPS 启用并通过 Partner 服务端身份绑定预检，或明确采用受控
+API Key 过渡方案；不得把未鉴权的 8788/8789 暴露到公网。固定地址验收通过后，再更新 Registry
+中两个 authoritative ACS 的 `endPoints.url`、重新审核并确认 discovery 同步。
 
 ## 配置
 

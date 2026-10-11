@@ -25,6 +25,19 @@ Quick Tunnel 每次启动都会生成新地址，关闭进程后地址失效，�
 
 在新域名下的 Tunnel 与 API 完成公网验收前，跨电脑远程联调暂停。不要将本项目接到负责其他项目的旧域名/Tunnel，也不要修改或删除那些旧资源。Tunnel Token 只能通过安全渠道配置在后端主机或部署密钥中，不得提交到 Git 或聊天。
 
+### VPS 常驻验收
+
+VPS 安装用户级 systemd 单元并启用 `deployer` linger 后，可在项目目录执行只读验收：
+
+```bash
+cd /opt/agent-attack-lab
+backend/scripts/verify-vps-runtime.sh
+```
+
+脚本检查三个业务服务和 Cloudflare Tunnel 是否 `enabled`、`active`，并请求三个本地健康
+接口及公网 API。脚本不会读取或输出 `.env`、API Key、浏览器密码、Tunnel Token、证书或
+私钥。VPS 重启后应再次执行；只有重启后的检查也全部通过，才能确认无人登录时可自动恢复。
+
 ## MySQL / PostgreSQL
 
 SQLite 是默认开发数据库。生产环境设置 PostgreSQL 连接串：
@@ -77,12 +90,13 @@ cd "D:\梧桐\backend"
 ```powershell
 $env:AGENT_API_KEY = "请替换为自行生成的高强度随机密钥"
 $env:AGENT_PROTECT_READS = "1"
+$env:AGENT_PUBLIC_BATTLE_LIMIT_PER_MINUTE = "10"
 $env:AGENT_EVENT_DATA_MAX_BYTES = "32768"
 ```
 
-将 `AGENT_API_KEY` 替换为自行生成的高强度随机密钥，不要使用示例文字。启用 `AGENT_PROTECT_READS=1` 后，战局列表/详情、事件、回放、战报、排行榜和 SSE 事件流都要求 `X-API-Key`；写入接口和 `/metrics` 也由 `AGENT_API_KEY` 保护。默认读保护关闭以兼容当前前端联调。不要把服务端 API Key 编译进公开前端或提交到 GitHub；公开部署应使用登录会话或由后端提供受控代理。
+将 `AGENT_API_KEY` 替换为自行生成的高强度随机密钥，不要使用示例文字。`AGENT_PROTECT_READS=1` 保护后台事件、回放、战报、排行榜、审计和 SSE 等接口；公开前端所需的统计、案例、战局列表/详情和创建接口不受影响。公开创建战局默认每客户端每分钟限 10 次；若反向代理在 loopback 上，应覆盖 `X-Real-IP` 为实际客户端 IP，供后端限流使用。不要把服务端 API Key 编译进公开前端或提交到 GitHub。
 
-当前提供单密码浏览器会话：在后端同时配置 `AGENT_BROWSER_PASSWORD` 和 `AGENT_API_KEY`，浏览器调用 `POST /auth/session` 登录并接收 `HttpOnly` Cookie，通过 `GET /auth/session` 查询、`DELETE /auth/session` 退出。前端请求需设置 `credentials: "include"`；部署时精确设置 `AGENT_CORS_ORIGINS`，生产必须使用 `AGENT_BROWSER_COOKIE_SECURE=1`。启用后 Quick Tunnel 通配来源关闭，只接受精确 CORS Origin。该会话不会授权 `/agent/*`、`/rpc`、`/metrics`，这些接口继续使用服务端 API Key。会话当前只保存在单进程内存中，服务重启会要求重新登录，不可直接用于多 worker 或多实例部署。
+当前提供单密码浏览器会话供后台管理：在后端同时配置 `AGENT_BROWSER_PASSWORD` 和 `AGENT_API_KEY`，管理客户端调用 `POST /auth/session` 登录并接收 `HttpOnly` Cookie，通过 `GET /auth/session` 查询、`DELETE /auth/session` 退出。公开前端不调用此接口。部署时精确设置 `AGENT_CORS_ORIGINS`；生产必须使用 `AGENT_BROWSER_COOKIE_SECURE=1`。启用后 Quick Tunnel 通配来源关闭，只接受精确 CORS Origin。`/agent/*`、`/rpc`、`/metrics` 仍使用服务端 API Key。会话当前只保存在单进程内存中，服务重启会使会话失效，不可直接用于多 worker 或多实例部署。
 
 事件单条数据默认不超过 32 KB。过长攻击样本会截短，返回数据包含 `dataTruncated` 和 `originalBytes`，避免数据库被超大输入拖大。
 

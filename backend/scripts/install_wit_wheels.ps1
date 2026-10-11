@@ -1,14 +1,26 @@
+﻿param(
+    [string]$PackageDir = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 $backendRoot = (Resolve-Path (Join-Path $PSScriptRoot ".."))
 $python = Join-Path $backendRoot ".venv\Scripts\python.exe"
-$packageDir = Join-Path $backendRoot "packages"
+
+if ([string]::IsNullOrWhiteSpace($PackageDir)) {
+    $packageDir = Join-Path $backendRoot "packages"
+    if (-not (Test-Path -LiteralPath $packageDir)) {
+        New-Item -ItemType Directory -Path $packageDir | Out-Null
+    }
+} else {
+    if (-not (Test-Path -LiteralPath $PackageDir -PathType Container)) {
+        throw "指定的梧桐发行目录不存在或不是目录：$PackageDir"
+    }
+    $packageDir = (Resolve-Path -LiteralPath $PackageDir).Path
+}
 
 if (-not (Test-Path -LiteralPath $python)) {
     throw "未找到后端虚拟环境：$python"
-}
-if (-not (Test-Path -LiteralPath $packageDir)) {
-    New-Item -ItemType Directory -Path $packageDir | Out-Null
 }
 
 $acpsWheel = Get-ChildItem -LiteralPath $packageDir -File -Filter "acps_sdk-2.2.0-*.whl" |
@@ -30,7 +42,7 @@ Write-Host "使用解释器：$pythonVersion"
 Write-Host "安装：$($acpsWheel.Name)"
 Write-Host "安装：$($witWheel.Name)"
 
-Write-Host "先安装绑定的 acps-sdk 2.2.0"
+Write-Host "先安装绑定的 acps-sdk 2.2.0（覆盖 CI 公共 SDK 基线）"
 uv pip install --python $python $acpsWheel.FullName
 if ($LASTEXITCODE -ne 0) {
     throw "acps-sdk wheel 安装失败"
@@ -50,20 +62,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "wit-release-preflight 未通过"
 }
 
-$check = @'
-import importlib.metadata as metadata
-import importlib.util
-
-for package in ("acps-sdk", "wit-framework"):
-    print(f"{package}={metadata.version(package)}")
-for module in ("acps_sdk", "wit"):
-    if importlib.util.find_spec(module) is None:
-        raise SystemExit(f"缺少模块：{module}")
-print("wit/acps 导入检查通过")
-'@
-$check | & $python -
+$apiCheck = Join-Path $backendRoot "scripts\verify_wit_runtime_api.py"
+& $python $apiCheck
 if ($LASTEXITCODE -ne 0) {
-    throw "wheel 已安装，但导入检查失败"
+    throw "wheel 已安装，但 WitRuntime Identity/Direct/Group API 预检失败"
 }
 
 Write-Host "梧桐 wheel 安装和导入检查完成。"

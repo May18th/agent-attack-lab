@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
-import { api, apiErrorMessage, apiPage } from './api'
-import type { AgentSource, Battle, DashboardSummary, Difficulty } from './api'
+import { api, apiErrorMessage, apiPage, getExternalCases } from './api'
+import type { AgentSource, Battle, DashboardSummary, Difficulty, ExternalCase } from './api'
 const PAGE_SIZE = 10
 const DEFAULT_TOPIC = '提示注入与输入校验'
 const difficultyLabel: Record<Difficulty, string> = { low: '低（Low）', mid: '中（Medium）', high: '高（High）' }
@@ -61,6 +61,12 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [topicError, setTopicError] = useState('')
   const [message, setMessage] = useState('')
+  const [externalCases, setExternalCases] = useState<ExternalCase[]>([])
+  const [externalCaseTotal, setExternalCaseTotal] = useState(0)
+  const [externalCaseSources, setExternalCaseSources] = useState(0)
+  const [externalCaseSearch, setExternalCaseSearch] = useState('')
+  const [externalCaseLoading, setExternalCaseLoading] = useState(false)
+  const [externalCaseMessage, setExternalCaseMessage] = useState('')
   const historyRequestId = useRef(0)
 
   const loadBattleDetail = useCallback(async (battleId: string) => {
@@ -101,6 +107,28 @@ function App() {
     }
   }, [])
 
+  const loadExternalCases = useCallback(async (query = '') => {
+    setExternalCaseLoading(true)
+    try {
+      const result = await getExternalCases(query)
+      if (!result || result.available !== true) {
+        setExternalCases([])
+        setExternalCaseTotal(0)
+        setExternalCaseSources(0)
+        setExternalCaseMessage('本机未加载外部案例库')
+        return
+      }
+      setExternalCases(result.items)
+      setExternalCaseTotal(result.total)
+      setExternalCaseSources(result.sourceCount)
+      setExternalCaseMessage('')
+    } catch (error) {
+      setExternalCaseMessage('外部案例加载失败：' + apiErrorMessage(error))
+    } finally {
+      setExternalCaseLoading(false)
+    }
+  }, [])
+
   const checkHealth = useCallback(async () => {
     // Health checks are explicit external synchronization, including retry clicks.
     // oxlint-disable-next-line react/set-state-in-effect
@@ -114,20 +142,20 @@ function App() {
   }, [])
 
   useEffect(() => {
-    // Async initialization intentionally updates remote health state after mount.
+    // Public experience does not depend on a browser or organization login session.
     // oxlint-disable-next-line react/set-state-in-effect
     void checkHealth()
-    // Async initialization intentionally updates remote-data state after mount.
+    // Load public data for the visitor-facing experience.
     // oxlint-disable-next-line react/set-state-in-effect
     void loadHistory(0, true)
     // Async initialization intentionally restores a shareable replay URL.
     // oxlint-disable-next-line react/set-state-in-effect
     const replayBattleId = readReplayBattleId()
     if (replayBattleId) void loadBattleDetail(replayBattleId)
-    // Async initialization intentionally loads independent persisted statistics.
     // oxlint-disable-next-line react/set-state-in-effect
     void loadSummary()
-  }, [checkHealth, loadHistory, loadBattleDetail, loadSummary])
+    void loadExternalCases()
+  }, [checkHealth, loadHistory, loadBattleDetail, loadSummary, loadExternalCases])
 
   useEffect(() => {
     const restoreRoute = () => {
@@ -190,7 +218,7 @@ function App() {
   }
 
   return <div className="page">
-    <header className="topbar"><div><div className="eyebrow">智能体攻防实验室（AGENT ATTACK LAB）</div><h1>智能体<em>攻防实验室</em></h1><p className="sub">后端联调控制台（Backend console） · 实时战局（Live battles） · 风险复盘（Risk review）</p></div><button className={'status ' + status} type="button" onClick={() => status === 'error' && void checkHealth()} disabled={status === 'loading'}><span className="dot" />{status === 'loading' ? '正在检查服务（Checking service）' : status === 'ok' ? '服务运行正常（Service healthy）' : '服务连接失败（Connection failed）· 点击重试（Retry）'}</button></header>
+    <header className="topbar"><div><div className="eyebrow">智能体攻防实验室（AGENT ATTACK LAB）</div><h1>智能体<em>攻防实验室</em></h1><p className="sub">公开攻防体验（Public security lab） · 实时战局（Live battles） · 风险复盘（Risk review）</p></div><div className="topbar-actions"><button className={'status ' + status} type="button" onClick={() => status === 'error' && void checkHealth()} disabled={status === 'loading'}><span className="dot" />{status === 'loading' ? '正在检查服务（Checking service）' : status === 'ok' ? '服务运行正常（Service healthy）' : '服务连接失败（Connection failed）· 点击重试（Retry）'}</button></div></header>
     <section className="stats" aria-label="真实统计口径（Persisted statistics）">{[
       ['已保存战局（Saved battles）', summary?.totalBattles ?? '—', '全部已保存战局数量', '#4da3ff'],
       ['规则库本地模拟用例（Rule cases）', summary?.ruleLibraryCaseCount ?? '—', '当前规则库中的唯一用例编号数', '#ffb54d'],
@@ -199,6 +227,7 @@ function App() {
       ['风险记录（Risk records）', summary?.riskCount ?? '—', '防守结果 risks 条目累计数', '#ff5d6c'],
     ].map(([label, value, note, color]) => <div className="glass stat-card" style={{ '--ac': color } as React.CSSProperties} key={String(label)}><h3>{label}</h3><div className="stat-num">{value}</div><div className="stat-note">{note}</div></div>)}</section>
     <p className="stats-note">统计来自后端已保存战局。ACP 调用场次：{summary?.acpCallBattles ?? '—'}，表示至少一次成功调用了独立 ACP Agent；不代表真实目标已验证。规则库用例数是模板库规模，已保存样本数是历史战局产出，两者口径不同。{summary && summary.sampleCount === summary.ruleHitCount && summary.sampleCount === summary.riskCount ? '当前历史数据中三项恰好相同；它们分别汇总样本、caught 命中条目和 risks 风险条目，新增未命中样本后会按实际记录分开变化。' : ''}</p>
+    <section className="glass card external-cases" aria-label="外部安全案例库（External case references）"><div className="card-head"><div><div className="en">外部安全案例（EXTERNAL CASES）</div><h2>外部安全案例库（External references）</h2></div><span className="en">{externalCaseTotal} 条 · {externalCaseSources} 个来源</span></div><div className="external-toolbar"><input className="input" aria-label="搜索外部案例" placeholder="搜索 CVE、标题、厂商或产品" value={externalCaseSearch} onChange={(event) => setExternalCaseSearch(event.target.value)} /><button className="btn-ghost" type="button" onClick={() => void loadExternalCases(externalCaseSearch)} disabled={externalCaseLoading}>查询</button></div>{externalCaseLoading ? <div className="empty" role="status">正在加载外部案例</div> : externalCaseMessage ? <div className="empty">{externalCaseMessage}</div> : externalCases.length ? <div className="external-case-list">{externalCases.map((item) => <article className="external-case" key={item.externalId}><div className="external-case-head"><strong>{item.externalId}</strong><span>{item.provenanceStatus} · {item.recordKind}</span></div><h3>{item.title}</h3><p className="external-case-meta">{item.vendorProject} · {item.product} · 加入目录 {item.dateAdded}</p><p>{item.description}</p><div className="external-case-source">来源：{item.source.publisher} · 目录 {item.source.catalogVersion} · <a href={item.sourceUrl} target="_blank" rel="noreferrer">查看原始来源</a><span title={item.source.contentSha256}> · SHA-256 {item.source.contentSha256.slice(0, 12)}…</span></div></article>)}</div> : <div className="empty">暂无匹配的外部案例</div>}</section>
     <main className="layout"><div className="col-left">
       <section className="glass card"><div className="card-head"><div><div className="en">开始新战局（NEW BATTLE）</div><h2>开始新战局（New battle）</h2></div></div><form onSubmit={createBattle} noValidate><label htmlFor="topic">测试主题（Test topic）<input id="topic" className="input" value={topic} maxLength={200} aria-invalid={Boolean(topicError)} aria-describedby={topicError ? 'topic-error' : 'topic-count'} onChange={(event) => { const value = event.target.value; setTopic(value); if (topicError) setTopicError(validateTopic(value)) }} />{topicError ? <span className="field-error" id="topic-error" role="alert">{topicError}</span> : <span className="field-hint" id="topic-count">{topic.length}/200</span>}</label><label>对抗难度（Difficulty）<div className="diff-grid">{(['low', 'mid', 'high'] as Difficulty[]).map((item) => <label key={item}><input type="radio" name="difficulty" checked={difficulty === item} onChange={() => setDifficulty(item)} /><span className="diff-item"><b>{difficultyLabel[item]}</b><small>{item === 'low' ? '基础缺陷（Basic defect）' : item === 'mid' ? '规则违规（Rule violation）' : '复合漏洞（Compound vulnerability）'}</small></span></label>)}</div></label><button className="btn-primary" type="submit" disabled={busy}>{busy ? '攻防进行中（Battle running）...' : '开始攻防（Start battle）'}</button></form></section>
     <section className="glass card history"><div className="card-head"><div><div className="en">历史战局（BATTLE LOG）</div><h2>历史战局（Battle history）</h2></div><span className="en">{historyTotal} 场</span></div><input className="input" placeholder="搜索主题或编号（Search topic or ID）" value={search} onChange={(event) => { const value = event.target.value; setSearch(value); void loadHistory(0, false, value) }} />{historyLoading ? <div className="empty" role="status">正在加载历史战局（Loading battle history）...</div> : <div className="battle-list">{battles.length ? battles.map((battle) => <button className={'battle-item ' + (selected?.id === battle.id ? 'active' : '')} key={battle.id} onClick={() => openReplay(battle.id)}><span className={'battle-badge ' + battle.difficulty}>{difficultyLabel[battle.difficulty]}</span><span className="bi-main"><b>{battle.topic}</b><small>{new Date(battle.createdAt).toLocaleString('zh-CN')} · {displayLabel(battle.status)}</small></span><span className="arrow">›</span></button>) : <div className="empty">暂无匹配记录（No matching battles）</div>}</div>}<div className="pagination"><button type="button" className="btn-ghost" disabled={historyLoading || historyPage === 0} onClick={() => void loadHistory(historyPage - 1, false, search)}>上一页</button><span>第 {historyPage + 1} / {totalPages} 页 · 每页 {PAGE_SIZE} 场</span><button type="button" className="btn-ghost" disabled={historyLoading || historyPage + 1 >= totalPages} onClick={() => void loadHistory(historyPage + 1, false, search)}>下一页</button></div></section>

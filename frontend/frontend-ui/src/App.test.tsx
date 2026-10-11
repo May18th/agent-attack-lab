@@ -12,7 +12,9 @@ const battle = {
   defenderOut: [{ agentSource: 'acp-rule-fallback', caught: [], risks: [], fixed: [] }],
 }
 
-function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource = 'acp-rule-fallback') {
+function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource = 'acp-rule-fallback', initialSession = { enabled: false, authenticated: false }) {
+  let session = initialSession
+  let sessionChecks = 0
   const sourceBattle = {
     ...battle,
     attackerOut: { ...battle.attackerOut, agentSource: source },
@@ -20,7 +22,32 @@ function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource =
   }
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
+    if (url.pathname.endsWith('/auth/session')) {
+      if (!init?.method && session.enabled && !session.authenticated && sessionChecks++ > 0) {
+        session = { enabled: true, authenticated: true }
+      }
+      return Promise.resolve(new Response(JSON.stringify(session), { status: 200 }))
+    }
     if (url.pathname.endsWith('/health')) return Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    if (url.pathname.endsWith('/external-cases')) {
+      const query = url.searchParams.get('q') ?? ''
+      const item = {
+        externalId: 'CVE-2099-0001',
+        vendorProject: 'Example Vendor',
+        product: 'Example Gateway',
+        title: '公开案例',
+        dateAdded: '2026-10-11',
+        description: '公开来源中的案例描述',
+        requiredAction: 'Apply the fix',
+        cwes: ['CWE-89'],
+        sourceUrl: 'https://example.invalid/advisory',
+        provenanceStatus: 'verified_primary',
+        synthetic: false,
+        recordKind: 'external_fact',
+        source: { publisher: 'CISA', sourceType: 'known_exploited_vulnerabilities', catalogVersion: 'test-1', retrievedAt: '2026-10-11T00:00:00Z', contentSha256: 'a'.repeat(64) },
+      }
+      return Promise.resolve(new Response(JSON.stringify({ available: !query || query.includes('CVE'), items: !query || query.includes('CVE') ? [item] : [], total: !query || query.includes('CVE') ? 1 : 0, sourceCount: 1 }), { status: 200 }))
+    }
     if (url.pathname.endsWith('/dashboard/summary')) {
       return Promise.resolve(new Response(JSON.stringify({
         totalBattles,
@@ -95,6 +122,18 @@ describe('App', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('请输入测试主题')
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/battles'), expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('renders external case provenance and supports a read-only search', async () => {
+    const fetchMock = installFetchMock()
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: '外部安全案例库（External references）' })).toBeInTheDocument()
+    expect(await screen.findByText('CVE-2099-0001')).toBeInTheDocument()
+    expect(screen.getByText(/verified_primary · external_fact/)).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索外部案例' }), { target: { value: 'CVE-2099' } })
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/external-cases?q=CVE-2099'), expect.anything()))
   })
 
   it('prefills topic and difficulty from URL parameters', async () => {
@@ -172,5 +211,19 @@ describe('App', () => {
 
     expect(await screen.findByText('攻击来源：来源未知（future-agent）')).toBeInTheDocument()
     expect(screen.getByText('防守来源：来源未知（future-agent）')).toBeInTheDocument()
+  })
+
+  it('keeps the public experience available when backend organization authentication is enabled', async () => {
+    const fetchMock = installFetchMock(21, 'acp-llm', 'acp-rule-fallback', { enabled: true, authenticated: false })
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '开始新战局（New battle）' })).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles?'), expect.anything())
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/auth/session'), expect.anything())
+
+    fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '公开体验' } })
+    fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
+    expect(await screen.findByText('战局创建完成')).toBeInTheDocument()
   })
 })

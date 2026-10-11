@@ -2,6 +2,8 @@
 
 这是一个独立项目，与之前的科创项目无关。
 
+> 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
+
 ## 1. 分工
 
 前端负责页面、输入控件、加载状态、错误提示，以及攻击样本和防守结果展示。
@@ -128,6 +130,8 @@ GET /battles/{battle_id}
 ```
 
 查询战局。另有 `GET /battles?limit=50` 可获取最近战局列表，`limit` 范围为 1-200。战局默认保存在项目目录下的 `.data/battles.sqlite3`，服务重启后仍保留。
+
+`DELETE /battles/{battle_id}` 删除已完成或失败的战局及其事件记录，成功返回 HTTP 204；等待中或运行中的战局返回 HTTP 409。该写操作沿用浏览器会话或 API Key 鉴权。
 
 后台的 `GET /dashboard/summary` 汇总数据库中全部已保存战局、样本、规则命中和风险记录，并按本地规则用例编号统计模拟用例库规模；它不计算准确率或拦截率。统计值来自独立字段口径：样本数数 `attackerOut.samples`，规则命中数数 `defenderOut[].caught`，风险数数 `defenderOut[].risks`。`GET /battles?limit=10&offset=0&q=...` 使用 `X-Total-Count` 响应头返回筛选后的记录总数，跨域时会公开该响应头。React 前端选择历史战局后在地址栏写入 `?battle_id=...`；刷新/分享该地址会重新加载所选战局。后台 HTML 页历史回放仍读取 `/battles/{id}/replay` 事件并逐步播放。
 
@@ -340,21 +344,21 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 4. 前端不需要运行或修改 AIC、ACS、CAI 和 mTLS 文件。
 5. 发送代码时不要包含 `.venv`；源码、`pyproject.toml`、`uv.lock` 和本交接文件即可。
 
-公开浏览器前端不获取 `AGENT_API_KEY`。后端启用 `AGENT_BROWSER_PASSWORD` 后，前端使用 `/auth/session` 登录会话并设置 `credentials: "include"`；EventSource 使用 `withCredentials: true`。`/agent/*`、`/rpc`、`/metrics` 仍只接受服务端 API Key；详见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
+公开浏览器前端不获取 `AGENT_API_KEY`，也不要求登录。统计、案例、战局列表/详情和创建战局属于公开业务 API；`/dashboard`、重试/删除、审计/报告/事件回放/SSE、`/agent/*`、`/rpc`、`/metrics` 仍由后端鉴权。详见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
 
-后台 `/dashboard` 的异步对抗已接入 SSE 时间线。公开部署须配置 `AGENT_API_KEY`、`AGENT_BROWSER_PASSWORD` 和 `AGENT_PROTECT_READS=1`；不得把服务端密钥硬编码到公开前端包中。
+后台 `/dashboard` 的异步对抗已接入 SSE 时间线。公开部署须配置 `AGENT_API_KEY`、`AGENT_PROTECT_READS=1` 和匿名战局创建限流；如需浏览器访问后台，再配置 `AGENT_BROWSER_PASSWORD`。当前匿名限流按单进程维护，多实例需在入口代理补限流。不得把服务端密钥硬编码到公开前端包中。
 
 ## 7. 梧桐平台注册准备
 
-后端已加入官方 wheel 安装脚本：`backend/scripts/install_wit_wheels.ps1`。梧桐发行包不在公共 Python 软件源，需将以下两个官方文件放入 `D:\梧桐\backend\packages\` 后执行脚本：
+后端已加入官方 wheel 安装脚本：`backend/scripts/install_wit_wheels.ps1`。梧桐发行包不在公共 Python 软件源，需让以下三个官方文件位于同一目录：
 
 - `acps_sdk-2.2.0-py3-none-any.whl`
 - `wit_framework-2.1.0-cp312.cp313.cp314-none-any.whl`
 - `release-manifest.json`
 
-本机后端虚拟环境已安装 `acps-sdk 2.2.0` 和 `wit-framework 2.1.0`，导入路径均位于 `backend/.venv/site-packages/`。官方 `release-manifest.json` 尚未取得，因此 `wit-release-preflight` 仍未通过；不能把已安装等同于完成发行物哈希验收。
+2026-10-11 已使用用户提供的正式目录和官方 `release-manifest.json` 完成 SHA-256 发行预检；本机后端虚拟环境已安装 `acps-sdk 2.2.0` 和 `wit-framework 2.1.0`，WIT API 预检通过，后端全量测试 `82 passed, 1 skipped`。安装脚本支持 `-PackageDir` 指定正式目录，未指定时仍默认使用 `backend/packages/`。
 
-wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
+wheel 目录和用户提供的正式发行目录均不上传 GitHub。安装脚本会在安装后自动执行 `wit-release-preflight --manifest release-manifest.json`。梧桐账号、验证码和人工审核由负责人在本机完成。前端队友无需修改 AIC、ACS、CAI 或 mTLS 文件，只需关注后端完成证书验收后的接口地址。
 
 梧桐官方证书流程已补齐：审核通过取得 AIC 后，先用 `acps-cli auth login` 登录，再用 `cert eab fetch` 获取 EAB，最后用 `cert issue -u clientAuth` 签发证书。项目新增 `backend/acps-cli.toml.example`、`backend/scripts/verify_acps_cli.ps1`、`backend/scripts/issue_acps_certificate.ps1` 和 `backend/scripts/inspect_acps_certificate.ps1`；EAB、Agent 私钥、证书和本机配置仅保存在被 Git 忽略的 `backend/.acps-cli/` 与 `backend/acps-cli.toml`，ACME 账户密钥和 CSR 位于同样被忽略的 `backend/keyfiles/`。完整步骤见 [`docs/WUTONG_ACPS_CERT_SETUP.md`](WUTONG_ACPS_CERT_SETUP.md)。
 
@@ -372,12 +376,12 @@ wheel 目录已加入 Git 忽略，不上传 GitHub。安装脚本会在安装�
 
 ## 8. 梧桐注册当前状态（2026-10-09）
 
-- `acps-sdk 2.2.0` 与 `wit-framework 2.1.0` 已安装并可从后端虚拟环境导入；官方 `release-manifest.json` 因本机到 `wit.ioa.pub` TLS 握手失败尚未取得，因此发行物 SHA-256 和 `wit-release-preflight` 尚未验收。
+- `acps-sdk 2.2.0` 与 `wit-framework 2.1.0` 已安装并可从后端虚拟环境导入；2026-10-11 已取得官方 `release-manifest.json`，两个 wheel 的 SHA-256 与清单一致，`wit-release-preflight` 已通过。
 - 正确 Registry 账号下已查到攻击、防守两个 Agent，状态均为 `APPROVED`；原 ACS 中的 AIC 与 Registry 记录一致。此前另一个账号尝试保存同名草稿得到 403；没有创建重复 Agent，原 ACS 未被修改。
 - 两个 Agent 均已获取 EAB 并签发 Ed25519 `clientAuth` 证书。使用 `cryptography` 验证了 AIC URI SAN、`clientAuth` EKU、私钥匹配及信任链，CA 查询均为 `VALID`。证书有效期截至 2026-11-27；EAB、Agent 私钥和证书在 `backend/.acps-cli/`，ACME 账户密钥和 CSR 在 `backend/keyfiles/`，均已加入 Git 忽略。
 - Registry 记录中的 Agent endpoint 仍指向旧 `trycloudflare.com` 临时隧道；本机直连 DNS 解析失败，经代理 TLS 握手也失败。尚未确认当前稳定公网 endpoint，证书也尚未接入 Agent 服务端或主服务 AIP 客户端，因此**目前不能宣称端到端 mTLS/AIP 已通**。
 - **队友待办**：确认攻击、防守 Agent 的稳定公开 `/rpc` 地址及其 TLS/mTLS 入口；由有权限的负责人按平台流程更新已审核 ACS endpoint。不要把当前临时隧道地址继续作为正式 endpoint，也不要发送或提交密码、Token、EAB、私钥、证书。
-- 后续还需为平台 Leader 身份完成注册/AIC 与 `clientAuth` 证书，并根据最终服务端部署方式申请/配置 `serverAuth` 证书及双向身份校验；另需取得官方 manifest 并通过发行预检。
+- 后续仍需确认现有 AIC 如何接管 WIT workspace，并根据最终服务端部署方式申请/配置 `serverAuth` 证书及双向身份校验；官方 manifest 与本机运行时预检已经完成。
 
 ### 队友 Cloudflare Zero Trust/Tunnel 待办
 
@@ -427,3 +431,300 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 3. `https://api.yuanyiagentzhandui.cn/health`、`/dashboard/summary` 返回 200，正式前端 Origin 的 CORS 预检返回 200。
 4. 根域名 `https://yuanyiagentzhandui.cn` 已用不经过本机代理的直连 TLS/HTTP 复核为 200；此前 PowerShell 握手失败是本机代理误报。若本地仍失败，使用 `curl --noproxy "*"` 或关闭代理复测。
 5. 梧桐真实 mTLS 仍需平台侧 Leader AIC/证书、稳定 Agent `/rpc` endpoint 和服务端证书，不能用本地回环验收替代。
+
+### Git 交接记录（2026-10-10）
+
+本次记录提交：`26664b0`（分支：`codex/team-domain-handoff`）。
+
+公网浏览器会话和战局主流程已完成 API 级验收：
+
+- low/mid/high 三场公网战局创建均返回 HTTP 201；SSE 均返回 HTTP 200，并包含 `battle.created` 与终态事件；最终状态均为 `completed`。
+- 浏览器会话登录返回 HTTP 200，携带 Cookie 访问 `/battles` 返回 HTTP 200，退出登录返回 HTTP 200。
+- 前端独立登录页已部署到根域名和 `www` 域名；登录密码只保存在后端运行环境，未进入前端构建或 Git。
+
+当前状态更新（2026-10-11，本地修改）：公开前端不再要求登录，公开业务 API 不校验浏览器会话；后台管理和内部操作仍由后端认证保护。上述公网登录验收记录保留为历史状态，不代表当前访问策略。
+
+微调材料完成本地离线审计，报告见 [`FINETUNE_AUDIT_20261010.md`](FINETUNE_AUDIT_20261010.md)：
+
+- 共 105 条 JSONL；manifest 数量和 SHA-256 全部一致。
+- 训练/验证无重复样本和 topic+difficulty 分组泄漏；防守 evidence 全部匹配输入连续原文。
+- 未发现真实凭据、私钥或真实服务 URL；原始 `artifacts/finetune/` 未同步 Git、VPS 或训练平台。
+- 队友审核重点：确认样本主题代表性、空 findings 比例和后续训练平台上传审批；未获授权前不要上传或启动训练。
+
+### 微调数据清洗（2026-10-10）
+
+- 新增 `backend/scripts/clean_finetune_dataset.py`，按主题成组移除明显联调、评委、占位和随机噪声；原始 `artifacts/finetune/` 不变。
+- 清洗结果写入本地 `artifacts/finetune_clean/`：105 条保留 72 条，剔除 33 条；攻击/防守样本同步处理，保留 6 个正式安全主题。
+- 规则、数量和审核问题见 [`FINETUNE_CLEANING_20261010.md`](FINETUNE_CLEANING_20261010.md)。清洗后的 JSONL 和 manifest 不提交 Git、不上传云端，队友审核脚本与报告即可复现。
+- 清洗后复核无字段缺失、evidence 错配或 sourceBattle 跨集合泄漏；攻击 low 难度仅 1 条，是否补充 low 样本需队友决定。
+
+### 后端身份绑定与 VPS 常驻验收（2026-10-11）
+
+实现提交：`28a55d0`。
+
+- Leader 与 Partner 服务端身份绑定分别使用 `AGENT_IDENTITY_BINDING_ENABLED` 和
+  `AGENT_PARTNER_IDENTITY_BINDING_ENABLED`；预检也分别提供强制检查参数。
+- 当前 SDK 不接受服务端身份绑定参数时，开启相应开关会立即失败，不再静默丢弃参数后继续
+  提供未绑定身份的 HTTP RPC。公共 SDK 2.1 仍可在两个开关关闭时正常运行。
+- 新增 `backend/scripts/verify-vps-runtime.sh`，只读检查 `deployer` linger、三个业务
+  systemd 服务、Cloudflare Tunnel、三个本地健康接口和公网 API；不读取或输出敏感配置。
+- 验收结果：后端 `82 passed, 1 skipped`；跳过项是当前 Windows PATH 无 Bash，VPS 脚本已另用
+  Git Bash 完成语法检查和全绿模拟运行；Windows PowerShell 5.1 下 mTLS 预检实际执行成功。
+
+队友操作：
+
+1. 审核并合并 PR #2，部署前确认 VPS 使用的官方 SDK 确实支持所需服务端身份绑定参数。
+2. 恢复 `47.108.92.113:22` 后拉取本提交，在 `/opt/agent-attack-lab` 执行
+   `backend/scripts/verify-vps-runtime.sh`。
+3. 完成一次 VPS 重启并再次执行脚本；只有两次均全部 `PASS` 才确认常驻验收完成。
+
+已知问题：公网 API 当前正常，但 SSH 22 仍连接超时；真实公网 `/rpc`、serverAuth 和端到端
+mTLS 尚未具备。禁止提交或发送 `.env`、API Key、浏览器密码、Tunnel Token、EAB、证书、
+私钥和数据库备份；不得把预检通过表述为真实 mTLS 已验收。
+
+### WIT Identity 状态机迁移评估（2026-10-11）
+
+实现提交：`cd9c42a`。
+
+- 使用隔离临时环境安装现有私有 wheel，确认 `acps-sdk 2.2.0` 与 `wit-framework 2.1.0`
+  的 `AcpsConfig`、`AcpsRegistration`、`WitRuntime`、`up_until_ready()` 和
+  `serve_direct_partner()` API 与新 Identity 流程匹配；离线 ACS 草稿生成成功。
+- 官方 `release-manifest.json` 已取得；两个 wheel 的 SHA-256 与清单一致。正式发行目录安装完成后，
+  项目 `.venv` 为 `acps-sdk 2.2.0` 与 `wit-framework 2.1.0`，API 预检通过，后端测试
+  `82 passed, 1 skipped`。
+- 新增 `backend/scripts/verify_wit_runtime_api.py`，并接入 `install_wit_wheels.ps1`；安装通过
+  manifest 后还必须验证 Identity/Direct/Group API 完整及协程属性。
+- 当前三个 Agent 已有 AIC 和 clientAuth 材料，但没有 WIT workspace。已检查公开 API，未发现
+  导入现有 AIC、接管现有证书或恢复 Registry workspace 的入口，因此禁止直接新建 workspace
+  再运行 `up_until_ready()`，避免重复身份与证书分叉。
+
+队友/平台待确认：现有三个 AIC 如何导入或接管 WIT workspace；若不支持接管，是否批准创建
+新身份。Direct 上线还需要匹配公网主机 SAN 的 serverAuth 证书、稳定
+`/acps/aip/v1/rpc` 映射以及 VPS SSH。完整判断见 `docs/WIT_IDENTITY_MIGRATION.md`。
+
+### 正式 WIT 发行物验收交接（2026-10-11）
+
+实现提交：`693ef57`。
+
+- 官方 `release-manifest.json` 与两个正式 wheel 的 SHA-256 已通过 `wit-release-preflight`；本机
+  安装版本为 `acps-sdk 2.2.0`、`wit-framework 2.1.0`。
+- `install_wit_wheels.ps1` 新增可选 `-PackageDir`，可直接验收相邻放置清单的正式发行目录；
+  默认 `backend/packages/` 行为保持不变。
+- 本机验收：WIT Identity/Direct/Group API 预检通过，后端 `82 passed, 1 skipped`。
+
+队友审核动作：
+
+1. 审核提交 `693ef57`，确认发行目录参数和状态文档后合并 PR #2。
+2. SSH 恢复后，将正式发行物通过受控通道放到 VPS 的非 Git 目录，使用 `-PackageDir` 安装并
+   重跑预检；不要把 wheel、manifest 或凭据提交到仓库。
+3. 向平台确认现有三个 AIC 的 WIT workspace 接管方式；确认前不得运行新的
+   `up_until_ready()`，避免创建重复身份。
+
+验收标准：预检报告 `acps-sdk 2.2.0`、`wit-framework 2.1.0`，API 检查通过，且 Registry 中
+没有新增重复 AIC。已知问题：`47.108.92.113:22` 仍为 TCP 连接超时，尚不能在 VPS 复验；
+serverAuth、稳定 Direct endpoint 和真实端到端 mTLS 仍未完成。禁止提交或发送 Registry 凭据、
+Token、EAB、私钥、证书正文、Tunnel Token、数据库或私有发行物。
+
+### Registry RPC 清单与 Cloudflare 复核（2026-10-11）
+
+队友交付的 `智能体RPC地址清单_20261011.md` 已核对并完成只读复测：
+
+- Leader `https://api.yuanyiagentzhandui.cn/rpc` 的公网路由存活；无凭据请求返回 401，正文为
+  “缺少或无效的 API 密钥”。这不是 mTLS 客户端证书拒绝，不能据此宣称 Leader mTLS 已上线。
+- 攻击、防守登记的同一个 `trycloudflare.com` Quick Tunnel 已无 DNS，两个 Partner 当前不可达。
+- Cloudflare 账号中现有命名隧道 `yuanyi-agent-attack-lab-backend` 状态健康，但仅配置
+  `api.yuanyiagentzhandui.cn -> 127.0.0.1:8787`；`attack`、`defense` 两个子域名没有 DNS
+  记录，也没有 8788/8789 ingress。Cloudflare 文档允许同一命名隧道发布多个 hostname，
+  但必须先保护 Partner 服务再公开路由。
+- 本地攻击/防守 ACS 草稿仍使用 `attacker.kechuang2026.cn`、`defender.kechuang2026.cn` 和
+  `apiKey` 声明；Registry authoritative ACS 与本地草稿均不能未经平台流程直接覆盖彼此。
+
+队友待办：
+
+1. SSH 恢复后检查 8788/8789 的服务端身份绑定；若暂时使用 API Key，确认密钥只在服务端环境
+   和受控调用方保存，不能把未鉴权端口发布到公网。
+2. 在现有命名隧道增加 `attack.yuanyiagentzhandui.cn -> 127.0.0.1:8788`、
+   `defense.yuanyiagentzhandui.cn -> 127.0.0.1:8789`，并创建对应代理 CNAME；完成 DNS、TLS、
+   `/health` 和带正确鉴权的 `/rpc` 验收。
+3. 固定地址验收通过后，更新两个 Agent 的 Registry authoritative ACS，重新审核并确认
+   discovery 同步；最后由 Leader 创建 low/mid/high 战局，验证桌面和移动端完整链路。
+
+本次只做了公网、DNS、Cloudflare 资源和本地代码的只读核验，没有修改 Cloudflare、Registry、VPS
+或服务配置；禁止提交 API Key、浏览器密码、Token、EAB、私钥、证书正文、Tunnel Token 和数据库。
+
+### 现有 AIC 接管 WIT workspace 判定（2026-10-11）
+
+实现提交：`fc169b6`。本机后端测试 `82 passed, 4 skipped`；4 个跳过项均因 Windows 环境没有
+Bash，Linux CI 负责实际执行搜索脚本的 3 个行为测试与既有 VPS 脚本测试。
+
+结论已收口：**仅凭现有 AIC、Registry 账号或单独 clientAuth 材料，不能让空 WIT workspace
+接管旧身份。** 正式 `wit-framework 2.1.0` 字节码显示状态机依赖 `enrollment.json`、
+`registrationId`、EAB、Registry token 和本地生成的证书私钥；缺少本地状态时会进入
+“create a new workspace”路径并产生新注册。
+
+本机递归审计只找到 Leader、攻击、防守三组 `.acps-cli` clientAuth 证书、私钥、EAB 和 trust
+bundle；没有 `enrollment.json`、`acs.final.json`、`registry-token.json`、serverAuth 或 WIT AIP
+状态数据库。因此本机材料不足以恢复攻击/防守原 workspace。
+
+新增只读搜索脚本：
+
+```bash
+cd /opt/agent-attack-lab
+bash backend/scripts/find-wit-workspaces.sh
+```
+
+队友待办：
+
+1. SSH 恢复后在原 VPS、停止容器、Docker volume、快照和备份中搜索完整 `acps/`。脚本只输出
+   候选路径和缺失项，不读取凭据正文。
+2. 找到完整 `acps/`：使用受控加密通道备份整个目录，不拆分、不改名、不提交 Git；按平台流程
+   恢复原状态，并为固定域名重签 serverAuth、更新 ACS/discovery。
+3. 确认找不到：由负责人批准新 workspace 和新 AIC，完成固定 RPC 与端到端 mTLS 后更新
+   discovery，并将旧 AIC/RPC 记录标记废弃。
+
+未完成上述判定前，禁止在空 workspace 运行 `up_until_ready()`；也不得发送或提交
+`enrollment.json`、Registry token、EAB、私钥、证书正文、整个 workspace 压缩包或数据库。
+
+### 固定 Partner 域名与鉴权已落地（2026-10-11）
+
+本机已通过密钥 `id_aliyun_deploy` 恢复登录 `47.108.92.113`；目标机主机名为
+`iZ2vcics71o84b4g71yhivZ`。三个用户级 systemd 服务均已正常运行：API `8787`、攻击 `8788`、
+防守 `8789`，Cloudflare 命名隧道保持 healthy。
+
+- 服务器 `/opt/agent-attack-lab/backend/.env` 已生成随机 `AGENT_RPC_API_KEY`，并重启 API、攻击、
+  防守服务；密钥未回显、未提交 Git。
+- 未带密钥访问两个 Partner `/rpc` 返回 `401`；带正确密钥访问固定公网地址返回 `200`，两个
+  `/health` 均返回 `200`。
+- Cloudflare Tunnel 已增加：`attack.yuanyiagentzhandui.cn -> 127.0.0.1:8788`、
+  `defense.yuanyiagentzhandui.cn -> 127.0.0.1:8789`；对应 Proxied CNAME 已创建。
+- 本地 `backend/acs-attack-trusted-registration.json`、`backend/acs-defender-trusted-registration.json`
+  及 `.data/acps-registration/` 草稿已改为上述固定地址；这些文件不含运行时密钥。
+
+仍需平台侧完成：用 Registry authoritative ACS 更新两个 `endPoints.url`，重新审核并确认 discovery
+同步；不能把本地文件修改视为 Registry 已更新。`deployer` 当前无免密 sudo，用户级 systemd
+可由该账号管理。禁止提交 `backend/.env`、API Key、Token、EAB、私钥、证书正文和 Tunnel Token。
+
+### 外部安全案例库（2026-10-11）
+
+已新增 `backend/scripts/import_external_cases.py`，建立与战局库隔离的
+`.data/external_security_cases.sqlite3`。首批数据来自 CISA 官方 Known Exploited
+Vulnerabilities JSON（目录版本 `2026.10.08`），导入 1,739 条 CVE 记录；每条保留厂商、产品、
+标题、CISA 描述、处置建议、CWE、原始 JSON、来源 URL、目录版本、采集时间和内容 SHA-256。
+
+- 数据库字段明确标记 `provenance_status=verified_primary`、`synthetic=0`；外部事实记录不会被
+  自动展示为本项目真实战局或攻击样本。
+- 导入脚本可重复执行，同一来源版本和内容哈希幂等更新；数据文件和凭据均不提交 Git。
+- 记录新增 `record_kind` 分层：`external_fact`、`normalized_case`、`synthetic_scenario`、`observed_event`；`--validate` 只读检查来源元数据、内容哈希、原始 JSON 和合成标记是否一致。当前本机 1,739 条记录全部通过，未把任何外部事实提升为观测事件。
+- 后续接入只允许可核验的一手来源（CISA、NVD、CVE、CERT/厂商公告、OWASP 等），先保留原文
+  证据和来源，再人工脱敏、去重和审核；禁止把模型生成内容或无来源转载写入事实库。
+
+### Partner 重新注册（2026-10-11）
+
+管理员已确认攻击/防守无法恢复旧 workspace，改为分别创建新 workspace 并重新注册，详见
+[`REGISTRATION_RENEWAL_HANDOFF.md`](REGISTRATION_RENEWAL_HANDOFF.md)。两个 ACS candidate 已清除旧 AIC，保留固定 RPC endpoint：
+
+- 攻击：`https://attack.yuanyiagentzhandui.cn/rpc`
+- 防守：`https://defense.yuanyiagentzhandui.cn/rpc`
+
+固定域名 `/health` 已用直连和 VPS 复测为 HTTP 200。新注册完成前不得把新 AIC 写入 Leader
+生产配置；审核后要获取 EAB、clientAuth/serverAuth 和 trust bundle，确认 authoritative ACS、
+Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需标记废弃。
+
+注册入口为 `backend/scripts/register_partner_agents.py`。默认只生成并校验草稿；只有我们在本机临时
+设置 Registry 开发者凭据后显式加 `--submit` 才会提交，两个 Agent 使用独立 workspace。
+
+截至 2026-10-11，两个新 Agent 已由本机注册并进入 `active`：攻击 AIC
+`1.2.156.3088.1.BUPT.RX2TMW.LMB4VK.NJ99P0.08RN`，防守 AIC
+`1.2.156.3088.1.BUPT.RX2TMW.KYUDTI.BI8UKQ.09SG`。对应 registrationId、证书材料和 VPS
+同步记录见 [`REGISTRATION_RENEWAL_HANDOFF.md`](REGISTRATION_RENEWAL_HANDOFF.md)。
+
+已按 mTLS 派活单将两个完整 `acps/` workspace 同步至 VPS 受限目录并完成状态核验。源站目前
+没有 443/8443 listener 或反代，Cloudflare 橙云会终止公共 TLS；`deployer` 没有免密 sudo，
+因此不能由本账号直接完成 443 mTLS 和灰云切换。管理员需先提供 root/sudo 或执行源站反代、
+端口和 DNS 变更；完成前不得把 API Key/HTTPS 验收描述为 mTLS，也不得关闭现有 Tunnel。
+
+### mTLS 部署阻塞解除（2026-10-11）
+
+源站 `47.108.92.113` 的 `deployer` 已配置全量免密 sudo，实测 `sudo -n whoami` 返回 `root`；
+三个业务进程仍分别监听 `127.0.0.1:8787/8788/8789`，443 当前尚未监听。可将
+[`mTLS链路异常修复派活单_20261011.md`](../mTLS链路异常修复派活单_20261011.md) 第五部分直接
+转发给 WorkBuddy/Codex，由其使用 `deployer` 执行源站 mTLS、/rpc 放行、Cloudflare attack/defense
+灰云切换和 Leader/Discovery 回填。验收完成前不得关闭现有 API Key Tunnel，也不得把 HTTPS 200
+描述为真实 mTLS。
+
+### mTLS 预部署核验（2026-10-11，部署前快照）
+
+- 远端 `8787/8788/8789` 的 `/health` 均返回 200，API、攻击、防守和 Cloudflare Tunnel 用户级服务均为 active。
+- 两套 serverAuth 的 SAN、serverAuth EKU 和有效期符合预期；经重新核验，两个 `server/certificate.pem`
+  均已包含完整链（leaf + Agent CA Intermediate），使用对应 trust bundle 验证均为 `OK`。部署时必须
+  保持该完整文件，不要只提取第一张 leaf 证书；不需要额外获取或生成中间 CA。
+- 已新增只读验收脚本 [`backend/scripts/verify-partner-mtls.sh`](../backend/scripts/verify-partner-mtls.sh)，
+  用于验证 `/health` 免证书、`/rpc` 无证书拒绝、合法客户端证书握手成功。脚本不输出证书正文或私钥。
+- 远端尚未部署该脚本，且 443 尚未监听；Cloudflare DNS 仍解析到边缘地址，尚未切换 DNS only。
+- 远端当前未发现 nginx 或 caddy；请使用具备路径级 client-certificate 控制的反代（推荐 nginx），或采用
+  已验证支持 `/health` 免证书、`/rpc` 强制证书的等效 listener。不要直接把 8788/8789 暴露到公网。
+
+### 源站 443 已配置（2026-10-11）
+
+- 已通过 sudo 安装并启用 nginx，attack/defense 两个 443 server block 均加载各自完整 server certificate、
+  私钥和 `ca-verify.pem`；`ca-verify.pem` 由 workspace trust bundle 与同一 server certificate 中的
+  Agent CA Intermediate 组成。
+- 源站本机验收：两个 `/health` 均为 200；无客户端证书访问 `/rpc` 均为 403；带客户端证书访问 `/rpc`
+  已完成 TLS 握手，当前因 `AGENT_RPC_API_KEY` 仍保留而返回应用层 401。
+- 公网直连 `47.108.92.113:443` 当前超时，本机无 nftables/ufw/iptables 规则，需在阿里云安全组放行 TCP 443。
+- attack/defense 的 DNS 已恢复为橙云 Tunnel，避免在源站未开放前中断现有入口。放行 443 后应将记录改为
+  `A -> 47.108.92.113`、DNS only；不能把现有 `CNAME -> cfargotunnel.com` 直接改灰云后当作源站直连。
+
+### 生产 Partner mTLS 已完成（2026-10-11）
+
+本轮已直接在 VPS 完成并验收推荐方案：
+
+1. nginx 443 双域名 listener 已启用；两个 `/health` 免客户端证书，两个 `/rpc` 无证书均返回
+   403，带合法 clientAuth 证书均完成 TLS 握手。
+2. Cloudflare `attack`、`defense` 均为 `A -> 47.108.92.113`、DNS only；主 API 的命名隧道
+   未停止，仍用于 `api.yuanyiagentzhandui.cn`。
+3. Partner 应用层 `AGENT_RPC_API_KEY` 已移除，Leader API 自身的浏览器/API 鉴权未改；Leader
+   已配置两个固定 RPC endpoint、clientAuth 证书和 trust bundle。由于 nginx 终止 TLS，未启用
+   依赖直连 Uvicorn socket 的 `EXPECTED_AIC` 应用绑定参数。
+4. 因 nginx 终止 TLS，Partner 不启用依赖 Uvicorn 直连 TLS socket 的 SDK 应用身份绑定；公网
+   clientAuth 仍由 nginx 强制，后端端口没有暴露到公网。
+5. 三档实战验收通过：VPS 上 low/mid/high 均创建 HTTP 201，最终状态均为 `completed`；攻击和
+   防守 AIP 调用均返回结构化结果，当前 `agentSource=acp-rule-fallback`。
+
+远端变更均保留了带时间戳的 `.env` 和 systemd 单元备份，未复制回本机或提交 Git。不要提交
+`.env`、API Key、EAB、client/server 私钥、证书正文或 Tunnel token。
+
+剩余待办：
+
+- 项目验收记录称 Discovery 仅命中 Leader 与两个新 AIC，均 active、endpoint 正确、声明 mutualTLS，旧 AIC 不再收录；桌面/移动端 low/mid/high 六场均 completed。移动自动化使用 `deviceScaleFactor=1` 与 `requestSubmit()`；公网证书可信、`/health` 200、无证书 `/rpc` 403，17:07/18:07 两次巡检正常。本机未独立复验。
+- VPS 当前为 `61beebe`，OpenAPI 不含 `DELETE /battles/{battle_id}`；本地 `7edf500` 有该路由及空主题 422 校验测试，但尚未合入 `origin/main` `6d713fb`。先经团队审核更新生产版本，再按 `docs/CURRENT_STATUS.md` 验收。
+- `battle-694dce7f` 在本机库和 VPS 默认战局库均未找到，不执行删除；若回执指向其他数据源，先确认位置。
+- Agent 仍由规则兜底，外部 LLM 接入待负责人决策。负责人已确认停用每小时巡检；本机任务计划和 VPS systemd timers/user crontab 均未发现对应任务，本轮未能停用。
+
+### 本轮队友 Git 待办（2026-10-11）
+
+进度提交：`7a1ad82`（Discovery 与跨端验收回执、mTLS/注册交接更新、Discovery URL 修正）。
+
+请队友按以下顺序处理：
+
+1. 审核 `codex/team-domain-handoff` 中的 API 修复提交 `7edf500`，并将经过审核的代码合入部署分支；当前 VPS 为 `61beebe`，其 OpenAPI 尚未包含 `DELETE /battles/{battle_id}`。
+2. 更新 VPS 后，在安全测试环境验收：空白 `topic` POST 返回 422；合法创建返回 201；已结束战局删除返回 204 并清理事件；运行中战局删除返回 409。
+3. 更新后复验双域名 `/health=200`、无证书 `/rpc=403`、合法 mTLS 调用成功，并确认 Discovery 仍仅收录 Leader 与两个新 Partner。
+4. `battle-694dce7f` 在本机及 VPS 默认战局库均不存在，不要凭旧回执删除其他数据；若在自定义数据库找到，先报告数据源与状态。
+
+验收完成标准：生产 API 路由与当前代码一致，以上状态码及事件清理通过；既有 mTLS 和 Discovery 状态未回退。
+
+已知待决：攻击/防守 Agent 当前使用规则兜底，外部 LLM 是否接入由负责人决定；负责人确认停用每小时巡检，但本机和 VPS 可见的任务计划均未找到对应项，因此外部调度状态未确认。不要擅自停用其他任务。
+
+禁止提交 `.env`、API Key、Registry token、EAB、证书/私钥、Tunnel token、数据库或训练 JSONL；不得批量删除战局或改动 Cloudflare/Registry 权威记录。
+
+### 本机复核与队友审核入口（2026-10-11）
+
+- 当前协作分支 `codex/team-domain-handoff` 的 HEAD 为 `03c935c`，与远端同步；PR #2 为 OPEN/CLEAN，GitHub 后端测试、前端检查、Cloudflare Pages、Workers Builds 均成功，尚无 review。
+- 本机重新验证：后端 `96 passed, 4 skipped`；前端 `19 passed`；lint/build 与跟踪及暂存区敏感文件检查均通过。
+- CISA 官方 KEV 源版本 `2026.10.08`，1,739 条；与本机快照差异为新增 0、删除 0、变更 0，官方源 SHA-256 为 `fb1621beec7db19d99c1f919dede3d4cc01ad88acd16f79f1592929c4826dfee`。
+- 当前代码包含空白 topic 422 校验和 DELETE 战局接口；生产是否已部署到含这些接口的提交，必须在队友合并/部署后检查 OpenAPI 与状态码。本轮没有操作或重新测试 VPS、Cloudflare、Registry。
+- 生产 Partner mTLS 和端到端结果沿用本文件前文的 2026-10-11 验收记录，不把它描述为本轮重新验收。外部 LLM 仍按负责人决定暂不配置；每小时巡检的外部调度状态仍未确认。
+- 本机未跟踪材料（含发行 wheel 与队友文档/代码副本）未改动、未暂存、未提交。长期记忆、密钥、证书、数据库、JSONL 和私有发行物不进入 Git。
+
+队友后续动作：正常审核并合并 PR #2；部署经审核提交后验证空 topic 422、创建 201、已结束删除 204、运行中删除 409，并回归双 Partner mTLS、Discovery 和 low/mid/high 战局。不得绕过审核或按旧记录删除未定位战局。

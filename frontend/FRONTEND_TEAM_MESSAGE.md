@@ -1,5 +1,13 @@
 # 智能体攻防实验室前端联调通知
 
+## 2026-10-11 公开前端鉴权边界（本地修改）
+
+- 大众前端无需登录；启动时不再调用 `/auth/session` 或显示整页认证门禁。
+- 公开业务路由为 `/health`、`/dashboard/summary`、`/external-cases` 和 `/battles` 的 GET/POST、`/battles/{id}` 的 GET。
+- `/dashboard`、重试/删除、审计/报告/事件回放/SSE、`/agent/*`、`/rpc`、`/metrics` 保持后端鉴权。
+- 匿名创建战局默认每客户端 IP 每分钟限 10 次；loopback 反向代理应覆盖 `X-Real-IP`。
+- 本地修改不涉及 Cloudflare 账号、Access 策略、DNS 或 Tunnel；未提交 `.env`、API Token、Access Token、Tunnel Token、证书或私钥。
+
 已收到你导出的《智能体攻防实验室对抗互联零基础开发应用教程》，内容整体方向正确，可以作为零基础学习和开发参考。
 
 当前联调请以 `TEAM_HANDOFF.md` 和后端 `/docs` 接口文档为准，不要完全照教程中的规划功能实现。

@@ -12,6 +12,8 @@ npm run dev
 
 默认页面为 `http://localhost:5173/`。跨电脑联调时，将 `VITE_AGENT_API` 设置为队友提供的后端 HTTPS 地址；不要把 API 密钥写进公开前端环境变量。
 
+正式公网前端面向公众，无需 Cloudflare Access 或浏览器登录。前端不保存 API Key；后台管理页和内部接口继续由后端鉴权。公开业务 API 及匿名战局创建限流规则见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
+
 ## 校验
 
 ```powershell
@@ -26,3 +28,5 @@ npm run build
 - `?battle_id=<战局编号>`：直接打开历史战局；刷新后保留当前战局。
 
 历史列表使用后端 `limit/offset` 分页；搜索由后端 `q` 筛选，分页总数读取 `X-Total-Count`。统计卡来自 `GET /dashboard/summary`，规则库本地模拟用例、已保存样本、规则命中、风险记录使用各自口径。
+
+首页外部案例区域调用只读 `GET /external-cases`，展示 CVE、来源发布方、目录版本和内容哈希前缀；外部案例不会被当作项目战局或真实事件。后端未导入案例库时会明确显示不可用状态。

@@ -22,7 +22,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Req
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from acps_sdk.aip import (
     Product,
     StructuredDataItem,
@@ -37,13 +37,16 @@ from acps_sdk.aip.aip_rpc_server import (
     TaskManager,
     handle_rpc_request,
 )
+from agent_attack_lab.aip_compat import server_identity_options
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
     call_attacker,
     call_defender,
     is_configured as acp_agent_configured,
 )
+from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend, local_rule_case_count
+from agent_attack_lab.external_cases import query_external_cases
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 from agent_attack_lab.storage import BattleStore
 
@@ -78,11 +81,21 @@ _cors_origin_regex = os.getenv(
     "AGENT_CORS_ORIGIN_REGEX",
     r"^https://[a-z0-9-]+\.trycloudflare\.com$",
 )
-_browser_auth_configured = bool(os.getenv("AGENT_BROWSER_PASSWORD", ""))
+_cloudflare_access_team_domain = os.getenv("CF_ACCESS_TEAM_DOMAIN", "").strip().rstrip("/")
+_cloudflare_access_audience = os.getenv("CF_ACCESS_AUDIENCE", "").strip()
+if bool(_cloudflare_access_team_domain) != bool(_cloudflare_access_audience):
+    raise RuntimeError(
+        "Cloudflare Access 鉴权必须同时配置 CF_ACCESS_TEAM_DOMAIN 和 CF_ACCESS_AUDIENCE"
+    )
+_cloudflare_access_configured = bool(
+    _cloudflare_access_team_domain and _cloudflare_access_audience
+)
+_browser_auth_configured = bool(os.getenv("AGENT_BROWSER_PASSWORD", "")) or _cloudflare_access_configured
 if _browser_auth_configured and "*" in _cors_origins:
     raise RuntimeError("启用浏览器会话时 AGENT_CORS_ORIGINS 必须使用精确来源")
 if _browser_auth_configured and not os.getenv("AGENT_API_KEY", "").strip():
-    raise RuntimeError("启用浏览器会话时必须同时配置服务端 AGENT_API_KEY")
+    if bool(os.getenv("AGENT_BROWSER_PASSWORD", "")):
+        raise RuntimeError("启用浏览器会话时必须同时配置服务端 AGENT_API_KEY")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=sorted(_cors_origins),
@@ -108,6 +121,14 @@ class JsonRpcRequest(BaseModel):
 class BattleRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
+
+    @field_validator("topic")
+    @classmethod
+    def validate_topic(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("topic 不能为空")
+        return value
 
 
 class BrowserLoginRequest(BaseModel):
@@ -151,6 +172,12 @@ if _identity_binding_enabled and not _local_aic:
     raise RuntimeError(
         "AGENT_IDENTITY_BINDING_ENABLED 已开启，但未配置 AGENT_LOCAL_AIC"
     )
+_aip_server_options = server_identity_options(
+    handle_rpc_request,
+    local_aic=_local_aic,
+    enabled=_identity_binding_enabled,
+    setting_name="AGENT_IDENTITY_BINDING_ENABLED",
+)
 _event_data_max_bytes = 32768
 _leaderboard_cache: tuple[float, dict[str, Any]] | None = None
 _recovery_tasks: set[asyncio.Task[Any]] = set()
@@ -181,11 +208,19 @@ _browser_sessions: dict[str, float] = {}
 _browser_sessions_lock = Lock()
 _browser_login_attempts: dict[str, deque[float]] = defaultdict(deque)
 _browser_login_lock = Lock()
+_cloudflare_jwk_client: Any | None = None
+_cloudflare_jwk_lock = Lock()
 
 _rate_limit_per_minute = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 60)
+_public_battle_limit_per_minute = _env_int("AGENT_PUBLIC_BATTLE_LIMIT_PER_MINUTE", 10)
 _event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=1024)
+_external_cases_database = Path(
+    os.getenv("AGENT_EXTERNAL_CASE_DB", ".data/external_security_cases.sqlite3")
+)
 _rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _rate_lock = Lock()
+_public_battle_rate_windows: dict[str, deque[float]] = defaultdict(deque)
+_public_battle_rate_lock = Lock()
 
 
 def _request_id(request: Request) -> str:
@@ -241,8 +276,40 @@ def _check_api_key(request: Request) -> None:
     supplied = request.headers.get("x-api-key", "")
     if _api_key and not hmac.compare_digest(supplied.encode("utf-8"), _api_key.encode("utf-8")):
         raise HTTPException(status_code=401, detail="缺少或无效的 API 密钥")
-    if not _api_key and _browser_password:
+    if not _api_key and (_browser_password or _cloudflare_access_configured):
         raise HTTPException(status_code=401, detail="服务端 API 密钥未配置")
+
+
+def _verify_cloudflare_access_jwt(token: str) -> bool:
+    """Verify the Access assertion against the configured team JWKS and audience."""
+    if not _cloudflare_access_configured or not token:
+        return False
+    try:
+        import jwt
+        from jwt import PyJWKClient
+
+        global _cloudflare_jwk_client
+        with _cloudflare_jwk_lock:
+            if _cloudflare_jwk_client is None:
+                _cloudflare_jwk_client = PyJWKClient(
+                    f"{_cloudflare_access_team_domain}/cdn-cgi/access/certs",
+                    cache_jwk_set=True,
+                    lifespan=300,
+                )
+            jwk_client = _cloudflare_jwk_client
+        signing_key = jwk_client.get_signing_key_from_jwt(token).key
+        jwt.decode(
+            token,
+            signing_key,
+            algorithms=["RS256"],
+            audience=_cloudflare_access_audience,
+            issuer=_cloudflare_access_team_domain,
+            options={"require": ["exp", "iat", "iss", "aud"]},
+        )
+        return True
+    except Exception as exc:
+        logger.warning("Cloudflare Access JWT rejected reason=%s", type(exc).__name__)
+        return False
 
 
 def _browser_origin_allowed(origin: str) -> bool:
@@ -301,12 +368,17 @@ def _check_browser_or_api_auth(request: Request) -> None:
         supplied_api_key.encode("utf-8"), _api_key.encode("utf-8")
     ):
         return
+    access_token = request.headers.get("cf-access-jwt-assertion", "")
+    if _verify_cloudflare_access_jwt(access_token):
+        if request.headers.get("origin"):
+            _check_browser_session_origin(request)
+        return
     if _browser_password and _has_browser_session(request):
         _check_browser_session_origin(request)
         return
-    if not _api_key and not _browser_password:
+    if not _api_key and not _browser_password and not _cloudflare_access_configured:
         return
-    raise HTTPException(status_code=401, detail="需要有效的 API 密钥或浏览器登录会话")
+    raise HTTPException(status_code=401, detail="需要有效的 API 密钥、Cloudflare Access 身份或浏览器登录会话")
 
 
 def _browser_client_ip(request: Request) -> str:
@@ -315,12 +387,14 @@ def _browser_client_ip(request: Request) -> str:
         peer_is_loopback = ipaddress.ip_address(peer_host).is_loopback
     except ValueError:
         peer_is_loopback = False
-    forwarded_ip = request.headers.get("cf-connecting-ip", "").strip()
-    if peer_is_loopback and forwarded_ip:
-        try:
-            return str(ipaddress.ip_address(forwarded_ip))
-        except ValueError:
-            pass
+    if peer_is_loopback:
+        for header in ("cf-connecting-ip", "x-real-ip"):
+            forwarded_ip = request.headers.get(header, "").strip()
+            if forwarded_ip:
+                try:
+                    return str(ipaddress.ip_address(forwarded_ip))
+                except ValueError:
+                    continue
     return peer_host
 
 
@@ -347,8 +421,29 @@ def _api_key_dependency(request: Request) -> None:
 
 
 def _read_auth_dependency(request: Request) -> None:
-    if _protect_read_routes or _browser_password:
+    if _protect_read_routes or _browser_password or _cloudflare_access_configured:
         _check_browser_or_api_auth(request)
+
+
+def _public_battle_rate_limit_dependency(request: Request) -> None:
+    """Limit anonymous battle creation separately from internal agent traffic."""
+    if _public_battle_limit_per_minute <= 0:
+        return
+    client_key = _browser_client_ip(request)
+    now = time.monotonic()
+    cutoff = now - 60
+    with _public_battle_rate_lock:
+        window = _public_battle_rate_windows[client_key]
+        while window and window[0] <= cutoff:
+            window.popleft()
+        if len(window) >= _public_battle_limit_per_minute:
+            retry_after = max(1, int(60 - (now - window[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="公开战局创建过于频繁，请稍后重试",
+                headers={"Retry-After": str(retry_after)},
+            )
+        window.append(now)
 
 
 def _rate_limit_dependency(request: Request) -> None:
@@ -570,6 +665,8 @@ def index() -> dict[str, Any]:
             "/health", "/metrics", "/battles", "/battles/{id}/events",
             "/battles/{id}/report", "/leaderboard", "/agent/attack",
             "/agent/defend", "/rpc", "/docs",
+            "/external-cases",
+            "/battles/{id}/audit",
         ],
         "note": "当前提供 JSON-RPC 2.0 和兼容的 HTTP JSON 接口；平台审核通过并下发证书后再启用 mTLS。",
     }
@@ -577,9 +674,11 @@ def index() -> dict[str, Any]:
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(
+    request: Request,
     topic: str | None = Query(default=None, max_length=200),
     difficulty: Literal["low", "mid", "high"] | None = Query(default=None),
 ) -> str:
+    _check_browser_or_api_auth(request)
     topic_value = escape_html(topic or "通用安全测试", quote=True)
     selected_difficulty = difficulty or "mid"
     return """<!doctype html>
@@ -1591,9 +1690,12 @@ def health(request: Request) -> dict[str, Any]:
 @app.get("/auth/session", summary="查询浏览器登录状态", tags=["浏览器鉴权"])
 def browser_session_status(request: Request, response: Response) -> dict[str, bool]:
     response.headers["Cache-Control"] = "no-store"
+    authenticated = bool(_browser_password) and _has_browser_session(request)
+    if _verify_cloudflare_access_jwt(request.headers.get("cf-access-jwt-assertion", "")):
+        authenticated = True
     return {
-        "enabled": bool(_browser_password),
-        "authenticated": bool(_browser_password) and _has_browser_session(request),
+        "enabled": bool(_browser_password) or _cloudflare_access_configured,
+        "authenticated": authenticated,
     }
 
 
@@ -1673,7 +1775,6 @@ def metrics() -> dict[str, Any]:
     summary="查询后台统计摘要",
     description="规则命中、风险记录和已保存样本分别从全部已保存战局聚合；本地模拟用例数按规则库中的唯一用例编号统计。",
     tags=["统计接口"],
-    dependencies=[Depends(_read_auth_dependency)],
 )
 def dashboard_summary() -> dict[str, int]:
     return {
@@ -1683,9 +1784,49 @@ def dashboard_summary() -> dict[str, int]:
     }
 
 
+@app.get(
+    "/external-cases",
+    summary="查询外部安全案例",
+    description=(
+        "只读查询已导入的外部安全案例；每条记录保留来源、版本和内容哈希，"
+        "不把外部事实当作本项目战局或攻击样本。"
+    ),
+    tags=["外部案例"],
+)
+def list_external_cases(
+    q: str | None = Query(default=None, max_length=200, description="按 CVE、标题、厂商或产品检索"),
+    vendor: str | None = Query(default=None, max_length=200),
+    product: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return query_external_cases(
+        _external_cases_database,
+        query=q.strip() if q else None,
+        vendor=vendor.strip() if vendor else None,
+        product=product.strip() if product else None,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get(
+    "/battles/{battle_id}/audit",
+    summary="审计战局事件完整性",
+    description="只读检查事件序列、战局归属、状态和 Agent 来源是否一致，不修改战局数据。",
+    tags=["战局接口"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def battle_audit(battle_id: str) -> dict[str, Any]:
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    return audit_battle(record, _battle_store.list_events(battle_id))
+
+
 @app.post(
     "/battles",
-    dependencies=[Depends(_rate_limit_dependency)],
+    dependencies=[Depends(_public_battle_rate_limit_dependency)],
     status_code=201,
     summary="创建一场攻防战局",
     description="输入测试主题和难度，返回完整的攻击样本与防守结果。添加 background=true 可启用分阶段实时执行。",
@@ -1697,7 +1838,6 @@ async def create_battle(
     background_tasks: BackgroundTasks,
     background: bool = Query(default=False, description="是否后台异步执行"),
 ) -> BattleRecord:
-    _check_browser_or_api_auth(request)
     battle_id = f"battle-{uuid.uuid4()}"
     created_at = datetime.now(timezone.utc).isoformat()
     if background:
@@ -1845,12 +1985,31 @@ def retry_battle(
     return BattleRecord.model_validate(record)
 
 
+@app.delete(
+    "/battles/{battle_id}",
+    dependencies=[Depends(_rate_limit_dependency)],
+    status_code=204,
+    summary="删除已结束的战局",
+    description="删除 completed 或 failed 战局及其事件；pending/running 战局必须先结束。",
+    tags=["战局接口"],
+)
+def delete_battle(battle_id: str, request: Request) -> Response:
+    _check_browser_or_api_auth(request)
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    if record["status"] in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail="运行中的战局不能删除")
+    _battle_store.delete(battle_id)
+    _invalidate_leaderboard_cache()
+    return Response(status_code=204)
+
+
 @app.get(
     "/battles",
     summary="查询历史战局",
     description="支持分页、难度和关键词筛选。",
     tags=["战局接口"],
-    dependencies=[Depends(_read_auth_dependency)],
 )
 def list_battles(
     response: Response,
@@ -1890,7 +2049,6 @@ def replay_battle(battle_id: str) -> dict[str, Any]:
     summary="查询战局详情",
     description="按战局编号恢复攻击、防守和修复结果。",
     tags=["战局接口"],
-    dependencies=[Depends(_read_auth_dependency)],
 )
 def get_battle(battle_id: str) -> BattleRecord:
     record = _battle_store.get(battle_id)
@@ -2131,12 +2289,7 @@ async def rpc(request: Request) -> dict[str, Any]:
     """JSON-RPC endpoint supporting both AIP ``rpc`` and simple agent methods."""
     body = await request.json()
     if body.get("method") == "rpc":
-        response = await handle_rpc_request(
-            request,
-            _aip_handlers,
-            local_aic=_local_aic,
-            identity_binding_enabled=_identity_binding_enabled,
-        )
+        response = await handle_rpc_request(request, _aip_handlers, **_aip_server_options)
         return response.model_dump(by_alias=True, exclude_none=True)
 
     parsed_request = JsonRpcRequest.model_validate(body)

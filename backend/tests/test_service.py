@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict, deque
 import asyncio
+import time
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.storage import BattleStore
 import agent_attack_lab.service as service
@@ -127,6 +128,17 @@ def test_attack_rejects_unknown_difficulty() -> None:
     assert response.status_code == 422
 
 
+def test_attack_and_battle_reject_blank_topic() -> None:
+    assert client.post("/agent/attack", json={"topic": "   \t"}).status_code == 422
+    assert client.post("/battles", json={"topic": "   \n"}).status_code == 422
+
+
+def test_battle_topic_is_trimmed() -> None:
+    response = client.post("/battles", json={"difficulty": "low", "topic": "  登录安全  "})
+    assert response.status_code == 201
+    assert response.json()["topic"] == "登录安全"
+
+
 def test_battle_runs_attack_and_defense() -> None:
     response = client.post("/battles", json={"difficulty": "high", "topic": "SQL 注入"})
     assert response.status_code == 201
@@ -201,6 +213,48 @@ def test_background_battle_persists_staged_events() -> None:
         for event in defended
         for finding in event["data"]["caught"]
     )
+    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+    assert all(event["battleId"] == battle_id for event in events)
+    assert all(event["status"] for event in events)
+
+
+def test_external_case_route_is_read_only_and_keeps_provenance(tmp_path, monkeypatch) -> None:
+    import json
+    from scripts.import_external_cases import import_catalog
+
+    catalog = {
+        "catalogVersion": "service-query-1",
+        "dateReleased": "2026-10-11T00:00:00Z",
+        "vulnerabilities": [{
+            "cveID": "CVE-2099-0100",
+            "vendorProject": "Example Vendor",
+            "product": "Example Product",
+            "vulnerabilityName": "Example issue",
+            "dateAdded": "2026-10-11",
+            "shortDescription": "An external documented issue.",
+            "requiredAction": "Apply the vendor fix.",
+            "cwes": ["CWE-89"],
+        }],
+    }
+    database = tmp_path / "external.sqlite3"
+    import_catalog(
+        database,
+        payload=json.dumps(catalog, sort_keys=True).encode(),
+        catalog=catalog,
+        source_url="https://example.invalid/catalog.json",
+    )
+    monkeypatch.setattr(service, "_external_cases_database", database)
+
+    response = client.get("/external-cases", params={"q": "CVE-2099", "limit": 1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["total"] == 1
+    assert body["items"][0]["recordKind"] == "external_fact"
+    assert body["items"][0]["source"]["catalogVersion"] == "service-query-1"
+    assert "rawJson" not in body["items"][0]
+    assert "/external-cases" in client.get("/openapi.json").json()["paths"]
 
 
 def test_battle_list_limit_is_validated() -> None:
@@ -227,6 +281,41 @@ def test_battle_list_returns_filtered_total_for_pagination(tmp_path, monkeypatch
     assert response.headers["X-Total-Count"] == "3"
     assert len(response.json()) == 1
     assert response.json()[0]["id"] == "battle-page-1"
+
+
+def test_delete_battle_removes_record_and_events(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "battle-delete.sqlite3"))
+    monkeypatch.setattr(service, "_battle_store", store)
+    created = client.post("/battles", json={"difficulty": "low", "topic": "删除测试"})
+    battle_id = created.json()["id"]
+    assert store.list_events(battle_id)
+
+    deleted = client.delete(f"/battles/{battle_id}")
+
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+    assert store.get(battle_id) is None
+    assert store.list_events(battle_id) == []
+    assert client.delete(f"/battles/{battle_id}").status_code == 404
+
+
+def test_delete_battle_rejects_active_record(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "battle-delete-active.sqlite3"))
+    store.save({
+        "id": "battle-active",
+        "difficulty": "low",
+        "topic": "运行中",
+        "status": "running",
+        "createdAt": "2026-10-11T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+
+    response = client.delete("/battles/battle-active")
+
+    assert response.status_code == 409
+    assert store.get("battle-active") is not None
 
 
 def test_battle_events_report_filters_and_leaderboard() -> None:
@@ -436,14 +525,16 @@ def test_read_routes_can_be_protected_together(monkeypatch) -> None:
         headers={"X-API-Key": "read-secret"},
     )
     battle_id = response.json()["id"]
+    for path in ("/battles", f"/battles/{battle_id}", "/dashboard/summary", "/external-cases"):
+        assert client.get(path).status_code == 200
+        assert client.get(path, headers={"X-API-Key": "read-secret"}).status_code == 200
     for path in (
-        "/battles",
-        f"/battles/{battle_id}",
         f"/battles/{battle_id}/events",
         f"/battles/{battle_id}/replay",
+        f"/battles/{battle_id}/audit",
         f"/reports/{battle_id}",
         "/leaderboard",
-        "/dashboard/summary",
+        "/dashboard",
     ):
         assert client.get(path).status_code == 401
         assert client.get(path, headers={"X-API-Key": "read-secret"}).status_code == 200
@@ -468,7 +559,10 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
         headers={"Origin": origin},
     )
     assert denied.status_code == 401
-    assert browser.post("/battles", json={"topic": "未登录"}).status_code == 401
+    anonymous_create = browser.post("/battles", json={"topic": "公开用户"})
+    assert anonymous_create.status_code == 201
+    assert browser.get("/battles").status_code == 200
+    assert browser.get("/dashboard").status_code == 401
 
     login = browser.post(
         "/auth/session",
@@ -488,12 +582,6 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
     assert created.status_code == 201
     assert browser.get("/battles", headers={"Origin": origin}).status_code == 200
 
-    csrf = browser.post(
-        "/battles",
-        json={"topic": "跨站请求"},
-        headers={"Origin": "https://attacker.example"},
-    )
-    assert csrf.status_code == 403
     assert browser.post(
         "/agent/attack",
         json={"difficulty": "low", "topic": "内部路由"},
@@ -502,7 +590,8 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
 
     logout = browser.delete("/auth/session", headers={"Origin": origin})
     assert logout.status_code == 200
-    assert browser.get("/battles", headers={"Origin": origin}).status_code == 401
+    assert browser.get("/battles", headers={"Origin": origin}).status_code == 200
+    assert browser.get("/dashboard").status_code == 401
 
 
 def test_browser_login_requires_configured_password_and_trusted_origin(monkeypatch) -> None:
@@ -531,6 +620,84 @@ def test_browser_login_rate_limit_returns_retry_after(monkeypatch) -> None:
     limited = browser.post("/auth/session", json={"password": "wrong"})
     assert limited.status_code == 429
     assert int(limited.headers["Retry-After"]) > 0
+
+
+def test_cloudflare_access_jwt_authenticates_without_browser_password(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_api_key", "")
+    monkeypatch.setattr(service, "_browser_password", "")
+    monkeypatch.setattr(service, "_cloudflare_access_configured", True)
+    monkeypatch.setattr(
+        service,
+        "_verify_cloudflare_access_jwt",
+        lambda token: token == "valid-access-jwt",
+    )
+
+    public = client.post(
+        "/battles",
+        json={"topic": "公开体验"},
+        headers={"Origin": "http://localhost:5173", "Cf-Access-Jwt-Assertion": "invalid"},
+    )
+    assert public.status_code == 201
+    assert client.get("/dashboard").status_code == 401
+
+    allowed_dashboard = client.get(
+        "/dashboard",
+        headers={"Origin": "http://localhost:5173", "Cf-Access-Jwt-Assertion": "valid-access-jwt"},
+    )
+    assert allowed_dashboard.status_code == 200
+
+    status = client.get(
+        "/auth/session",
+        headers={"Cf-Access-Jwt-Assertion": "valid-access-jwt"},
+    )
+    assert status.json() == {"enabled": True, "authenticated": True}
+
+    assert client.get(
+        "/dashboard",
+        headers={"Origin": "https://attacker.example", "Cf-Access-Jwt-Assertion": "valid-access-jwt"},
+    ).status_code == 403
+
+
+def test_public_battle_creation_has_separate_rate_limit(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_public_battle_limit_per_minute", 1)
+    service._public_battle_rate_windows.clear()
+
+    first = client.post("/battles", json={"topic": "公开限流测试"})
+    second = client.post("/battles", json={"topic": "公开限流测试"})
+
+    assert first.status_code == 201
+    assert second.status_code == 429
+    assert second.headers["Retry-After"].isdigit()
+
+
+def test_cloudflare_access_jwt_verifies_signature_claims_and_expiry(monkeypatch) -> None:
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+
+    class FakeJwkClient:
+        def get_signing_key_from_jwt(self, token: str):
+            return type("SigningKey", (), {"key": public_key})()
+
+    monkeypatch.setattr(service, "_cloudflare_access_configured", True)
+    monkeypatch.setattr(service, "_cloudflare_access_team_domain", "https://team.example.cloudflareaccess.com")
+    monkeypatch.setattr(service, "_cloudflare_access_audience", "audience-1")
+    monkeypatch.setattr(service, "_cloudflare_jwk_client", FakeJwkClient())
+    now = int(time.time())
+
+    def token(**claims: object) -> str:
+        return jwt.encode(
+            {"iss": "https://team.example.cloudflareaccess.com", "aud": "audience-1", "iat": now, **claims},
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "test-key"},
+        )
+
+    assert service._verify_cloudflare_access_jwt(token(exp=now + 300)) is True
+    assert service._verify_cloudflare_access_jwt(token(aud="other", exp=now + 300)) is False
+    assert service._verify_cloudflare_access_jwt(token(exp=now - 1)) is False
 
 
 def test_browser_login_limit_uses_cloudflare_ip_only_from_loopback() -> None:
@@ -589,6 +756,18 @@ def test_lifespan_resumes_interrupted_battle() -> None:
 
 def test_unknown_battle_returns_404() -> None:
     assert client.get("/battles/battle-does-not-exist").status_code == 404
+
+
+def test_battle_audit_route_returns_read_only_integrity_report() -> None:
+    response = client.post("/battles", json={"difficulty": "low", "topic": "审计接口测试"})
+    battle_id = response.json()["id"]
+
+    audit = client.get(f"/battles/{battle_id}/audit")
+
+    assert audit.status_code == 200
+    assert audit.json()["valid"] is True
+    assert audit.json()["eventCount"] >= 4
+    assert "/battles/{battle_id}/audit" in client.get("/openapi.json").json()["paths"]
 
 
 def test_defend_returns_contract_fields() -> None:
@@ -691,6 +870,16 @@ def test_api_key_protects_agent_routes(monkeypatch) -> None:
         json={"difficulty": "low", "topic": "安全测试"},
     )
     assert with_key.status_code == 200
+    created = client.post(
+        "/battles",
+        headers={"X-API-Key": "test-secret"},
+        json={"difficulty": "low", "topic": "删除鉴权测试"},
+    )
+    battle_id = created.json()["id"]
+    assert client.delete(f"/battles/{battle_id}").status_code == 401
+    assert client.delete(
+        f"/battles/{battle_id}", headers={"X-API-Key": "test-secret"}
+    ).status_code == 204
 
 
 def test_api_key_protects_metrics(monkeypatch) -> None:

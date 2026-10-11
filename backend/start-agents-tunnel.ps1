@@ -1,4 +1,4 @@
-param()
+﻿param()
 
 $ErrorActionPreference = "Stop"
 $Cloudflared = Join-Path $env:USERPROFILE "cloudflared.exe"

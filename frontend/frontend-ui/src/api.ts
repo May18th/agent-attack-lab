@@ -42,6 +42,46 @@ export type Battle = {
   defenderOut: Defense[]
 }
 
+export type BrowserSession = {
+  enabled: boolean
+  authenticated: boolean
+}
+
+export type ExternalCase = {
+  externalId: string
+  vendorProject: string
+  product: string
+  title: string
+  dateAdded: string
+  dueDate?: string | null
+  description: string
+  requiredAction: string
+  knownRansomwareUse?: string | null
+  forensicTriage?: string | null
+  notes?: string | null
+  cwes: string[]
+  sourceUrl: string
+  provenanceStatus: string
+  synthetic: boolean
+  recordKind: string
+  source: {
+    publisher: string
+    sourceType: string
+    catalogVersion: string
+    releasedAt?: string | null
+    retrievedAt: string
+    contentSha256: string
+  }
+}
+
+export type ExternalCaseResponse = {
+  available: boolean
+  reason?: string
+  items: ExternalCase[]
+  total: number
+  sourceCount: number
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly requestId?: string
@@ -70,6 +110,7 @@ async function request(path: string, options?: RequestInit): Promise<Response> {
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...options,
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
     })
   } catch {
@@ -108,6 +149,15 @@ export async function apiPage<T>(path: string): Promise<{ items: T[]; total: num
   const rawTotal = response.headers.get('X-Total-Count')
   const headerTotal = rawTotal === null ? Number.NaN : Number(rawTotal)
   return { items, total: Number.isFinite(headerTotal) && headerTotal >= 0 ? headerTotal : items.length }
+}
+
+export async function getBrowserSession(): Promise<BrowserSession> {
+  return api<BrowserSession>('/auth/session')
+}
+
+export async function getExternalCases(query = ''): Promise<ExternalCaseResponse> {
+  const suffix = query.trim() ? `?q=${encodeURIComponent(query.trim())}&limit=5` : '?limit=5'
+  return api<ExternalCaseResponse>(`/external-cases${suffix}`)
 }
 
 export function errorMessage(status: number, detail?: string): string {

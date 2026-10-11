@@ -28,8 +28,7 @@ from acps_sdk.aip.aip_rpc_server import (
     TaskManager,
     handle_rpc_request,
 )
-from fastapi import FastAPI, Request
-
+from agent_attack_lab.aip_compat import server_identity_options
 from agent_attack_lab.agents.llm_runtime import is_configured as llm_configured
 
 
@@ -58,13 +57,22 @@ def create_agent_app(
     process: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> FastAPI:
     local_aic = os.getenv("AGENT_LOCAL_AIC", "").strip() or None
+    # Partner agents use a dedicated switch so the Leader can keep platform
+    # identity binding on while local loopback calls stay on HTTP + API key.
+    # Identity binding only makes sense over real mTLS channels.
     identity_binding_enabled = os.getenv(
-        "AGENT_IDENTITY_BINDING_ENABLED", ""
+        "AGENT_PARTNER_IDENTITY_BINDING_ENABLED", ""
     ).strip().lower() in {"1", "true", "yes", "on"}
     if identity_binding_enabled and not local_aic:
         raise RuntimeError(
-            "AGENT_IDENTITY_BINDING_ENABLED 已开启，但未配置 AGENT_LOCAL_AIC"
+            "AGENT_PARTNER_IDENTITY_BINDING_ENABLED 已开启，但未配置 AGENT_LOCAL_AIC"
         )
+    aip_server_options = server_identity_options(
+        handle_rpc_request,
+        local_aic=local_aic,
+        enabled=identity_binding_enabled,
+        setting_name="AGENT_PARTNER_IDENTITY_BINDING_ENABLED",
+    )
 
     async def on_start(command: TaskCommand, task: TaskResult | None) -> TaskResult:
         result = await DefaultHandlers.start(command, task)
@@ -112,12 +120,7 @@ def create_agent_app(
         api_key = os.getenv("AGENT_RPC_API_KEY", "").strip()
         if api_key and request.headers.get("x-api-key") != api_key:
             raise HTTPException(status_code=401, detail="invalid or missing X-API-Key")
-        response = await handle_rpc_request(
-            request,
-            handlers,
-            local_aic=local_aic,
-            identity_binding_enabled=identity_binding_enabled,
-        )
+        response = await handle_rpc_request(request, handlers, **aip_server_options)
         return response.model_dump(by_alias=True, exclude_none=True)
 
     return app

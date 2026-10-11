@@ -393,6 +393,19 @@ class BattleStore:
             ).fetchall()
         return [self._to_event(row) for row in rows]
 
+    def delete(self, battle_id: str) -> None:
+        """Delete a battle and its event history."""
+        with self._lock:
+            self._connection.execute(
+                "DELETE FROM battle_events WHERE battle_id = " + self._placeholder,
+                (battle_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM battles WHERE id = " + self._placeholder,
+                (battle_id,),
+            )
+            self._connection.commit()
+
     def count(
         self,
         difficulty: str | None = None,

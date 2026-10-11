@@ -14,6 +14,10 @@ uv sync
 .\start.ps1
 ```
 
+`uv sync` 安装 GitHub CI 使用的公共 SDK 基线。生产梧桐部署还需将审核通过的
+`acps_sdk-2.2.0`、`wit_framework-2.1.0` 和 `release-manifest.json` 放入
+`backend/packages/`，再运行 `scripts/install_wit_wheels.ps1`；这些私有文件不提交 Git。
+
 如果服务已经在 8787 端口运行，需要加载最新代码时执行：
 
 ```powershell
@@ -44,6 +48,7 @@ uv run pytest -q
 - `X-Total-Count` 响应头：返回当前筛选条件下的总战局数；跨域前端可以读取，用于准确计算分页。
 - `GET /dashboard/summary`：汇总已保存战局、样本、规则命中和风险记录，并返回本地规则库中不同模拟用例编号的数量。
 - `GET /battles/{battle_id}/events`：读取持久化事件时间线。
+- `GET /battles/{battle_id}/audit`：只读审计事件序列、战局归属和来源完整性。
 - `GET /battles/{battle_id}/replay`：按事件顺序获取回放数据。
 - `GET /battles/{battle_id}/events/stream?follow=true`：SSE 事件流。
 - `POST /battles/{battle_id}/retry`：重试失败的异步战局。
@@ -66,15 +71,29 @@ cd "D:\梧桐\backend"
 
 恢复前先停止后端服务；不传 `-Force` 时不会覆盖已有数据库。
 
-部署到公网时可设置 `AGENT_API_KEY`。设置后，`POST /battles`、`POST /agent/*`、`POST /rpc` 和内部统计接口 `GET /metrics` 必须携带 `X-API-Key` 请求头；本地未设置时保持免密开发模式。
+部署到公网时应设置 `AGENT_API_KEY`。公开网站所需的业务 API 无需该密钥；`POST /agent/*`、`POST /rpc` 和内部统计接口 `GET /metrics` 始终需要服务端 API Key。
 
-### 浏览器登录会话
+### 浏览器组织认证（Cloudflare Access）
 
-公开 Vite 前端不能保存 `AGENT_API_KEY`。需要浏览器直接访问 API 时，在后端同时配置 `AGENT_BROWSER_PASSWORD` 和 `AGENT_API_KEY`，前端通过 `POST /auth/session` 提交登录密码，服务端返回 `HttpOnly` 会话 Cookie。会话认证仅适用于战局 REST 读写接口；`/agent/*`、`/rpc` 和 `/metrics` 仍要求服务端 `X-API-Key`。配置浏览器密码后，战局读写接口自动要求 API Key 或有效浏览器会话。
+公开前端不要求组织认证。若使用 Cloudflare Access，应仅保护后台管理页和内部接口，不要在前端静态资源或公开业务 API 上配置强制登录策略。后端配置 `CF_ACCESS_TEAM_DOMAIN` 和 `CF_ACCESS_AUDIENCE` 后，会对受保护路由校验 Cloudflare 注入的 `Cf-Access-Jwt-Assertion`（JWKS、issuer、audience、过期时间）。
 
-登录接口为 `POST /auth/session`（JSON：`{"password":"..."}`），`GET /auth/session` 查询状态，`DELETE /auth/session` 退出。会话默认 8 小时、最多 24 小时，服务进程重启后失效；当前会话保存在单进程内存中，多 worker/多实例部署前需改用共享会话存储。登录每个客户端 IP 最多 5 次/5 分钟；会话写请求要求 `Origin` 命中 CORS 允许来源。
+```text
+CF_ACCESS_TEAM_DOMAIN=https://<team-name>.cloudflareaccess.com
+CF_ACCESS_AUDIENCE=<Access application AUD tag>
+```
 
-浏览器请求必须启用 `credentials: "include"`。公网设置精确的 `AGENT_CORS_ORIGINS=https://<前端域名>`，使用 HTTPS，并保持 `AGENT_BROWSER_COOKIE_SECURE=1`、`AGENT_BROWSER_COOKIE_SAMESITE=lax`。启用浏览器登录后会关闭 Quick Tunnel 通配正则；登录 Origin 必须精确匹配白名单。本地 HTTP 开发可设置 `AGENT_BROWSER_COOKIE_SECURE=0`，并让前后端使用同一主机名，例如前端 `localhost:5173`、API `localhost:8787`；不要混用 `localhost` 和 `127.0.0.1`。登录密码与 API Key 仅写在后端 `.env`，不要放入 `VITE_*` 或提交到 GitHub。
+`CF_ACCESS_TEAM_DOMAIN` 与 `CF_ACCESS_AUDIENCE` 必须同时配置；不要把任何 Access token、API Token 或
+服务端 API Key 放入 `VITE_*` 或提交到 GitHub。正式部署仍应配置服务端 `AGENT_API_KEY`，供 `/agent/*`、`/rpc`、`/metrics` 和管理接口使用；`/health` 及公开业务 API 可供公众访问。
+
+### 兼容的浏览器登录会话
+
+公开 Vite 前端不要求登录，且不能保存 `AGENT_API_KEY`。公开业务接口包括战局创建、列表与详情、统计摘要和外部案例查询；创建战局默认每客户端每分钟最多 10 次，可用 `AGENT_PUBLIC_BATTLE_LIMIT_PER_MINUTE` 调整。该限流保存在单进程内存中，多 worker/多实例部署还应在入口代理配置限流。反向代理必须覆盖 `X-Real-IP` 为实际客户端地址，后端仅在请求来自 loopback 代理时信任该头。
+
+后台 HTML 页面 `/dashboard`、战局重试/删除、审计/报告/事件回放/SSE，以及 `/agent/*`、`/rpc` 和 `/metrics` 继续使用后端认证。配置 `AGENT_BROWSER_PASSWORD` 后，可用 `/auth/session` 建立 HttpOnly 会话；内部 API 仍使用服务端 `X-API-Key`。不得把服务端密钥写入 `VITE_*` 或前端构建产物。
+
+后台登录接口为 `POST /auth/session`（JSON：`{"password":"..."}`），`GET /auth/session` 查询状态，`DELETE /auth/session` 退出。会话默认 8 小时、最多 24 小时，服务进程重启后失效；当前会话保存在单进程内存中，多 worker/多实例部署前需改用共享会话存储。登录每个客户端 IP 最多 5 次/5 分钟；会话写请求要求 `Origin` 命中 CORS 允许来源。
+
+后台浏览器会话请求使用 `credentials: "include"`。公网设置精确的 `AGENT_CORS_ORIGINS=https://<前端域名>`，使用 HTTPS，并保持 `AGENT_BROWSER_COOKIE_SECURE=1`、`AGENT_BROWSER_COOKIE_SAMESITE=lax`。启用后台浏览器登录后会关闭 Quick Tunnel 通配正则；登录 Origin 必须精确匹配白名单。本地 HTTP 开发可设置 `AGENT_BROWSER_COOKIE_SECURE=0`，并让前后端使用同一主机名，例如前端 `localhost:5173`、API `localhost:8787`；不要混用 `localhost` 和 `127.0.0.1`。登录密码与 API Key 仅写在后端 `.env`，不要放入 `VITE_*` 或提交到 GitHub。
 
 SQLite 开发库默认启用 WAL 和 5 秒忙等待，并为时间、难度和状态筛选建立索引，以降低并发读写时的锁冲突。
 
@@ -129,7 +148,17 @@ $env:no_proxy = "localhost,127.0.0.1,::1"
 
 事件记录默认限制为 32 KB；超限样本会截短并添加 `dataTruncated` 标记，可通过 `AGENT_EVENT_DATA_MAX_BYTES` 调整，最小值为 1 KB。
 
-设置 `AGENT_PROTECT_READS=1` 后，战局列表/详情、事件、回放、战报、排行榜和 SSE 接口需要服务端 API Key 或有效浏览器会话（已配置 `AGENT_BROWSER_PASSWORD` 时）。本地默认关闭。不要将服务端密钥直接写进公开前端代码。
+### 外部安全案例库
+
+外部案例库是只读的来源参考库，当前导入 CISA 官方 KEV JSON，并保留发布版本、抓取时间、来源 URL
+和内容 SHA-256。查询接口为 `GET /external-cases`，支持 `q`、`vendor`、`product`、`limit` 和 `offset`；
+返回结果会明确标注 `verified_primary`、`external_fact` 和来源元数据。外部案例不自动写入战局，也不代表
+项目已经观察到真实攻击事件。完整字段和校验命令见 [`docs/EXTERNAL_CASE_LIBRARY.md`](../docs/EXTERNAL_CASE_LIBRARY.md)。
+
+外部目录版本差异可用 `uv run python scripts/compare_external_cases.py` 查看。提交前运行
+`uv run python scripts/check_sensitive_files.py --staged`；CI 会阻止证书、私钥、凭据、数据库、JSONL、私有 wheel 和本地配置进入仓库。
+
+设置 `AGENT_PROTECT_READS=1` 后，后台事件、回放、战报、排行榜、审计和 SSE 等非公开页面读取接口需要服务端 API Key 或有效浏览器会话。面向公众的 Vite 前端所需 API 不受该开关影响。本地默认关闭。不要将服务端密钥直接写进公开前端代码。
 
 SQLite 会记录 `schema_migrations` 基线版本并以幂等 DDL 自动补齐当前表和索引。Alembic 版本迁移位于 `backend/alembic/`，执行 `uv run alembic upgrade head`。PostgreSQL 使用 psycopg 连接池，MySQL 使用 SQLAlchemy/PyMySQL 连接池；最大连接数可通过 `AGENT_DB_POOL_MAX_SIZE` 调整。MySQL 连接配置和目标实例验收步骤见 `docs/DEPLOYMENT.md`。
 

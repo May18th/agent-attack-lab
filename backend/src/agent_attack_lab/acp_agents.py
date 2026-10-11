@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -82,6 +83,17 @@ def _identity_binding_options(role: Role, ssl_context: ssl.SSLContext | None) ->
     }
 
 
+def _supported_options(callable_obj: Any, options: dict[str, Any]) -> dict[str, Any]:
+    """Keep calls compatible with both the locked and public ACP SDK shapes."""
+    parameters = inspect.signature(callable_obj).parameters
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return options
+    return {key: value for key, value in options.items() if key in parameters}
+
+
 def _task_data(task: TaskResult) -> dict[str, Any]:
     state = _state_name(task)
     if state in {"failed", "rejected", "canceled"}:
@@ -146,14 +158,34 @@ async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
             verify=ssl_context if ssl_context else True,
             trust_env=False,
         )
-        client = AipRpcClient(
-            partner_url=endpoint,
-            leader_id=os.getenv("AGENT_AIP_LEADER_ID", "agent-attack-lab-dev").strip()
+        client_options = {
+            "partner_url": endpoint,
+            "leader_id": os.getenv("AGENT_AIP_LEADER_ID", "agent-attack-lab-dev").strip()
             or "agent-attack-lab-dev",
-            ssl_context=ssl_context,
-            transport=transport,
+            "ssl_context": ssl_context,
+            "transport": transport,
             **_identity_binding_options(role, ssl_context),
+        }
+        client_parameters = inspect.signature(AipRpcClient).parameters
+        client = AipRpcClient(
+            **_supported_options(AipRpcClient, client_options),
         )
+        if (
+            "transport" not in client_parameters
+            and not any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in client_parameters.values()
+            )
+        ):
+            # acps-sdk 2.1.0 has no transport constructor argument. Replace its
+            # default client so loopback calls still ignore ambient proxy settings.
+            original_http = client.http_client
+            client.http_client = httpx.AsyncClient(
+                transport=transport,
+                verify=ssl_context if ssl_context else True,
+                trust_env=False,
+            )
+            await original_http.aclose()
         rpc_api_key = os.getenv("AGENT_RPC_API_KEY", "").strip()
         if rpc_api_key:
             # SDK 客户端不支持自定义 header；替换其内部 httpx 客户端注入 X-API-Key。
