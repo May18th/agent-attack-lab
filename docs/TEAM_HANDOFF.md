@@ -694,10 +694,10 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 剩余待办：
 
-- 豆包验收回执称 Discovery 仅命中 Leader 与两个新 AIC，均 active、endpoint 正确、声明 mutualTLS，旧 AIC 不再收录；桌面/移动端 low/mid/high 六场均 completed。移动自动化使用 `deviceScaleFactor=1` 与 `requestSubmit()`；公网证书可信、`/health` 200、无证书 `/rpc` 403，17:07/18:07 两次巡检正常。本机未独立复验。
+- 项目验收记录称 Discovery 仅命中 Leader 与两个新 AIC，均 active、endpoint 正确、声明 mutualTLS，旧 AIC 不再收录；桌面/移动端 low/mid/high 六场均 completed。移动自动化使用 `deviceScaleFactor=1` 与 `requestSubmit()`；公网证书可信、`/health` 200、无证书 `/rpc` 403，17:07/18:07 两次巡检正常。本机未独立复验。
 - VPS 当前为 `61beebe`，OpenAPI 不含 `DELETE /battles/{battle_id}`；本地 `7edf500` 有该路由及空主题 422 校验测试，但尚未合入 `origin/main` `6d713fb`。先经团队审核更新生产版本，再按 `docs/CURRENT_STATUS.md` 验收。
 - `battle-694dce7f` 在本机库和 VPS 默认战局库均未找到，不执行删除；若回执指向其他数据源，先确认位置。
-- Agent 仍由规则兜底，外部 LLM 接入待负责人决策。负责人已确认停用每小时巡检；本机任务计划和 VPS systemd timers/user crontab 均未发现对应任务，本轮未能停用。未联系豆包。
+- Agent 仍由规则兜底，外部 LLM 接入待负责人决策。负责人已确认停用每小时巡检；本机任务计划和 VPS systemd timers/user crontab 均未发现对应任务，本轮未能停用。
 
 ### 本轮队友 Git 待办（2026-10-11）
 
@@ -712,6 +712,6 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 验收完成标准：生产 API 路由与当前代码一致，以上状态码及事件清理通过；既有 mTLS 和 Discovery 状态未回退。
 
-已知待决：攻击/防守 Agent 当前使用规则兜底，外部 LLM 是否接入由负责人决定；负责人确认停用每小时巡检，但本机和 VPS 可见的任务计划均未找到对应项，因此外部调度状态未确认。不要联系豆包，不要擅自停用其他任务。
+已知待决：攻击/防守 Agent 当前使用规则兜底，外部 LLM 是否接入由负责人决定；负责人确认停用每小时巡检，但本机和 VPS 可见的任务计划均未找到对应项，因此外部调度状态未确认。不要擅自停用其他任务。
 
 禁止提交 `.env`、API Key、Registry token、EAB、证书/私钥、Tunnel token、数据库或训练 JSONL；不得批量删除战局或改动 Cloudflare/Registry 权威记录。

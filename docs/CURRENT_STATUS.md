@@ -21,10 +21,10 @@
 
 平台 Discovery 已于 2026-10-11 实测返回两个新 AIC 均为 `active`，authoritative ACS
 endpoint 分别为固定 attack/defense RPC 地址，且 endpoint security 声明为 `mtls`。负责人
-已确认旧 AIC 已在平台删除；豆包验收回执称 Discovery 已同步，旧 AIC 不再收录。远端 `.env` 和
+已确认旧 AIC 已在平台删除；项目验收记录称 Discovery 已同步，旧 AIC 不再收录。远端 `.env` 和
 systemd 备份均留在服务器受限目录，未进入 Git。
 
-豆包验收回执（2026-10-11，本机未独立复验）：Discovery 仅命中 Leader 与两个新 Partner，三者
+项目验收记录（2026-10-11，本机未独立复验）：Discovery 仅命中 Leader 与两个新 Partner，三者
 均为 `active`，endpoint 正确且声明 `mutualTLS`；两个旧 AIC 不再收录。桌面端与移动端分别完成
 low/mid/high 六场战局，全部为 `completed`。移动自动化改用 `deviceScaleFactor=1` 与
 `requestSubmit()` 后通过，布局无溢出。公网证书可信、`/health` 为 200、无证书 `/rpc` 为 403；
@@ -47,7 +47,7 @@ low/mid/high 六场战局，全部为 `completed`。移动自动化改用 `devic
 ## 当前阻塞
 
 - GitHub Actions 已在 PR `#2` 通过：后端测试、前端构建检查均为 SUCCESS；Cloudflare Pages 与 Workers Preview 也已通过。
-- 稳定 Agent `/rpc` 地址、serverAuth、源站 nginx mTLS、Registry authoritative ACS/Discovery 均已有验收结果；豆包回执称旧 AIC 不再被 Discovery 收录。
+- 稳定 Agent `/rpc` 地址、serverAuth、源站 nginx mTLS、Registry authoritative ACS/Discovery 均已有验收结果；项目验收记录称旧 AIC 不再被 Discovery 收录。
 - 管理员已确认攻击/防守使用新 workspace、新 AIC；旧 AIC 已从平台删除，不再作为恢复目标。
 - 已新增 `backend/scripts/register_partner_agents.py`：默认仅生成/校验两个独立 integrated 草稿；显式 `--submit` 才提交 Registry，凭据只从当前进程环境读取。
 - 两个新 Partner 已由本机完成注册并进入 `active`：攻击 AIC `1.2.156.3088.1.BUPT.RX2TMW.LMB4VK.NJ99P0.08RN`，防守 AIC `1.2.156.3088.1.BUPT.RX2TMW.KYUDTI.BI8UKQ.09SG`；Discovery 实测已确认 authoritative ACS 固定 endpoint 和 `mtls` 安全声明，证书材料已同步 VPS 受限目录。
@@ -78,7 +78,7 @@ low/mid/high 六场战局，全部为 `completed`。移动自动化改用 `devic
 ## 下一步
 
 1. 通过团队审核把包含 `7edf500` 的正确代码合入部署分支并更新 VPS；随后验证 DELETE 路由，再在安全环境验证空白 topic POST 返回 422。
-2. 豆包回执提及的 `battle-694dce7f` 在本机数据库和 VPS 默认 `backend/.data/battles.sqlite3` 均未找到，无需执行删除；若它来自其他数据库，需先确认数据源再清理。
+2. 既有验收记录中的 `battle-694dce7f` 在本机数据库和 VPS 默认 `backend/.data/battles.sqlite3` 均未找到，无需执行删除；若它来自其他数据库，需先确认数据源再清理。
 3. 由负责人决定是否接入外部 LLM；当前攻击/防守 Agent 使用规则兜底。外部案例库后续只接入可核验的一手来源，并经人工复核。
 4. 负责人已确认停用每小时巡检；本机 Windows 任务计划和 VPS systemd timers/user crontab 均未找到对应任务，因此本轮未能停用。实际任务若位于外部平台，需由该平台所有者在其控制台停止。
 

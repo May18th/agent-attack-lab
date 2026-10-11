@@ -64,7 +64,7 @@ Remove-Item Env:ACPS_USERNAME,Env:ACPS_PASSWORD
 分别为 `https://attack.yuanyiagentzhandui.cn/rpc` 和
 `https://defense.yuanyiagentzhandui.cn/rpc`，security 均为 `mtls`。该次查询时旧
 Quick Tunnel/AIC 是否已废弃尚未从 Discovery 确认。负责人随后确认旧 AIC 已在平台删除；
-豆包后续验收回执称旧 AIC 已不再收录，两个新 Partner 仍为 `active`，endpoint 和
+后续项目验收记录称旧 AIC 已不再收录，两个新 Partner 仍为 `active`，endpoint 和
 `mutualTLS` 声明正确；本机未独立复验。
 
 ## mTLS 链路阻塞（2026-10-11）
