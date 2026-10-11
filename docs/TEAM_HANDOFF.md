@@ -8,6 +8,7 @@
 
 - Cloudflare Build trigger `codex/deployment-status-sync` 仅匹配该分支。已将 root directory 设为 `/frontend/frontend-ui`、build command 设为 `npm run build`；保留 Preview command `npx wrangler preview` 和现有路径筛选。
 - PR #3 提交 `9b34aacebc2f31aff3783ce2a9245cf56208da54` 的 Cloudflare Build `1a8b6b30-fae2-444e-8a5f-6a2f5babb5cc` 成功；GitHub Workers Builds check 为 success。Preview URL `https://codex-deployment-status-sync-agent-attack-lab.3498414260.workers.dev` 返回 HTTP 200。
+- 后续文档同步提交 `43e2f50d25605df96af10c6f67fc709be1f48ca1` 的自动 Preview build `fa2e3b8f-b976-49fa-80be-c8f3295270b9` 成功；该提交对应的 PR 后端、前端、Pages 和 Workers Builds 检查均通过。
 - Preview URL 公开可访问。构建环境未配置 `VITE_AGENT_API`，前端默认请求 `http://127.0.0.1:8787`，因此 Preview 首页可打开不代表浏览器能连到后端。生产 API `/health` 的只读请求返回 200，但没有把公开 Preview 指向生产 API，以避免预览写请求污染正式数据。后续前后端联调需使用隔离 API，并明确其数据与访问控制。
 - 本次没有改生产部署命令、DNS、Worker 生产代码或其他分支，也没有创建、修改或删除生产战局。
 
