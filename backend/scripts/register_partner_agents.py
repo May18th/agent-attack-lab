@@ -30,7 +30,7 @@ WORKSPACE_ROOT = ROOT / ".data" / "acps-registration-renewal"
 INFRA = {
     "registry_url": "https://wt.ioa.pub/registry-server",
     "ca_url": "https://wt.ioa.pub/ca-server",
-    "discovery_url": "https://wt.ioa.pub/discovery",
+    "discovery_url": "https://wt.ioa.pub/discovery/acps-adp-v2/discover",
 }
 
 

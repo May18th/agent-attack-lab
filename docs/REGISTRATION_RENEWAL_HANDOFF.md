@@ -57,20 +57,24 @@ Remove-Item Env:ACPS_USERNAME,Env:ACPS_PASSWORD
 
 两套 Partner 均已签发并本地验证 `clientAuth`、`serverAuth` 和 trust bundle；证书有效期至
 2027-10-11。证书和私钥已同步到 VPS 的 `/home/deployer/.config/agent-attack-lab/partners/`
-受限目录，私钥权限为 `600`，远端文件与本机哈希一致。业务服务仍使用现有 API Key 入口，
-strict mTLS listener 尚未切换，不能把材料同步描述为公网 mTLS 已验收。
+受限目录，私钥权限为 `600`，远端文件与本机哈希一致。后续生产 mTLS 已落地，详见
+`docs/CURRENT_STATUS.md` 和 `docs/TEAM_HANDOFF.md` 的最新状态章节。
+
+2026-10-11 Discovery 只读复核：两个新 AIC 均返回 `active`，authoritative ACS endpoint
+分别为 `https://attack.yuanyiagentzhandui.cn/rpc` 和
+`https://defense.yuanyiagentzhandui.cn/rpc`，security 均为 `mtls`。该次查询时旧
+Quick Tunnel/AIC 是否已废弃尚未从 Discovery 确认。负责人随后确认旧 AIC 已在平台删除；
+豆包后续验收回执称旧 AIC 已不再收录，两个新 Partner 仍为 `active`，endpoint 和
+`mutualTLS` 声明正确；本机未独立复验。
 
 ## mTLS 链路阻塞（2026-10-11）
 
-源站只读核验结果：VPS 只有 `127.0.0.1:8787/8788/8789`，没有 `443` 或 `8443` 监听，
-也没有 nginx、Caddy 或 HAProxy；Cloudflare Tunnel 当前把橙云 HTTPS 公共证书终止在边缘，
-因此客户端实际拿到的不是梧桐 serverAuth 证书。`deployer` 当前没有免密 sudo，不能由本账号
-安全地绑定 443、修改系统反代或切换 DNS。已完成的 workspace 同步不等于 mTLS 上线。
+本节记录的是生产 mTLS 部署前的历史阻塞。该阻塞已解除：源站 nginx 443 mTLS、DNS only 和
+公网验收结果见 `docs/TEAM_HANDOFF.md` 的“生产 Partner mTLS 已完成”章节。
 
-下一条人工部署动作（需服务器管理员提供 root/sudo 或执行）是：在源站用对应 workspace
-的 server certificate/private key/trust bundle 配置 443 mTLS listener，`/rpc` 强制客户端证书，
-`/health` 可单独保留健康检查；随后将两个 DNS 记录改为 DNS only（灰云）或使用明确支持端到端
-mTLS 的代理方案。完成前不要切换 Leader 到 mTLS，也不要关闭现有 API Key Tunnel。
+本段部署动作属于历史记录，当前部署已完成。现行验收和剩余工作以
+`docs/CURRENT_STATUS.md` 与 `docs/TEAM_HANDOFF.md` 的最新状态章节为准；不要按本历史段落
+重复配置 listener 或切换 DNS。
 
 ## 禁止事项
 

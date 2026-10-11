@@ -694,6 +694,7 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 剩余待办：
 
-- 由平台侧把两个新 AIC 的 authoritative ACS endpoint 和 Discovery 更新为固定地址，并标记旧
-  Quick Tunnel/AIC 废弃；本机文件修改不能替代 Registry 权威记录。
-- Registry 收口后重新拉取 Discovery，再从外部入口复测三档战局及桌面/移动端。
+- 豆包验收回执称 Discovery 仅命中 Leader 与两个新 AIC，均 active、endpoint 正确、声明 mutualTLS，旧 AIC 不再收录；桌面/移动端 low/mid/high 六场均 completed。移动自动化使用 `deviceScaleFactor=1` 与 `requestSubmit()`；公网证书可信、`/health` 200、无证书 `/rpc` 403，17:07/18:07 两次巡检正常。本机未独立复验。
+- VPS 当前为 `61beebe`，OpenAPI 不含 `DELETE /battles/{battle_id}`；本地 `7edf500` 有该路由及空主题 422 校验测试，但尚未合入 `origin/main` `6d713fb`。先经团队审核更新生产版本，再按 `docs/CURRENT_STATUS.md` 验收。
+- `battle-694dce7f` 在本机库和 VPS 默认战局库均未找到，不执行删除；若回执指向其他数据源，先确认位置。
+- Agent 仍由规则兜底，外部 LLM 接入待负责人决策。负责人已确认停用每小时巡检；本机任务计划和 VPS systemd timers/user crontab 均未发现对应任务，本轮未能停用。未联系豆包。
