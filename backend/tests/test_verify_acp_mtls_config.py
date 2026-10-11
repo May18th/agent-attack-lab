@@ -37,8 +37,12 @@ def _base_env(tmp_path: Path) -> dict[str, str]:
 def _run_script(tmp_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     if POWERSHELL is None:
         pytest.skip("PowerShell is not available")
+    command = (
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+        f"& '{SCRIPT}' {' '.join(arguments)}"
+    )
     return subprocess.run(
-        [POWERSHELL, "-NoProfile", "-File", str(SCRIPT), *arguments],
+        [POWERSHELL, "-NoProfile", "-Command", command],
         cwd=SCRIPT.parents[1],
         env=_base_env(tmp_path),
         capture_output=True,
