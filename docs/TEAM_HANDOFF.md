@@ -672,3 +672,28 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - 公网直连 `47.108.92.113:443` 当前超时，本机无 nftables/ufw/iptables 规则，需在阿里云安全组放行 TCP 443。
 - attack/defense 的 DNS 已恢复为橙云 Tunnel，避免在源站未开放前中断现有入口。放行 443 后应将记录改为
   `A -> 47.108.92.113`、DNS only；不能把现有 `CNAME -> cfargotunnel.com` 直接改灰云后当作源站直连。
+
+### 生产 Partner mTLS 已完成（2026-10-11）
+
+本轮已直接在 VPS 完成并验收推荐方案：
+
+1. nginx 443 双域名 listener 已启用；两个 `/health` 免客户端证书，两个 `/rpc` 无证书均返回
+   403，带合法 clientAuth 证书均完成 TLS 握手。
+2. Cloudflare `attack`、`defense` 均为 `A -> 47.108.92.113`、DNS only；主 API 的命名隧道
+   未停止，仍用于 `api.yuanyiagentzhandui.cn`。
+3. Partner 应用层 `AGENT_RPC_API_KEY` 已移除，Leader API 自身的浏览器/API 鉴权未改；Leader
+   已配置两个固定 RPC endpoint、clientAuth 证书和 trust bundle。由于 nginx 终止 TLS，未启用
+   依赖直连 Uvicorn socket 的 `EXPECTED_AIC` 应用绑定参数。
+4. 因 nginx 终止 TLS，Partner 不启用依赖 Uvicorn 直连 TLS socket 的 SDK 应用身份绑定；公网
+   clientAuth 仍由 nginx 强制，后端端口没有暴露到公网。
+5. 三档实战验收通过：VPS 上 low/mid/high 均创建 HTTP 201，最终状态均为 `completed`；攻击和
+   防守 AIP 调用均返回结构化结果，当前 `agentSource=acp-rule-fallback`。
+
+远端变更均保留了带时间戳的 `.env` 和 systemd 单元备份，未复制回本机或提交 Git。不要提交
+`.env`、API Key、EAB、client/server 私钥、证书正文或 Tunnel token。
+
+剩余待办：
+
+- 由平台侧把两个新 AIC 的 authoritative ACS endpoint 和 Discovery 更新为固定地址，并标记旧
+  Quick Tunnel/AIC 废弃；本机文件修改不能替代 Registry 权威记录。
+- Registry 收口后重新拉取 Discovery，再从外部入口复测三档战局及桌面/移动端。

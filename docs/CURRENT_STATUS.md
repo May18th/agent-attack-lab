@@ -4,6 +4,25 @@
 
 本文是当前状态的短版事实源；历史细节保留在 `TEAM_HANDOFF.md`、审计报告和 Git 提交记录中。
 
+## 生产 mTLS 最新状态（2026-10-11）
+
+- 已在 `47.108.92.113` 通过 nginx 启用 `attack.yuanyiagentzhandui.cn` 和
+  `defense.yuanyiagentzhandui.cn` 的 443 TLS；`/health` 免客户端证书，`/rpc` 强制
+  clientAuth，后端 8788/8789 仍只监听 `127.0.0.1`。
+- Cloudflare 两条 Partner 记录已为 `A -> 47.108.92.113`、DNS only；没有直接把旧
+  `cfargotunnel.com` CNAME 灰云化。主 API 命名隧道继续保留作为独立入口和回滚通道。
+- 远端 Partner 应用层旧 `AGENT_RPC_API_KEY` 已移除；Leader API 仍保留自己的浏览器/API
+  鉴权。Leader 使用已同步的 clientAuth 证书和 trust bundle 访问两个固定公网 endpoint。
+- Linux 端公网验收：两个 `/health` 均 HTTP 200；两个 `/rpc` 无客户端证书均 HTTP 403；
+  带合法 clientAuth 证书均完成 TLS 并进入应用层。Leader 到攻击、防守真实 AIP 调用均返回
+  结构化结果；VPS 上 low/mid/high 三档战局均创建 HTTP 201 并完成 `completed`。
+- 当前 nginx 负责传输层 mTLS，Partner 应用不启用依赖直连 Uvicorn TLS socket 的 SDK
+  `identity_binding_enabled`；这是 TLS 在 nginx 终止时的边界设计，不代表关闭公网 mTLS。
+
+剩余外部动作只有平台注册状态收口：将两个新 AIC 的 authoritative ACS endpoint 和
+Discovery 记录更新为固定地址，并由平台侧确认旧 Quick Tunnel/AIC 废弃。远端 `.env` 和
+systemd 备份均留在服务器受限目录，未进入 Git。
+
 ## 已验证
 
 - 当前协作分支：`codex/team-domain-handoff`；本轮整理前基线提交为 `eeeaa86`。
@@ -21,14 +40,14 @@
 ## 当前阻塞
 
 - GitHub Actions 已在 PR `#2` 通过：后端测试、前端构建检查均为 SUCCESS；Cloudflare Pages 与 Workers Preview 也已通过。
-- 稳定 Agent `/rpc` 地址已部署并验收；serverAuth 证书和真实端到端 mTLS 仍未完成，本地 API Key 验收不能替代平台 mTLS 验收。
+- 稳定 Agent `/rpc` 地址、serverAuth 和源站 nginx mTLS 已部署并完成公网 Linux 验收；剩余是平台 authoritative ACS/Discovery 收口，不得用本地文件替代平台记录。
 - Registry authoritative ACS 仍登记已失效 Quick Tunnel；平台客户端接口规定 APPROVED Agent 不能由普通账号更新，需平台工作人员保留原 AIC 执行端点迁移并同步 Discovery。当前本地 ACS 文件已改为固定域名，但不代表 Registry 已更新。
 - 管理员已确认攻击/防守走新 workspace、新 AIC 重新注册；旧 AIC 不再作为恢复目标。注册前仍需保留旧 discovery 记录的废弃标记，避免重复身份混用。
 - 已新增 `backend/scripts/register_partner_agents.py`：默认仅生成/校验两个独立 integrated 草稿；显式 `--submit` 才提交 Registry，凭据只从当前进程环境读取。
 - 两个新 Partner 已由本机完成注册并进入 `active`：攻击 AIC `1.2.156.3088.1.BUPT.RX2TMW.LMB4VK.NJ99P0.08RN`，防守 AIC `1.2.156.3088.1.BUPT.RX2TMW.KYUDTI.BI8UKQ.09SG`；authoritative ACS 已确认固定 endpoint，证书材料已同步 VPS 受限目录。Leader 映射和 strict mTLS 切换仍待验收。
-- mTLS 异常已定位：VPS 当前仍无 443/8443 listener 或反代，Cloudflare 橙云在边缘终止公共 TLS；两个完整 `acps/` workspace 已同步到 VPS 受限目录，但当前 API Key Tunnel 不能算端到端 mTLS。`deployer` 已具备全量免密 sudo（实测 `sudo -n whoami=root`），可直接执行源站 443 mTLS、灰云切换和验收；完成前保留现有 API Key Tunnel。
+- mTLS 生产切换已完成：nginx 443 双域名按路径强制 clientAuth，Partner 后端只监听回环地址；主 API 命名隧道保留，Partner 不再依赖应用层 API Key。
 - 预部署核验：远端 8787/8788/8789 `/health` 均返回 200，四个用户级服务 active；两套 serverAuth 的 SAN/EKU/有效期正确，`server/certificate.pem` 均包含 leaf + Agent CA Intermediate，使用对应 trust bundle 验证为 OK。443 部署必须保持完整证书链，并使用 `backend/scripts/verify-partner-mtls.sh` 做公网握手验收。
-- 源站 nginx 已安装并启用 443 双域名 mTLS；源站本机验收为 `/health` 200、无证书 `/rpc` 403、有客户端证书 `/rpc` 完成 TLS 后返回应用层 401。公网直连 443 仍被阿里云安全组阻断，Partner 的 `AGENT_RPC_API_KEY` 暂未移除，attack/defense DNS 已恢复橙云 Tunnel 作为回滚入口。
+- 源站 nginx 已安装并启用 443 双域名 mTLS；公网直连验收为 `/health` 200、无证书 `/rpc` 403、合法 clientAuth `/rpc` 进入应用层。阿里云安全组已放行 443，attack/defense DNS 为 A 记录 DNS only。
 - VPS `47.108.92.113:22` 已恢复；公网 API、固定 Partner 域名和用户级服务常驻状态均已核验。
 - 正式发行物和本机运行时预检已经通过；该结果只解除发行物完整性阻塞，不代表 Registry 注册、WIT Direct 或生产 mTLS 已完成。
 - Cloudflare Pages 与 Workers Preview 构建已验收；生产域名、Tunnel、DNS/SSL 和公网 API 状态仍需在合并/部署后按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 复验。
