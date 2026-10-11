@@ -4,6 +4,14 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-12 Workers Builds Preview 复核
+
+- Cloudflare Build trigger `codex/deployment-status-sync` 仅匹配该分支。已将 root directory 设为 `/frontend/frontend-ui`、build command 设为 `npm run build`；保留 Preview command `npx wrangler preview` 和现有路径筛选。
+- PR #3 提交 `9b34aacebc2f31aff3783ce2a9245cf56208da54` 的 Cloudflare Build `1a8b6b30-fae2-444e-8a5f-6a2f5babb5cc` 成功；GitHub Workers Builds check 为 success。Preview URL `https://codex-deployment-status-sync-agent-attack-lab.3498414260.workers.dev` 返回 HTTP 200。
+- 后续文档同步提交 `43e2f50d25605df96af10c6f67fc709be1f48ca1` 的自动 Preview build `fa2e3b8f-b976-49fa-80be-c8f3295270b9` 成功；该提交对应的 PR 后端、前端、Pages 和 Workers Builds 检查均通过。
+- Preview URL 公开可访问。构建环境未配置 `VITE_AGENT_API`，前端默认请求 `http://127.0.0.1:8787`，因此 Preview 首页可打开不代表浏览器能连到后端。生产 API `/health` 的只读请求返回 200，但没有把公开 Preview 指向生产 API，以避免预览写请求污染正式数据。后续前后端联调需使用隔离 API，并明确其数据与访问控制。
+- 本次没有改生产部署命令、DNS、Worker 生产代码或其他分支，也没有创建、修改或删除生产战局。
+
 ## 1. 分工
 
 前端负责页面、输入控件、加载状态、错误提示，以及攻击样本和防守结果展示。
@@ -20,7 +28,7 @@ AIC、CAI、ACS、mTLS 证书和平台审核由后端负责人处理，前端不
 http://127.0.0.1:8787
 ```
 
-计划公网 API（尚未验收）：
+公网 API：
 
 ```text
 https://api.yuanyiagentzhandui.cn
@@ -718,13 +726,15 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 禁止提交 `.env`、API Key、Registry token、EAB、证书/私钥、Tunnel token、数据库或训练 JSONL；不得批量删除战局或改动 Cloudflare/Registry 权威记录。
 
-### 本机复核与队友审核入口（2026-10-11）
+### 合并与公网部署复核（2026-10-11）
 
-- 当前协作分支 `codex/team-domain-handoff` 的 HEAD 为 `03c935c`，与远端同步；PR #2 为 OPEN/CLEAN，GitHub 后端测试、前端检查、Cloudflare Pages、Workers Builds 均成功，尚无 review。
-- 本机重新验证：后端 `96 passed, 4 skipped`；前端 `19 passed`；lint/build 与跟踪及暂存区敏感文件检查均通过。
-- CISA 官方 KEV 源版本 `2026.10.08`，1,739 条；与本机快照差异为新增 0、删除 0、变更 0，官方源 SHA-256 为 `fb1621beec7db19d99c1f919dede3d4cc01ad88acd16f79f1592929c4826dfee`。
-- 当前代码包含空白 topic 422 校验和 DELETE 战局接口；生产是否已部署到含这些接口的提交，必须在队友合并/部署后检查 OpenAPI 与状态码。本轮没有操作或重新测试 VPS、Cloudflare、Registry。
-- 生产 Partner mTLS 和端到端结果沿用本文件前文的 2026-10-11 验收记录，不把它描述为本轮重新验收。外部 LLM 仍按负责人决定暂不配置；每小时巡检的外部调度状态仍未确认。
-- 本机未跟踪材料（含发行 wheel 与队友文档/代码副本）未改动、未暂存、未提交。长期记忆、密钥、证书、数据库、JSONL 和私有发行物不进入 Git。
+- PR #2 已于 `2026-10-11T15:16:01Z` 合并，合并提交 `ae959fb6a11bbe398e914dd9b2bb5f0c606f24a7`，PR head `47d5916e59dd2433aa7a70ac10ed224f39bd3ec9`。后端测试、前端检查、Cloudflare Pages、Workers Builds 四项 CI 均成功。
+- 正式前端 `https://yuanyiagentzhandui.cn` 与 `https://www.yuanyiagentzhandui.cn` 本轮只读请求均为 HTTP 200，首页加载 `/assets/index-BzFvd3kT.js`。检查该 JS bundle 未发现密码输入表单、`/auth/session` 调用或管理员登录文案；大众前端免密码，后台保护仍由 API 鉴权承担。
+- 正式 API 本轮只读结果：`/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1` 均为 HTTP 200；`/openapi.json` 已包含 `DELETE /battles/{battle_id}`。未登录请求 `/dashboard` 和战局回放返回 401，符合后台鉴权边界。
+- Partner mTLS 本轮进行了只读复核：attack/defense DNS 均解析至 `47.108.92.113`；VPS nginx、443 listener 和 API/攻击/防守 systemd 用户服务均 active，nginx 配置检查通过。使用本机梧桐 trust bundle，无客户端证书访问两个 `/health` 均为 200、`/rpc` 均为 403；使用 Leader clientAuth 证书访问时 `/health` 均为 200，`/rpc` TLS 握手成功（GET 返回 405，仅说明 GET 方法不适用于 RPC，不代表完成 AIP 调用）。因此较早资料里的 525/不可达与本轮结果不一致；私有 CA 客户端需显式使用梧桐 trust bundle。本轮未调用 Registry/Discovery，也未创建或删除生产战局。
+- 本轮未重新执行 topic 422、battle create/delete 204/409 写接口验收，也未重跑生产 low/mid/high 和桌面/移动全链路；这些结论仍引用本文件前文历史记录。
+- PR #3 文档同步分支 `codex/deployment-status-sync` 的后端测试、前端构建检查、Cloudflare Pages 均通过；Workers Builds 失败。Cloudflare build 记录显示 checkout 后在根目录 `/` 运行 `npx wrangler preview`，未找到前端子目录中的 `frontend/frontend-ui/wrangler.jsonc` 并报缺少 `previews` 配置。仓库中的该配置已有空 `previews` block；需队友确认 Workers Builds 的 root directory/preview command 配置。未修改 Cloudflare 构建设置；启用 Preview 前要确认预览公开性及是否绑定生产资源。
+- 本轮没有创建、修改或删除生产战局，没有操作数据库、VPS 配置、Cloudflare 配置、Registry 或 Discovery。生产只读请求未改变服务状态。
+- 当前协作分支仍为 `codex/team-domain-handoff`，HEAD `47d5916`；本机未跟踪队友材料及 WIT wheel 保持原样，不纳入本次同步。长期记忆、凭据、证书/私钥、数据库、日志、JSONL 和私有发行物禁止提交。
 
-队友后续动作：正常审核并合并 PR #2；部署经审核提交后验证空 topic 422、创建 201、已结束删除 204、运行中删除 409，并回归双 Partner mTLS、Discovery 和 low/mid/high 战局。不得绕过审核或按旧记录删除未定位战局。
+下一步：由负责人安排隔离测试数据源，验证空白 topic 返回 422、合法创建返回 201、已完成战局删除返回 204 且关联事件清理、运行中战局删除返回 409；避免对生产业务数据做破坏性验收。若尚无隔离环境，先由队友确认测试环境/数据库，不创建或删除生产战局。
