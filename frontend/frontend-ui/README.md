@@ -22,6 +22,20 @@ npm run lint
 npm run build
 ```
 
+## Preview 隔离构建
+
+公开 Preview 必须使用独立的 HTTPS API 和测试数据库，不能指向正式 API 或访问者本机。
+准备好隔离环境后，可参考 `preview.env.example` 设置构建环境的 `VITE_AGENT_API`，再运行：
+
+```powershell
+$env:VITE_AGENT_API = "https://preview-api.example.com"
+npm run build:preview
+```
+
+`build:preview` 会拒绝缺失配置、HTTP、本机地址和正式 API。若公开域名构建时没有显式配置
+`VITE_AGENT_API`，前端会停止请求并显示未配置隔离 API，不会尝试访问访问者的
+`127.0.0.1`。
+
 ## 页面地址参数
 
 - `?topic=订单查询权限校验&difficulty=high`：预填测试主题和难度。

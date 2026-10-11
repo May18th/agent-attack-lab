@@ -94,7 +94,10 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE = (import.meta.env.VITE_AGENT_API ?? 'http://127.0.0.1:8787').replace(/\/$/, '')
+const configuredApiBase = import.meta.env.VITE_AGENT_API?.trim()
+const localBrowserHosts = new Set(['localhost', '127.0.0.1', '::1'])
+const currentBrowserHost = typeof window === 'undefined' ? 'localhost' : window.location.hostname
+const API_BASE = (configuredApiBase || (localBrowserHosts.has(currentBrowserHost) ? 'http://127.0.0.1:8787' : '')).replace(/\/$/, '')
 
 function detailText(value: unknown): string | undefined {
   if (typeof value === 'string') return value
@@ -106,6 +109,10 @@ function detailText(value: unknown): string | undefined {
 }
 
 async function request(path: string, options?: RequestInit): Promise<Response> {
+  if (!API_BASE) {
+    throw new ApiError(0, '当前预览尚未配置隔离 API，请联系部署负责人')
+  }
+
   let response: Response
   try {
     response = await fetch(`${API_BASE}${path}`, {
