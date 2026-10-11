@@ -615,3 +615,18 @@ Vulnerabilities JSON（目录版本 `2026.10.08`），导入 1,739 条 CVE 记�
 - 记录新增 `record_kind` 分层：`external_fact`、`normalized_case`、`synthetic_scenario`、`observed_event`；`--validate` 只读检查来源元数据、内容哈希、原始 JSON 和合成标记是否一致。当前本机 1,739 条记录全部通过，未把任何外部事实提升为观测事件。
 - 后续接入只允许可核验的一手来源（CISA、NVD、CVE、CERT/厂商公告、OWASP 等），先保留原文
   证据和来源，再人工脱敏、去重和审核；禁止把模型生成内容或无来源转载写入事实库。
+
+### Partner 重新注册（2026-10-11）
+
+管理员已确认攻击/防守无法恢复旧 workspace，改为分别创建新 workspace 并重新注册，详见
+[`REGISTRATION_RENEWAL_HANDOFF.md`](REGISTRATION_RENEWAL_HANDOFF.md)。两个 ACS candidate 已清除旧 AIC，保留固定 RPC endpoint：
+
+- 攻击：`https://attack.yuanyiagentzhandui.cn/rpc`
+- 防守：`https://defense.yuanyiagentzhandui.cn/rpc`
+
+固定域名 `/health` 已用直连和 VPS 复测为 HTTP 200。新注册完成前不得把新 AIC 写入 Leader
+生产配置；审核后要获取 EAB、clientAuth/serverAuth 和 trust bundle，确认 authoritative ACS、
+Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需标记废弃。
+
+注册入口为 `backend/scripts/register_partner_agents.py`。默认只生成并校验草稿；只有我们在本机临时
+设置 Registry 开发者凭据后显式加 `--submit` 才会提交，两个 Agent 使用独立 workspace。
