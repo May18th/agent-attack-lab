@@ -640,3 +640,35 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 没有 443/8443 listener 或反代，Cloudflare 橙云会终止公共 TLS；`deployer` 没有免密 sudo，
 因此不能由本账号直接完成 443 mTLS 和灰云切换。管理员需先提供 root/sudo 或执行源站反代、
 端口和 DNS 变更；完成前不得把 API Key/HTTPS 验收描述为 mTLS，也不得关闭现有 Tunnel。
+
+### mTLS 部署阻塞解除（2026-10-11）
+
+源站 `47.108.92.113` 的 `deployer` 已配置全量免密 sudo，实测 `sudo -n whoami` 返回 `root`；
+三个业务进程仍分别监听 `127.0.0.1:8787/8788/8789`，443 当前尚未监听。可将
+[`mTLS链路异常修复派活单_20261011.md`](../mTLS链路异常修复派活单_20261011.md) 第五部分直接
+转发给 WorkBuddy/Codex，由其使用 `deployer` 执行源站 mTLS、/rpc 放行、Cloudflare attack/defense
+灰云切换和 Leader/Discovery 回填。验收完成前不得关闭现有 API Key Tunnel，也不得把 HTTPS 200
+描述为真实 mTLS。
+
+### mTLS 预部署核验（2026-10-11，部署前快照）
+
+- 远端 `8787/8788/8789` 的 `/health` 均返回 200，API、攻击、防守和 Cloudflare Tunnel 用户级服务均为 active。
+- 两套 serverAuth 的 SAN、serverAuth EKU 和有效期符合预期；经重新核验，两个 `server/certificate.pem`
+  均已包含完整链（leaf + Agent CA Intermediate），使用对应 trust bundle 验证均为 `OK`。部署时必须
+  保持该完整文件，不要只提取第一张 leaf 证书；不需要额外获取或生成中间 CA。
+- 已新增只读验收脚本 [`backend/scripts/verify-partner-mtls.sh`](../backend/scripts/verify-partner-mtls.sh)，
+  用于验证 `/health` 免证书、`/rpc` 无证书拒绝、合法客户端证书握手成功。脚本不输出证书正文或私钥。
+- 远端尚未部署该脚本，且 443 尚未监听；Cloudflare DNS 仍解析到边缘地址，尚未切换 DNS only。
+- 远端当前未发现 nginx 或 caddy；请使用具备路径级 client-certificate 控制的反代（推荐 nginx），或采用
+  已验证支持 `/health` 免证书、`/rpc` 强制证书的等效 listener。不要直接把 8788/8789 暴露到公网。
+
+### 源站 443 已配置（2026-10-11）
+
+- 已通过 sudo 安装并启用 nginx，attack/defense 两个 443 server block 均加载各自完整 server certificate、
+  私钥和 `ca-verify.pem`；`ca-verify.pem` 由 workspace trust bundle 与同一 server certificate 中的
+  Agent CA Intermediate 组成。
+- 源站本机验收：两个 `/health` 均为 200；无客户端证书访问 `/rpc` 均为 403；带客户端证书访问 `/rpc`
+  已完成 TLS 握手，当前因 `AGENT_RPC_API_KEY` 仍保留而返回应用层 401。
+- 公网直连 `47.108.92.113:443` 当前超时，本机无 nftables/ufw/iptables 规则，需在阿里云安全组放行 TCP 443。
+- attack/defense 的 DNS 已恢复为橙云 Tunnel，避免在源站未开放前中断现有入口。放行 443 后应将记录改为
+  `A -> 47.108.92.113`、DNS only；不能把现有 `CNAME -> cfargotunnel.com` 直接改灰云后当作源站直连。
