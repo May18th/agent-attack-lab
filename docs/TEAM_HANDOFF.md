@@ -4,6 +4,13 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-12 Workers Builds Preview 复核
+
+- Cloudflare Build trigger `codex/deployment-status-sync` 仅匹配该分支。已将 root directory 设为 `/frontend/frontend-ui`、build command 设为 `npm run build`；保留 Preview command `npx wrangler preview` 和现有路径筛选。
+- PR #3 提交 `9b34aacebc2f31aff3783ce2a9245cf56208da54` 的 Cloudflare Build `1a8b6b30-fae2-444e-8a5f-6a2f5babb5cc` 成功；GitHub Workers Builds check 为 success。Preview URL `https://codex-deployment-status-sync-agent-attack-lab.3498414260.workers.dev` 返回 HTTP 200。
+- Preview URL 公开可访问。构建环境未配置 `VITE_AGENT_API`，前端默认请求 `http://127.0.0.1:8787`，因此 Preview 首页可打开不代表浏览器能连到后端。生产 API `/health` 的只读请求返回 200，但没有把公开 Preview 指向生产 API，以避免预览写请求污染正式数据。后续前后端联调需使用隔离 API，并明确其数据与访问控制。
+- 本次没有改生产部署命令、DNS、Worker 生产代码或其他分支，也没有创建、修改或删除生产战局。
+
 ## 1. 分工
 
 前端负责页面、输入控件、加载状态、错误提示，以及攻击样本和防守结果展示。
@@ -20,7 +27,7 @@ AIC、CAI、ACS、mTLS 证书和平台审核由后端负责人处理，前端不
 http://127.0.0.1:8787
 ```
 
-计划公网 API（尚未验收）：
+公网 API：
 
 ```text
 https://api.yuanyiagentzhandui.cn
