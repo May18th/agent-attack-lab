@@ -67,6 +67,7 @@
 - `POST /agent/defend`
 - `POST /rpc`
 - `GET /external-cases`（外部来源案例只读查询）
+- `GET /battles/{battle_id}/audit`（战局事件完整性只读审计）
 
 未经双方确认，不删除或重命名已有字段。
 
@@ -176,6 +177,7 @@ cd "D:\梧桐\backend"
 | BE-13 | 后续 | arbiter 扩展边界暂不实现 |
 | BE-14 | 已完成 | `docs/DEPLOYMENT.md` 已提供公网服务、Quick Tunnel、稳定 Tunnel、限流和备份说明 |
 | BE-15 | 已完成 | 外部案例库只读查询、来源元数据展示和来源边界测试已完成 |
+| BE-16 | 已完成 | 战局完整性审计、外部目录差异报告和敏感文件 CI 检查已完成 |
 
 ### 前端 P0
 

@@ -38,4 +38,12 @@ cd "D:\梧桐\backend"
 uv run python scripts/import_external_cases.py --validate
 ```
 
+比较远端新目录与本地最近一次导入快照，不修改数据库：
+
+```powershell
+uv run python scripts/compare_external_cases.py
+```
+
+报告中的 `added`、`removed` 和 `changed` 只表示目录记录差异；人工确认发布版本、来源 URL 和内容哈希后，才能执行导入。
+
 校验失败时先保留数据库和报告，禁止直接改写来源字段来消除错误。新增来源前应确认发布方、一手 URL、版本和哈希，并补充对应测试。

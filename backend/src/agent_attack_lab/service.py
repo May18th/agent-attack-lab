@@ -44,6 +44,7 @@ from agent_attack_lab.acp_agents import (
     call_defender,
     is_configured as acp_agent_configured,
 )
+from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend, local_rule_case_count
 from agent_attack_lab.external_cases import query_external_cases
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
@@ -639,6 +640,7 @@ def index() -> dict[str, Any]:
             "/battles/{id}/report", "/leaderboard", "/agent/attack",
             "/agent/defend", "/rpc", "/docs",
             "/external-cases",
+            "/battles/{id}/audit",
         ],
         "note": "当前提供 JSON-RPC 2.0 和兼容的 HTTP JSON 接口；平台审核通过并下发证书后再启用 mTLS。",
     }
@@ -1780,6 +1782,20 @@ def list_external_cases(
         limit=limit,
         offset=offset,
     )
+
+
+@app.get(
+    "/battles/{battle_id}/audit",
+    summary="审计战局事件完整性",
+    description="只读检查事件序列、战局归属、状态和 Agent 来源是否一致，不修改战局数据。",
+    tags=["战局接口"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def battle_audit(battle_id: str) -> dict[str, Any]:
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    return audit_battle(record, _battle_store.list_events(battle_id))
 
 
 @app.post(

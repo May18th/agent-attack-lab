@@ -530,6 +530,7 @@ def test_read_routes_can_be_protected_together(monkeypatch) -> None:
         f"/battles/{battle_id}",
         f"/battles/{battle_id}/events",
         f"/battles/{battle_id}/replay",
+        f"/battles/{battle_id}/audit",
         f"/reports/{battle_id}",
         "/leaderboard",
         "/dashboard/summary",
@@ -753,6 +754,18 @@ def test_lifespan_resumes_interrupted_battle() -> None:
 
 def test_unknown_battle_returns_404() -> None:
     assert client.get("/battles/battle-does-not-exist").status_code == 404
+
+
+def test_battle_audit_route_returns_read_only_integrity_report() -> None:
+    response = client.post("/battles", json={"difficulty": "low", "topic": "审计接口测试"})
+    battle_id = response.json()["id"]
+
+    audit = client.get(f"/battles/{battle_id}/audit")
+
+    assert audit.status_code == 200
+    assert audit.json()["valid"] is True
+    assert audit.json()["eventCount"] >= 4
+    assert "/battles/{battle_id}/audit" in client.get("/openapi.json").json()["paths"]
 
 
 def test_defend_returns_contract_fields() -> None:

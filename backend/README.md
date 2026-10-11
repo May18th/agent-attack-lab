@@ -48,6 +48,7 @@ uv run pytest -q
 - `X-Total-Count` 响应头：返回当前筛选条件下的总战局数；跨域前端可以读取，用于准确计算分页。
 - `GET /dashboard/summary`：汇总已保存战局、样本、规则命中和风险记录，并返回本地规则库中不同模拟用例编号的数量。
 - `GET /battles/{battle_id}/events`：读取持久化事件时间线。
+- `GET /battles/{battle_id}/audit`：只读审计事件序列、战局归属和来源完整性。
 - `GET /battles/{battle_id}/replay`：按事件顺序获取回放数据。
 - `GET /battles/{battle_id}/events/stream?follow=true`：SSE 事件流。
 - `POST /battles/{battle_id}/retry`：重试失败的异步战局。
@@ -155,6 +156,9 @@ $env:no_proxy = "localhost,127.0.0.1,::1"
 和内容 SHA-256。查询接口为 `GET /external-cases`，支持 `q`、`vendor`、`product`、`limit` 和 `offset`；
 返回结果会明确标注 `verified_primary`、`external_fact` 和来源元数据。外部案例不自动写入战局，也不代表
 项目已经观察到真实攻击事件。完整字段和校验命令见 [`docs/EXTERNAL_CASE_LIBRARY.md`](../docs/EXTERNAL_CASE_LIBRARY.md)。
+
+外部目录版本差异可用 `uv run python scripts/compare_external_cases.py` 查看。提交前运行
+`uv run python scripts/check_sensitive_files.py --staged`；CI 会阻止证书、私钥、凭据、数据库、JSONL、私有 wheel 和本地配置进入仓库。
 
 设置 `AGENT_PROTECT_READS=1` 后，战局列表/详情、事件、回放、战报、排行榜和 SSE 接口需要服务端 API Key 或有效浏览器会话（已配置 `AGENT_BROWSER_PASSWORD` 时）。本地默认关闭。不要将服务端密钥直接写进公开前端代码。
 
