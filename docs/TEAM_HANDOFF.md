@@ -630,3 +630,13 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 注册入口为 `backend/scripts/register_partner_agents.py`。默认只生成并校验草稿；只有我们在本机临时
 设置 Registry 开发者凭据后显式加 `--submit` 才会提交，两个 Agent 使用独立 workspace。
+
+截至 2026-10-11，两个新 Agent 已由本机注册并进入 `active`：攻击 AIC
+`1.2.156.3088.1.BUPT.RX2TMW.LMB4VK.NJ99P0.08RN`，防守 AIC
+`1.2.156.3088.1.BUPT.RX2TMW.KYUDTI.BI8UKQ.09SG`。对应 registrationId、证书材料和 VPS
+同步记录见 [`REGISTRATION_RENEWAL_HANDOFF.md`](REGISTRATION_RENEWAL_HANDOFF.md)。
+
+已按 mTLS 派活单将两个完整 `acps/` workspace 同步至 VPS 受限目录并完成状态核验。源站目前
+没有 443/8443 listener 或反代，Cloudflare 橙云会终止公共 TLS；`deployer` 没有免密 sudo，
+因此不能由本账号直接完成 443 mTLS 和灰云切换。管理员需先提供 root/sudo 或执行源站反代、
+端口和 DNS 变更；完成前不得把 API Key/HTTPS 验收描述为 mTLS，也不得关闭现有 Tunnel。

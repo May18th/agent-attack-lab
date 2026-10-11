@@ -25,6 +25,8 @@
 - Registry authoritative ACS 仍登记已失效 Quick Tunnel；平台客户端接口规定 APPROVED Agent 不能由普通账号更新，需平台工作人员保留原 AIC 执行端点迁移并同步 Discovery。当前本地 ACS 文件已改为固定域名，但不代表 Registry 已更新。
 - 管理员已确认攻击/防守走新 workspace、新 AIC 重新注册；旧 AIC 不再作为恢复目标。注册前仍需保留旧 discovery 记录的废弃标记，避免重复身份混用。
 - 已新增 `backend/scripts/register_partner_agents.py`：默认仅生成/校验两个独立 integrated 草稿；显式 `--submit` 才提交 Registry，凭据只从当前进程环境读取。
+- 两个新 Partner 已由本机完成注册并进入 `active`：攻击 AIC `1.2.156.3088.1.BUPT.RX2TMW.LMB4VK.NJ99P0.08RN`，防守 AIC `1.2.156.3088.1.BUPT.RX2TMW.KYUDTI.BI8UKQ.09SG`；authoritative ACS 已确认固定 endpoint，证书材料已同步 VPS 受限目录。Leader 映射和 strict mTLS 切换仍待验收。
+- mTLS 异常已定位：VPS 无 443/8443 listener 或反代，Cloudflare 橙云在边缘终止公共 TLS；两个完整 `acps/` workspace 已同步到 VPS 受限目录，但当前 API Key Tunnel 不能算端到端 mTLS。需服务器管理员提供 root/sudo 后配置源站 443 mTLS，再改灰云并验收。
 - VPS `47.108.92.113:22` 已恢复；公网 API、固定 Partner 域名和用户级服务常驻状态均已核验。
 - 正式发行物和本机运行时预检已经通过；该结果只解除发行物完整性阻塞，不代表 Registry 注册、WIT Direct 或生产 mTLS 已完成。
 - Cloudflare Pages 与 Workers Preview 构建已验收；生产域名、Tunnel、DNS/SSL 和公网 API 状态仍需在合并/部署后按 `CLOUDFLARE_DOMAIN_ACTIVATION_TODO.md` 复验。
@@ -49,8 +51,8 @@
 ## 下一步
 
 1. 分别用两个独立 workspace 提交攻击/防守 ACS candidate，`aic` 留空，使用固定 endpoint，等待管理员审核。
-2. 审核通过后获取新 AIC/EAB/证书，确认 authoritative ACS 和 Discovery 已同步，再更新 Leader Partner 映射。
-3. 新身份 active 后执行 low/mid/high 全链路验收，并将旧 AIC/RPC 记录标记废弃。
+2. 由服务器管理员配置源站 443 mTLS listener（`/rpc` 强制 client certificate），并将 attack/defense DNS 改为灰云或采用端到端 mTLS 代理；期间保持 API Key 兼容入口。
+3. strict mTLS listener 与 Discovery 验收通过后执行 low/mid/high 全链路，并将旧 AIC/RPC 记录标记废弃。
 4. 外部案例库后续只接入可核验的一手来源；每条记录保留来源、版本、采集时间、内容哈希和原始字段，先运行 `uv run python backend/scripts/import_external_cases.py --validate`，经过人工复核后才可脱敏改编为合成测试场景。
 
 ## 禁止事项
