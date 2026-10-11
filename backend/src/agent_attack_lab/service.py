@@ -212,12 +212,15 @@ _cloudflare_jwk_client: Any | None = None
 _cloudflare_jwk_lock = Lock()
 
 _rate_limit_per_minute = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 60)
+_public_battle_limit_per_minute = _env_int("AGENT_PUBLIC_BATTLE_LIMIT_PER_MINUTE", 10)
 _event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=1024)
 _external_cases_database = Path(
     os.getenv("AGENT_EXTERNAL_CASE_DB", ".data/external_security_cases.sqlite3")
 )
 _rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _rate_lock = Lock()
+_public_battle_rate_windows: dict[str, deque[float]] = defaultdict(deque)
+_public_battle_rate_lock = Lock()
 
 
 def _request_id(request: Request) -> str:
@@ -384,12 +387,14 @@ def _browser_client_ip(request: Request) -> str:
         peer_is_loopback = ipaddress.ip_address(peer_host).is_loopback
     except ValueError:
         peer_is_loopback = False
-    forwarded_ip = request.headers.get("cf-connecting-ip", "").strip()
-    if peer_is_loopback and forwarded_ip:
-        try:
-            return str(ipaddress.ip_address(forwarded_ip))
-        except ValueError:
-            pass
+    if peer_is_loopback:
+        for header in ("cf-connecting-ip", "x-real-ip"):
+            forwarded_ip = request.headers.get(header, "").strip()
+            if forwarded_ip:
+                try:
+                    return str(ipaddress.ip_address(forwarded_ip))
+                except ValueError:
+                    continue
     return peer_host
 
 
@@ -418,6 +423,27 @@ def _api_key_dependency(request: Request) -> None:
 def _read_auth_dependency(request: Request) -> None:
     if _protect_read_routes or _browser_password or _cloudflare_access_configured:
         _check_browser_or_api_auth(request)
+
+
+def _public_battle_rate_limit_dependency(request: Request) -> None:
+    """Limit anonymous battle creation separately from internal agent traffic."""
+    if _public_battle_limit_per_minute <= 0:
+        return
+    client_key = _browser_client_ip(request)
+    now = time.monotonic()
+    cutoff = now - 60
+    with _public_battle_rate_lock:
+        window = _public_battle_rate_windows[client_key]
+        while window and window[0] <= cutoff:
+            window.popleft()
+        if len(window) >= _public_battle_limit_per_minute:
+            retry_after = max(1, int(60 - (now - window[0])))
+            raise HTTPException(
+                status_code=429,
+                detail="公开战局创建过于频繁，请稍后重试",
+                headers={"Retry-After": str(retry_after)},
+            )
+        window.append(now)
 
 
 def _rate_limit_dependency(request: Request) -> None:
@@ -648,9 +674,11 @@ def index() -> dict[str, Any]:
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(
+    request: Request,
     topic: str | None = Query(default=None, max_length=200),
     difficulty: Literal["low", "mid", "high"] | None = Query(default=None),
 ) -> str:
+    _check_browser_or_api_auth(request)
     topic_value = escape_html(topic or "通用安全测试", quote=True)
     selected_difficulty = difficulty or "mid"
     return """<!doctype html>
@@ -1747,7 +1775,6 @@ def metrics() -> dict[str, Any]:
     summary="查询后台统计摘要",
     description="规则命中、风险记录和已保存样本分别从全部已保存战局聚合；本地模拟用例数按规则库中的唯一用例编号统计。",
     tags=["统计接口"],
-    dependencies=[Depends(_read_auth_dependency)],
 )
 def dashboard_summary() -> dict[str, int]:
     return {
@@ -1765,7 +1792,6 @@ def dashboard_summary() -> dict[str, int]:
         "不把外部事实当作本项目战局或攻击样本。"
     ),
     tags=["外部案例"],
-    dependencies=[Depends(_read_auth_dependency)],
 )
 def list_external_cases(
     q: str | None = Query(default=None, max_length=200, description="按 CVE、标题、厂商或产品检索"),
@@ -1800,7 +1826,7 @@ def battle_audit(battle_id: str) -> dict[str, Any]:
 
 @app.post(
     "/battles",
-    dependencies=[Depends(_rate_limit_dependency)],
+    dependencies=[Depends(_public_battle_rate_limit_dependency)],
     status_code=201,
     summary="创建一场攻防战局",
     description="输入测试主题和难度，返回完整的攻击样本与防守结果。添加 background=true 可启用分阶段实时执行。",
@@ -1812,7 +1838,6 @@ async def create_battle(
     background_tasks: BackgroundTasks,
     background: bool = Query(default=False, description="是否后台异步执行"),
 ) -> BattleRecord:
-    _check_browser_or_api_auth(request)
     battle_id = f"battle-{uuid.uuid4()}"
     created_at = datetime.now(timezone.utc).isoformat()
     if background:
@@ -1985,7 +2010,6 @@ def delete_battle(battle_id: str, request: Request) -> Response:
     summary="查询历史战局",
     description="支持分页、难度和关键词筛选。",
     tags=["战局接口"],
-    dependencies=[Depends(_read_auth_dependency)],
 )
 def list_battles(
     response: Response,
@@ -2025,7 +2049,6 @@ def replay_battle(battle_id: str) -> dict[str, Any]:
     summary="查询战局详情",
     description="按战局编号恢复攻击、防守和修复结果。",
     tags=["战局接口"],
-    dependencies=[Depends(_read_auth_dependency)],
 )
 def get_battle(battle_id: str) -> BattleRecord:
     record = _battle_store.get(battle_id)

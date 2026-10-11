@@ -306,7 +306,7 @@ api.yuanyiagentzhandui.cn -> http://127.0.0.1:8787
 
 ### 401 Unauthorized
 
-服务端调用内部接口时使用 `X-API-Key`；公开浏览器前端不能持有该密钥。后端启用 `AGENT_BROWSER_PASSWORD` 后，应通过 `/auth/session` 登录并携带 HttpOnly Cookie（fetch 设置 `credentials: "include"`）。本地免密开发模式下无需登录。配置细节见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
+公开浏览器前端无需登录，也不能持有 `X-API-Key`。公开业务 API 支持读取和创建战局；后台管理页及内部接口由后端 API Key、密码会话或 Cloudflare Access 保护。配置细节见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
 
 ### 429 Too Many Requests
 

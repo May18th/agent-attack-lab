@@ -344,9 +344,9 @@ $env:AGENT_CORS_ORIGINS="https://你的前端域名"
 4. 前端不需要运行或修改 AIC、ACS、CAI 和 mTLS 文件。
 5. 发送代码时不要包含 `.venv`；源码、`pyproject.toml`、`uv.lock` 和本交接文件即可。
 
-公开浏览器前端不获取 `AGENT_API_KEY`。后端启用 `AGENT_BROWSER_PASSWORD` 后，前端使用 `/auth/session` 登录会话并设置 `credentials: "include"`；EventSource 使用 `withCredentials: true`。`/agent/*`、`/rpc`、`/metrics` 仍只接受服务端 API Key；详见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
+公开浏览器前端不获取 `AGENT_API_KEY`，也不要求登录。统计、案例、战局列表/详情和创建战局属于公开业务 API；`/dashboard`、重试/删除、审计/报告/事件回放/SSE、`/agent/*`、`/rpc`、`/metrics` 仍由后端鉴权。详见 `docs/FRONTEND_TO_BACKEND_HANDOFF.md`。
 
-后台 `/dashboard` 的异步对抗已接入 SSE 时间线。公开部署须配置 `AGENT_API_KEY`、`AGENT_BROWSER_PASSWORD` 和 `AGENT_PROTECT_READS=1`；不得把服务端密钥硬编码到公开前端包中。
+后台 `/dashboard` 的异步对抗已接入 SSE 时间线。公开部署须配置 `AGENT_API_KEY`、`AGENT_PROTECT_READS=1` 和匿名战局创建限流；如需浏览器访问后台，再配置 `AGENT_BROWSER_PASSWORD`。当前匿名限流按单进程维护，多实例需在入口代理补限流。不得把服务端密钥硬编码到公开前端包中。
 
 ## 7. 梧桐平台注册准备
 
@@ -441,6 +441,8 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 - low/mid/high 三场公网战局创建均返回 HTTP 201；SSE 均返回 HTTP 200，并包含 `battle.created` 与终态事件；最终状态均为 `completed`。
 - 浏览器会话登录返回 HTTP 200，携带 Cookie 访问 `/battles` 返回 HTTP 200，退出登录返回 HTTP 200。
 - 前端独立登录页已部署到根域名和 `www` 域名；登录密码只保存在后端运行环境，未进入前端构建或 Git。
+
+当前状态更新（2026-10-11，本地修改）：公开前端不再要求登录，公开业务 API 不校验浏览器会话；后台管理和内部操作仍由后端认证保护。上述公网登录验收记录保留为历史状态，不代表当前访问策略。
 
 微调材料完成本地离线审计，报告见 [`FINETUNE_AUDIT_20261010.md`](FINETUNE_AUDIT_20261010.md)：
 

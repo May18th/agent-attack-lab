@@ -525,16 +525,16 @@ def test_read_routes_can_be_protected_together(monkeypatch) -> None:
         headers={"X-API-Key": "read-secret"},
     )
     battle_id = response.json()["id"]
+    for path in ("/battles", f"/battles/{battle_id}", "/dashboard/summary", "/external-cases"):
+        assert client.get(path).status_code == 200
+        assert client.get(path, headers={"X-API-Key": "read-secret"}).status_code == 200
     for path in (
-        "/battles",
-        f"/battles/{battle_id}",
         f"/battles/{battle_id}/events",
         f"/battles/{battle_id}/replay",
         f"/battles/{battle_id}/audit",
         f"/reports/{battle_id}",
         "/leaderboard",
-        "/dashboard/summary",
-        "/external-cases",
+        "/dashboard",
     ):
         assert client.get(path).status_code == 401
         assert client.get(path, headers={"X-API-Key": "read-secret"}).status_code == 200
@@ -559,7 +559,10 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
         headers={"Origin": origin},
     )
     assert denied.status_code == 401
-    assert browser.post("/battles", json={"topic": "未登录"}).status_code == 401
+    anonymous_create = browser.post("/battles", json={"topic": "公开用户"})
+    assert anonymous_create.status_code == 201
+    assert browser.get("/battles").status_code == 200
+    assert browser.get("/dashboard").status_code == 401
 
     login = browser.post(
         "/auth/session",
@@ -579,12 +582,6 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
     assert created.status_code == 201
     assert browser.get("/battles", headers={"Origin": origin}).status_code == 200
 
-    csrf = browser.post(
-        "/battles",
-        json={"topic": "跨站请求"},
-        headers={"Origin": "https://attacker.example"},
-    )
-    assert csrf.status_code == 403
     assert browser.post(
         "/agent/attack",
         json={"difficulty": "low", "topic": "内部路由"},
@@ -593,7 +590,8 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
 
     logout = browser.delete("/auth/session", headers={"Origin": origin})
     assert logout.status_code == 200
-    assert browser.get("/battles", headers={"Origin": origin}).status_code == 401
+    assert browser.get("/battles", headers={"Origin": origin}).status_code == 200
+    assert browser.get("/dashboard").status_code == 401
 
 
 def test_browser_login_requires_configured_password_and_trusted_origin(monkeypatch) -> None:
@@ -634,22 +632,19 @@ def test_cloudflare_access_jwt_authenticates_without_browser_password(monkeypatc
         lambda token: token == "valid-access-jwt",
     )
 
-    denied = client.post(
+    public = client.post(
         "/battles",
-        json={"topic": "未认证"},
+        json={"topic": "公开体验"},
         headers={"Origin": "http://localhost:5173", "Cf-Access-Jwt-Assertion": "invalid"},
     )
-    assert denied.status_code == 401
+    assert public.status_code == 201
+    assert client.get("/dashboard").status_code == 401
 
-    allowed = client.post(
-        "/battles",
-        json={"topic": "组织认证"},
-        headers={
-            "Origin": "http://localhost:5173",
-            "Cf-Access-Jwt-Assertion": "valid-access-jwt",
-        },
+    allowed_dashboard = client.get(
+        "/dashboard",
+        headers={"Origin": "http://localhost:5173", "Cf-Access-Jwt-Assertion": "valid-access-jwt"},
     )
-    assert allowed.status_code == 201
+    assert allowed_dashboard.status_code == 200
 
     status = client.get(
         "/auth/session",
@@ -657,15 +652,22 @@ def test_cloudflare_access_jwt_authenticates_without_browser_password(monkeypatc
     )
     assert status.json() == {"enabled": True, "authenticated": True}
 
-    csrf = client.post(
-        "/battles",
-        json={"topic": "跨站请求"},
-        headers={
-            "Origin": "https://attacker.example",
-            "Cf-Access-Jwt-Assertion": "valid-access-jwt",
-        },
-    )
-    assert csrf.status_code == 403
+    assert client.get(
+        "/dashboard",
+        headers={"Origin": "https://attacker.example", "Cf-Access-Jwt-Assertion": "valid-access-jwt"},
+    ).status_code == 403
+
+
+def test_public_battle_creation_has_separate_rate_limit(monkeypatch) -> None:
+    monkeypatch.setattr(service, "_public_battle_limit_per_minute", 1)
+    service._public_battle_rate_windows.clear()
+
+    first = client.post("/battles", json={"topic": "公开限流测试"})
+    second = client.post("/battles", json={"topic": "公开限流测试"})
+
+    assert first.status_code == 201
+    assert second.status_code == 429
+    assert second.headers["Retry-After"].isdigit()
 
 
 def test_cloudflare_access_jwt_verifies_signature_claims_and_expiry(monkeypatch) -> None:

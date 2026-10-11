@@ -213,19 +213,17 @@ describe('App', () => {
     expect(screen.getByText('防守来源：来源未知（future-agent）')).toBeInTheDocument()
   })
 
-  it('waits for organization authentication without rendering a password input', async () => {
+  it('keeps the public experience available when backend organization authentication is enabled', async () => {
     const fetchMock = installFetchMock(21, 'acp-llm', 'acp-rule-fallback', { enabled: true, authenticated: false })
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: '等待组织认证（Awaiting sign-in）' })).toBeInTheDocument()
-    expect(document.querySelector('.login-page')).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: '开始新战局（New battle）' })).not.toBeInTheDocument()
-    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/battles?'), expect.anything())
-    expect(document.querySelector('#browser-password')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /重新检查/ }))
-
     expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
-    expect(document.querySelector('.login-page')).not.toBeInTheDocument()
-    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/auth/session'), expect.objectContaining({ method: 'POST' }))
+    expect(screen.getByRole('heading', { name: '开始新战局（New battle）' })).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles?'), expect.anything())
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/auth/session'), expect.anything())
+
+    fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '公开体验' } })
+    fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
+    expect(await screen.findByText('战局创建完成')).toBeInTheDocument()
   })
 })

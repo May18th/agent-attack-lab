@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
-import { api, apiErrorMessage, apiPage, getBrowserSession, getExternalCases } from './api'
-import type { AgentSource, Battle, BrowserSession, DashboardSummary, Difficulty, ExternalCase } from './api'
-import LoginPage from './LoginPage'
+import { api, apiErrorMessage, apiPage, getExternalCases } from './api'
+import type { AgentSource, Battle, DashboardSummary, Difficulty, ExternalCase } from './api'
 const PAGE_SIZE = 10
 const DEFAULT_TOPIC = '提示注入与输入校验'
 const difficultyLabel: Record<Difficulty, string> = { low: '低（Low）', mid: '中（Medium）', high: '高（High）' }
@@ -62,9 +61,6 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [topicError, setTopicError] = useState('')
   const [message, setMessage] = useState('')
-  const [session, setSession] = useState<BrowserSession | null>(null)
-  const [sessionLoading, setSessionLoading] = useState(true)
-  const [sessionError, setSessionError] = useState('')
   const [externalCases, setExternalCases] = useState<ExternalCase[]>([])
   const [externalCaseTotal, setExternalCaseTotal] = useState(0)
   const [externalCaseSources, setExternalCaseSources] = useState(0)
@@ -72,22 +68,6 @@ function App() {
   const [externalCaseLoading, setExternalCaseLoading] = useState(false)
   const [externalCaseMessage, setExternalCaseMessage] = useState('')
   const historyRequestId = useRef(0)
-
-  const refreshSession = useCallback(async () => {
-    try {
-      const current = await getBrowserSession()
-      setSession(current)
-      setSessionError('')
-      return current
-    } catch (error) {
-      // Keep protected data behind the gate when the auth probe itself fails.
-      setSession({ enabled: true, authenticated: false })
-      setSessionError('组织认证状态检查失败：' + apiErrorMessage(error))
-      return null
-    } finally {
-      setSessionLoading(false)
-    }
-  }, [])
 
   const loadBattleDetail = useCallback(async (battleId: string) => {
     try {
@@ -162,16 +142,10 @@ function App() {
   }, [])
 
   useEffect(() => {
-    // Health is public; protected data waits for the browser session check below.
+    // Public experience does not depend on a browser or organization login session.
     // oxlint-disable-next-line react/set-state-in-effect
     void checkHealth()
-    // oxlint-disable-next-line react/set-state-in-effect
-    void refreshSession()
-  }, [checkHealth, refreshSession])
-
-  useEffect(() => {
-    if (sessionLoading || !session || (session.enabled && !session.authenticated)) return
-    // Async initialization intentionally updates protected remote data after auth.
+    // Load public data for the visitor-facing experience.
     // oxlint-disable-next-line react/set-state-in-effect
     void loadHistory(0, true)
     // Async initialization intentionally restores a shareable replay URL.
@@ -181,7 +155,7 @@ function App() {
     // oxlint-disable-next-line react/set-state-in-effect
     void loadSummary()
     void loadExternalCases()
-  }, [sessionLoading, session, loadHistory, loadBattleDetail, loadSummary, loadExternalCases])
+  }, [checkHealth, loadHistory, loadBattleDetail, loadSummary, loadExternalCases])
 
   useEffect(() => {
     const restoreRoute = () => {
@@ -243,19 +217,8 @@ function App() {
     link.download = selected.topic + '.md'; link.click(); URL.revokeObjectURL(link.href)
   }
 
-  const requiresLogin = Boolean(session?.enabled && !session.authenticated)
-
-  if (sessionLoading || requiresLogin) {
-    return <LoginPage
-      status={status}
-      onRetryHealth={() => void checkHealth()}
-      onRetryAuth={() => void refreshSession()}
-      error={sessionLoading ? '' : sessionError}
-    />
-  }
-
   return <div className="page">
-    <header className="topbar"><div><div className="eyebrow">智能体攻防实验室（AGENT ATTACK LAB）</div><h1>智能体<em>攻防实验室</em></h1><p className="sub">后端联调控制台（Backend console） · 实时战局（Live battles） · 风险复盘（Risk review）</p></div><div className="topbar-actions"><button className={'status ' + status} type="button" onClick={() => status === 'error' && void checkHealth()} disabled={status === 'loading'}><span className="dot" />{status === 'loading' ? '正在检查服务（Checking service）' : status === 'ok' ? '服务运行正常（Service healthy）' : '服务连接失败（Connection failed）· 点击重试（Retry）'}</button></div></header>
+    <header className="topbar"><div><div className="eyebrow">智能体攻防实验室（AGENT ATTACK LAB）</div><h1>智能体<em>攻防实验室</em></h1><p className="sub">公开攻防体验（Public security lab） · 实时战局（Live battles） · 风险复盘（Risk review）</p></div><div className="topbar-actions"><button className={'status ' + status} type="button" onClick={() => status === 'error' && void checkHealth()} disabled={status === 'loading'}><span className="dot" />{status === 'loading' ? '正在检查服务（Checking service）' : status === 'ok' ? '服务运行正常（Service healthy）' : '服务连接失败（Connection failed）· 点击重试（Retry）'}</button></div></header>
     <section className="stats" aria-label="真实统计口径（Persisted statistics）">{[
       ['已保存战局（Saved battles）', summary?.totalBattles ?? '—', '全部已保存战局数量', '#4da3ff'],
       ['规则库本地模拟用例（Rule cases）', summary?.ruleLibraryCaseCount ?? '—', '当前规则库中的唯一用例编号数', '#ffb54d'],
