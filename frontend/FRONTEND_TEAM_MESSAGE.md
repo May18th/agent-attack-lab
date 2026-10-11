@@ -1,5 +1,14 @@
 # 智能体攻防实验室前端联调通知
 
+## 2026-10-11 认证交接（提交 `432410a`）
+
+- 前端已移除浏览器密码输入框、密码提交和退出会话调用；认证交给 Cloudflare Access 与后端校验。
+- 队友拉取 `codex/team-domain-handoff` 的 `432410a`，完成前端重新构建并发布。
+- Cloudflare Zero Trust 中为前端 hostname 和 `api.yuanyiagentzhandui.cn` 配置 Self-hosted application 与 Allow policy；确认 API hostname 的跨域设置允许前端 Origin。
+- 后端仅在服务器 `.env` 配置 `CF_ACCESS_TEAM_DOMAIN`、`CF_ACCESS_AUDIENCE`、`AGENT_API_KEY`、`AGENT_PROTECT_READS=1` 和精确的 `AGENT_CORS_ORIGINS`；两个 Access 变量必须同时配置。
+- 验收：未通过 Access 的战局接口返回 `401`；通过组织认证后 `/auth/session` 返回 `authenticated: true`，前端可读取摘要、创建 low/mid/high 战局、读取历史和详情。
+- 已知边界：本提交未替队友操作 Cloudflare 账号、Access 策略、DNS 或 Tunnel；未提交 `.env`、API Token、Access Token、Tunnel Token、证书或私钥。
+
 已收到你导出的《智能体攻防实验室对抗互联零基础开发应用教程》，内容整体方向正确，可以作为零基础学习和开发参考。
 
 当前联调请以 `TEAM_HANDOFF.md` 和后端 `/docs` 接口文档为准，不要完全照教程中的规划功能实现。
