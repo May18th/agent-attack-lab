@@ -4,6 +4,17 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-12 Redis 缓存生产部署
+
+本地提交 `4895c5d` 的可选 Redis 缓存已部署到 VPS，部署采用文件级覆盖以保留 VPS 既有 `backend/scripts/start-service.sh` 未提交修改：
+
+- 覆盖文件：`backend/src/agent_attack_lab/cache.py`、`backend/src/agent_attack_lab/service.py`、`backend/pyproject.toml`、`backend/uv.lock`。
+- VPS Git HEAD 仍为 `a0d62429c82a2ad122829dc8104f25505c0a22c8`，不能将本次生产状态描述为整仓库已切换到 `4895c5d`。
+- Redis `6.4.0` 已安装，监听仅限 `127.0.0.1:6379`/`::1:6379`；VPS `.env` 使用 `AGENT_REDIS_URL=redis://127.0.0.1:6379/0`、TTL `30` 秒。未把 `.env`、凭据或 Redis 数据上传到 Git。
+- `agent-attack-lab-api.service` 重启后 `active (running)`；本机和公网 `/health`、`/dashboard/summary`、`/external-cases?limit=1` 均返回 HTTP 200。Redis 实测生成统计缓存键（约 30 秒 TTL）和 external-cases 缓存键（约 300 秒 TTL），服务日志无 Redis 错误。
+- 回滚备份位于 VPS `/opt/agent-attack-lab/.deploy-backups/redis-20261012-predeploy/`，包含覆盖前的 `service.py`、`pyproject.toml`、`uv.lock`。回滚前先停止 API、恢复备份文件并重启；不要删除现有 `start-service.sh` 修改。
+- 未修改 Cloudflare DNS/Tunnel、公网 Redis 暴露、数据库、证书或其他服务。后续若整仓库部署 `4895c5d`，必须先处理 VPS 工作树中的既有修改和 `.deploy-backups/`，禁止直接覆盖。
+
 ## 2026-10-12 生产与隔离 Preview 验收复测
 
 验收时间：2026-10-12 12:15-12:51（UTC+8）。生产 `/battles` 写接口仅使用唯一标识的验收主题，完成后逐条删除并验证战局及事件均不可见；其余隔离写测试发往 Preview API 或本机临时数据库。
