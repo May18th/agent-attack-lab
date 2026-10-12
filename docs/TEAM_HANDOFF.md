@@ -6,7 +6,7 @@
 
 ## 2026-10-12 隔离 Preview 本轮复核
 
-- `codex/preview-isolation` 当前提交 `afa1d09`；PR #4 仍为 OPEN、merge state `CLEAN`。后端、前端、Cloudflare Pages 和账户 `5ae` Workers Preview 检查均通过；另一个 Cloudflare 账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的重复 Workers Builds trigger 仍失败，需该账户维护者处理。
+- 本轮开始时 `codex/preview-isolation` 位于 `afa1d09`；交接记录提交 `931daa6`、`e87a443` 已推送到 PR #4。PR 当前 OPEN、merge state `CLEAN`；GitHub 当前列出的后端、前端、Cloudflare Pages 和账户 `5ae` Workers Preview 四项检查均通过。账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的独立重复 Workers Builds trigger 在本轮运行时曾报告失败，但不在当前 PR 检查列表中；仍需该账户维护者确认归属并修复或移除。
 - 本机网络访问 Workers Preview 页面和 `pages.dev` branch preview 均返回 HTTP 200。下载当前 Workers Preview HTML/JS 后确认 bundle 配置为 `https://preview-api.yuanyiagentzhandui.cn`，不含生产 API 地址。该来源对 Preview API 的 CORS 预检返回 200，允许方法为 GET/POST/DELETE/OPTIONS。
 - 隔离 API 本轮复测：空 topic=422；low/mid/high 创建均为 201、状态 `completed`，对应删除均为 204。请求 ID：空 topic `req-e8c70732-0d48-405f-86fd-920d69761703`；low 创建/删除 `req-64151776-9df2-4ab1-ae6d-5ee8c177e3cf` / `req-ac5f9cb6-b138-4758-afaf-d1e796ac5f5b`；mid `req-5f528d9a-4ba2-4a81-b65b-0fc08cb3681f` / `req-722b6177-6fdd-4b9b-aae4-56a5ef57d849`；high `req-f8f36198-2183-41a3-aff2-5591ff026afa` / `req-37f9ca50-6ea8-46ef-9e7d-8725a51f052d`。均使用独立 Preview 数据库，写后清理；未访问生产写接口。
 - 浏览器自动化未通过：当前运行策略拒绝启动 Edge 子进程。上述 HTTP、静态 bundle 和 CORS 检查不等于页面内交互验收；仍需在可用浏览器中打开 `https://codex-preview-isolation-agent-attack-lab.3498414260.workers.dev`，检查渲染、控制台和实际请求，再做低中高难度交互。
