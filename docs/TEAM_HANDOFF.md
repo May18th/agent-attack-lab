@@ -12,6 +12,13 @@
 - 浏览器自动化未通过：当前运行策略拒绝启动 Edge 子进程。上述 HTTP、静态 bundle 和 CORS 检查不等于页面内交互验收；仍需在可用浏览器中打开 `https://codex-preview-isolation-agent-attack-lab.3498414260.workers.dev`，检查渲染、控制台和实际请求，再做低中高难度交互。
 - 本轮仅清理未被服务占用的根目录 Vite 输出日志并更新交接记录；没有改生产服务、生产数据库、DNS、Tunnel 或 Registry。
 
+**后续动作与验收标准**
+
+1. 在可用桌面浏览器打开上方 Preview URL，确认页面可交互、控制台无阻塞错误、写请求只发往 `preview-api.yuanyiagentzhandui.cn`；low/mid/high 创建应返回 201，完成后删除应返回 204。
+2. 由 Cloudflare 账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的维护者处理该账户重复 Workers Builds trigger：将根目录、构建命令和分支过滤配置到该 Preview 项目，或确认弃用后移除重复集成。验收以该账户相关检查通过或 trigger 经归属确认后断开为准。
+
+禁止把 Preview 写请求指向生产数据库；不要重复创建 Pages 域名绑定，不要为修复账户 434 的 trigger 改动账户 5ae 中已通过的配置。PR #4 保持待审核，不绕过审核直接合并。
+
 ## 2026-10-12 Workers Builds Preview 复核
 
 - Cloudflare Build trigger `codex/deployment-status-sync` 仅匹配该分支。已将 root directory 设为 `/frontend/frontend-ui`、build command 设为 `npm run build`；保留 Preview command `npx wrangler preview` 和现有路径筛选。
