@@ -4,9 +4,17 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-12 公网 Partner mTLS 与 AIP 复测
+
+- 本机 DNS 将 `attack.yuanyiagentzhandui.cn`、`defense.yuanyiagentzhandui.cn` 均解析至 `47.108.92.113`，TCP 443 可达。Windows 自带 curl（Schannel）直连两域名的 `/health`、`/rpc` 均在 TLS 阶段以连接重置结束；PowerShell 同样收到 TLS EOF。该结果只描述此 Windows TLS 客户端探测，不足以判定源站或 Partner 服务异常。
+- 通过 SSH 只读检查，VPS nginx active、`nginx -t` 成功；两个 server block 均为 `ssl_verify_client optional`。VPS 本机回环访问两个 `/health` 均为 200，VPS 访问自身公网 attack `/health` 为 200；近 15 分钟 nginx journal/error log 未见握手错误，UFW、firewalld、fail2ban 均 inactive。
+- 改用 Python/OpenSSL 3.5.8 和 Leader clientAuth：信任 `trust-bundle.pem` 时，无客户端证书访问两个 `/health` 均为 HTTP 200、`/rpc` 均为 HTTP 403；加载 Leader certificate/key 后，`/rpc` GET 均完成服务端证书链与 TLS/mTLS 校验，返回 405（GET 方法不适用）。
+- 进一步通过同一证书发送 AIP JSON-RPC Start：攻击、防守均 HTTP 200，攻击返回 1 个 low 合成样本，防守返回 1 条检测结果；两边 `agentMode=local-rule`。随后对两个内存 task 发送 Complete，均 HTTP 200 且状态 `completed`。没有调用 Leader `/battles`，未写入生产战局数据库，也未调用外部模型。
+- 结论：当前可确认公网 Partner mTLS 和两个 Partner 的 AIP 应用层调用正常；截图中的失败来自 Windows curl/Schannel 探测路径，具体客户端兼容原因尚未单独定位。完整 Leader 生产战局创建/清理和桌面/移动浏览器流程不在本次验收范围，不应据本次 RPC 结果声称全链路已验收。
+
 ## 2026-10-12 隔离 Preview 本轮复核
 
-- 本轮开始时 `codex/preview-isolation` 位于 `afa1d09`；交接记录提交 `931daa6`、`e87a443` 已推送到 PR #4。PR 当前 OPEN、merge state `CLEAN`；GitHub 当前列出的后端、前端、Cloudflare Pages 和账户 `5ae` Workers Preview 四项检查均通过。账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的独立重复 Workers Builds trigger 在本轮运行时曾报告失败，但不在当前 PR 检查列表中；仍需该账户维护者确认归属并修复或移除。
+- 本轮开始时 `codex/preview-isolation` 位于 `afa1d09`；交接记录提交 `931daa6`、`e87a443`、`2f65574` 已推送到 PR #4。`2f65574` 检查时 PR 为 OPEN、merge state `CLEAN`；GitHub 列出的后端、前端、Cloudflare Pages 和账户 `5ae` Workers Preview 四项检查均通过。账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的独立重复 Workers Builds trigger 在本轮运行时曾报告失败，但不在当前 PR 检查列表中；仍需该账户维护者确认归属并修复或移除。
 - 本机网络访问 Workers Preview 页面和 `pages.dev` branch preview 均返回 HTTP 200。下载当前 Workers Preview HTML/JS 后确认 bundle 配置为 `https://preview-api.yuanyiagentzhandui.cn`，不含生产 API 地址。该来源对 Preview API 的 CORS 预检返回 200，允许方法为 GET/POST/DELETE/OPTIONS。
 - 隔离 API 本轮复测：空 topic=422；low/mid/high 创建均为 201、状态 `completed`，对应删除均为 204。请求 ID：空 topic `req-e8c70732-0d48-405f-86fd-920d69761703`；low 创建/删除 `req-64151776-9df2-4ab1-ae6d-5ee8c177e3cf` / `req-ac5f9cb6-b138-4758-afaf-d1e796ac5f5b`；mid `req-5f528d9a-4ba2-4a81-b65b-0fc08cb3681f` / `req-722b6177-6fdd-4b9b-aae4-56a5ef57d849`；high `req-f8f36198-2183-41a3-aff2-5591ff026afa` / `req-37f9ca50-6ea8-46ef-9e7d-8725a51f052d`。均使用独立 Preview 数据库，写后清理；未访问生产写接口。
 - 浏览器自动化未通过：当前运行策略拒绝启动 Edge 子进程。上述 HTTP、静态 bundle 和 CORS 检查不等于页面内交互验收；仍需在可用浏览器中打开 `https://codex-preview-isolation-agent-attack-lab.3498414260.workers.dev`，检查渲染、控制台和实际请求，再做低中高难度交互。
