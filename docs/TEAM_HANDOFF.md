@@ -4,6 +4,65 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-12 Preview API 验收复测（23:34-23:40 +08:00）
+
+- Preview 页面与 JS bundle 均 HTTP 200；bundle 只包含 `https://preview-api.yuanyiagentzhandui.cn` 作为 API 地址，未发现生产 API 或 localhost 地址。
+- Preview API 的 POST CORS 预检 HTTP 200，允许来源为目标 Preview Worker，允许方法 `GET, POST, DELETE, OPTIONS`。
+- 对隔离 Preview API 执行空白主题 422；low/mid/high 分别创建 201、最终 `completed`、详情读取 200，事件为 6/7/8 条；删除均 204，删除后详情及事件均 404。测试前缀查询为 0 条。一次早期 HTTP 状态解析器报错时创建的单条 Preview 测试战局已清理，删除 204 且详情/事件复查 404。
+- 未在生产 API 创建或删除战局。VPS 生产 API 和本机 Redis 状态只读确认仍正常。
+- 浏览器页面实际渲染、控制台、点击流程和移动视口无法在本轮执行：当前没有 CDP 浏览器会话，自动启动独立 Edge 被执行环境策略拒绝。不得把 HTTP/JS bundle 检查描述为真实浏览器验收。
+- GitHub PR #4 当前已批准、merge state `CLEAN`、仍开放；需由可用浏览器完成桌面/移动 low/mid/high 实际交互验收后再合并。
+
+## 2026-10-12 Redis 缓存生产部署
+
+本地提交 `4895c5d` 的可选 Redis 缓存已部署到 VPS，部署采用文件级覆盖以保留 VPS 既有 `backend/scripts/start-service.sh` 未提交修改：
+
+- 覆盖文件：`backend/src/agent_attack_lab/cache.py`、`backend/src/agent_attack_lab/service.py`、`backend/pyproject.toml`、`backend/uv.lock`。
+- VPS Git HEAD 仍为 `a0d62429c82a2ad122829dc8104f25505c0a22c8`，不能将本次生产状态描述为整仓库已切换到 `4895c5d`。
+- Redis `6.4.0` 已安装，监听仅限 `127.0.0.1:6379`/`::1:6379`；VPS `.env` 使用 `AGENT_REDIS_URL=redis://127.0.0.1:6379/0`、TTL `30` 秒。未把 `.env`、凭据或 Redis 数据上传到 Git。
+- `agent-attack-lab-api.service` 重启后 `active (running)`；本机和公网 `/health`、`/dashboard/summary`、`/external-cases?limit=1` 均返回 HTTP 200。Redis 实测生成统计缓存键（约 30 秒 TTL）和 external-cases 缓存键（约 300 秒 TTL），服务日志无 Redis 错误。
+- 回滚备份位于 VPS `/opt/agent-attack-lab/.deploy-backups/redis-20261012-predeploy/`，包含覆盖前的 `service.py`、`pyproject.toml`、`uv.lock`。回滚前先停止 API、恢复备份文件并重启；不要删除现有 `start-service.sh` 修改。
+- 未修改 Cloudflare DNS/Tunnel、公网 Redis 暴露、数据库、证书或其他服务。后续若整仓库部署 `4895c5d`，必须先处理 VPS 工作树中的既有修改和 `.deploy-backups/`，禁止直接覆盖。
+
+## 2026-10-12 生产与隔离 Preview 验收复测
+
+验收时间：2026-10-12 12:15-12:51（UTC+8）。生产 `/battles` 写接口仅使用唯一标识的验收主题，完成后逐条删除并验证战局及事件均不可见；其余隔离写测试发往 Preview API 或本机临时数据库。
+
+- VPS 部署提交：`a0d62429c82a2ad122829dc8104f25505c0a22c8`，与远端 `main` 相同。API、attacker、defender、preview、`cloudflared-agent-attack-lab` 服务均 active/enabled；user linger=yes。VPS 工作树有 `backend/scripts/start-service.sh` 未提交修改，验收期间未改动。
+- 生产 API 的 `/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1`、`/openapi.json` 均 HTTP 200；OpenAPI 有已完成战局删除路由。生产前端站点、`www` 和 Preview 页面均 HTTP 200，正式与 Preview bundle 分别指向生产 API、隔离 Preview API，均不包含密码输入表单或浏览器会话 API 调用。
+- 正式站到生产 API、Preview Worker 到 Preview API 的 CORS POST 预检均 HTTP 200；两者允许来源与请求 Origin 完全匹配，允许方法 `GET, POST, DELETE, OPTIONS`。
+- 浏览器会话 API 级验证：未登录状态 false；管理员密码登录 200、Cookie 带 Secure/HttpOnly/SameSite=Lax；登录后管理页返回管理内容；后续临时会话注销 200，状态恢复 false。一次较早回放请求超时，未收到 request ID；该轮 Cookie 未写盘/输出，服务端内存 session 按 8 小时 TTL 到期（约 20:23 +08:00）。未重启生产服务以避免影响其他会话。不要将登录密码写入交接或 Git。
+- Partner 公网验证：无客户端证书时 attack/defense `/health` 均 200、`/rpc` 均 403；Leader clientAuth + 梧桐 trust bundle 的 AIP Start 与 Complete 在两个 Partner 上均 200，结果结构有效、task 均 completed。攻击返回 1 个 low 样本；防守返回有效结构；`agentMode=local-rule`，没有调用外部模型。
+- Discovery explicit 查询本轮实测命中 Leader 和两个新 Partner AIC；三个 Agent 均 active，endpoints 分别为 api/attack/defense 正式域名，transport JSONRPC，安全方案 mutualTLS。没有改 Registry/Discovery。
+- Cloudflare API 只读检查：账号 Tunnel `yuanyi-agent-attack-lab-backend` healthy，配置版本 4，api/attack/defense/preview-api ingress 分别映射到 `127.0.0.1:8787/8788/8789/8790`。当前 Cloudflare 账号 Zone 列表未返回 `yuanyiagentzhandui.cn`；公共 DNS 解析正常，本轮未修改 DNS。
+- 隔离 Preview API：空 topic=422，request ID `req-d6b1cdc6-8ee6-4916-ae80-d1e876e6e232`。low/mid/high 均创建 201、最终 completed、读取到事件；删除均 204，删除后查询 404。low create/delete `req-2fadfddc-eb49-471a-866e-d0e0a68f6d3d` / `req-b620240f-d4e1-459d-ae85-0ca05e5a919c`；mid `req-5ed6e1e4-19d6-4714-85af-ee9af885c329` / `req-33e0a989-fce7-40b8-9550-7e62a187ec79`；high `req-4b54b0a8-e8dc-4460-90c5-9f3d8a9c1d35` / `req-416db6e5-cda7-4f82-a4d6-ab02c60c462a`。本机临时数据库契约测试 4 passed，覆盖运行中删除 409、完成战局删除清空事件。
+- 生产 Leader API 验收（2026-10-12 12:51:28-12:51:40 +08:00）：空 topic HTTP 422，request ID `req-f3f09b94-4d6d-400d-8e0a-e51230e71f08`。独特验收主题下 low/mid/high 均 HTTP 201 且 `completed`，随后删除 HTTP 204；删除后详情和事件查询均 HTTP 404。low create/delete `req-c08f72fb-e20f-4f37-a80d-2cea170fe357` / `req-a4363247-d97b-4251-b076-4216f55d30e2`，事件 6 条；mid `req-9de463d4-dbd9-49d3-8ad8-9e4a88a74527` / `req-2673e85a-e96a-48fb-b917-da448386d612`，事件 7 条；high `req-e7046f0d-3d22-4a4c-bdd6-b07d227dd9b1` / `req-65f0ced9-3b3d-45a0-b6a2-0f95675e4775`，事件 8 条。三者 `agentSource=acp-rule-fallback`，说明 Leader 已通过 ACP 到达 Partner，Partner 使用本地规则；未调用外部 LLM。测试数据已删除并复核。
+- 浏览器会话：本轮验收登录和注销均 HTTP 200。另有一个单独登录探测 Cookie 未保留，服务端会话按 8 小时 TTL 自动过期，预计当日约 20:50（具体分钟无法确认）；未重启服务以免影响其他会话。登录密码不进入交接/Git。
+- 未完成：本机没有可用浏览器控制插件或 Edge 远程调试端口，真实页面渲染、控制台、实际浏览器网络请求及桌面/移动交互仍未验收；Leader 自身 `/rpc` 直连入口也未单独验收。运行中删除 409 由本机隔离契约测试覆盖，没有在生产制造运行中战局。
+
+## 2026-10-12 公网 Partner mTLS 与 AIP 复测
+
+- 本机 DNS 将 `attack.yuanyiagentzhandui.cn`、`defense.yuanyiagentzhandui.cn` 均解析至 `47.108.92.113`，TCP 443 可达。Windows 自带 curl（Schannel）直连两域名的 `/health`、`/rpc` 均在 TLS 阶段以连接重置结束；PowerShell 同样收到 TLS EOF。该结果只描述此 Windows TLS 客户端探测，不足以判定源站或 Partner 服务异常。
+- 通过 SSH 只读检查，VPS nginx active、`nginx -t` 成功；两个 server block 均为 `ssl_verify_client optional`。VPS 本机回环访问两个 `/health` 均为 200，VPS 访问自身公网 attack `/health` 为 200；近 15 分钟 nginx journal/error log 未见握手错误，UFW、firewalld、fail2ban 均 inactive。
+- 改用 Python/OpenSSL 3.5.8 和 Leader clientAuth：信任 `trust-bundle.pem` 时，无客户端证书访问两个 `/health` 均为 HTTP 200、`/rpc` 均为 HTTP 403；加载 Leader certificate/key 后，`/rpc` GET 均完成服务端证书链与 TLS/mTLS 校验，返回 405（GET 方法不适用）。
+- 进一步通过同一证书发送 AIP JSON-RPC Start：攻击、防守均 HTTP 200，攻击返回 1 个 low 合成样本，防守返回 1 条检测结果；两边 `agentMode=local-rule`。随后对两个内存 task 发送 Complete，均 HTTP 200 且状态 `completed`。没有调用 Leader `/battles`，未写入生产战局数据库，也未调用外部模型。
+- 结论：当前可确认公网 Partner mTLS 和两个 Partner 的 AIP 应用层调用正常；截图中的失败来自 Windows curl/Schannel 探测路径，具体客户端兼容原因尚未单独定位。完整 Leader 生产战局创建/清理和桌面/移动浏览器流程不在本次验收范围，不应据本次 RPC 结果声称全链路已验收。
+
+## 2026-10-12 隔离 Preview 本轮复核
+
+- 本轮开始时 `codex/preview-isolation` 位于 `afa1d09`；交接记录提交 `931daa6`、`e87a443`、`2f65574` 已推送到 PR #4。`2f65574` 检查时 PR 为 OPEN、merge state `CLEAN`；GitHub 列出的后端、前端、Cloudflare Pages 和账户 `5ae` Workers Preview 四项检查均通过。账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的独立重复 Workers Builds trigger 在本轮运行时曾报告失败，但不在当前 PR 检查列表中；仍需该账户维护者确认归属并修复或移除。
+- 本机网络访问 Workers Preview 页面和 `pages.dev` branch preview 均返回 HTTP 200。下载当前 Workers Preview HTML/JS 后确认 bundle 配置为 `https://preview-api.yuanyiagentzhandui.cn`，不含生产 API 地址。该来源对 Preview API 的 CORS 预检返回 200，允许方法为 GET/POST/DELETE/OPTIONS。
+- 隔离 API 本轮复测：空 topic=422；low/mid/high 创建均为 201、状态 `completed`，对应删除均为 204。请求 ID：空 topic `req-e8c70732-0d48-405f-86fd-920d69761703`；low 创建/删除 `req-64151776-9df2-4ab1-ae6d-5ee8c177e3cf` / `req-ac5f9cb6-b138-4758-afaf-d1e796ac5f5b`；mid `req-5f528d9a-4ba2-4a81-b65b-0fc08cb3681f` / `req-722b6177-6fdd-4b9b-aae4-56a5ef57d849`；high `req-f8f36198-2183-41a3-aff2-5591ff026afa` / `req-37f9ca50-6ea8-46ef-9e7d-8725a51f052d`。均使用独立 Preview 数据库，写后清理；未访问生产写接口。
+- 浏览器自动化未通过：当前运行策略拒绝启动 Edge 子进程。上述 HTTP、静态 bundle 和 CORS 检查不等于页面内交互验收；仍需在可用浏览器中打开 `https://codex-preview-isolation-agent-attack-lab.3498414260.workers.dev`，检查渲染、控制台和实际请求，再做低中高难度交互。
+- 本轮仅清理未被服务占用的根目录 Vite 输出日志并更新交接记录；没有改生产服务、生产数据库、DNS、Tunnel 或 Registry。
+
+**后续动作与验收标准**
+
+1. 在可用桌面浏览器打开上方 Preview URL，确认页面可交互、控制台无阻塞错误、写请求只发往 `preview-api.yuanyiagentzhandui.cn`；low/mid/high 创建应返回 201，完成后删除应返回 204。
+2. 由 Cloudflare 账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的维护者处理该账户重复 Workers Builds trigger：将根目录、构建命令和分支过滤配置到该 Preview 项目，或确认弃用后移除重复集成。验收以该账户相关检查通过或 trigger 经归属确认后断开为准。
+
+禁止把 Preview 写请求指向生产数据库；不要重复创建 Pages 域名绑定，不要为修复账户 434 的 trigger 改动账户 5ae 中已通过的配置。PR #4 保持待审核，不绕过审核直接合并。
+
 ## 2026-10-12 Workers Builds Preview 复核
 
 - Cloudflare Build trigger `codex/deployment-status-sync` 仅匹配该分支。已将 root directory 设为 `/frontend/frontend-ui`、build command 设为 `npm run build`；保留 Preview command `npx wrangler preview` 和现有路径筛选。
@@ -11,6 +70,15 @@
 - 后续文档同步提交 `43e2f50d25605df96af10c6f67fc709be1f48ca1` 的自动 Preview build `fa2e3b8f-b976-49fa-80be-c8f3295270b9` 成功；该提交对应的 PR 后端、前端、Pages 和 Workers Builds 检查均通过。
 - Preview URL 公开可访问。构建环境未配置 `VITE_AGENT_API`，前端默认请求 `http://127.0.0.1:8787`，因此 Preview 首页可打开不代表浏览器能连到后端。生产 API `/health` 的只读请求返回 200，但没有把公开 Preview 指向生产 API，以避免预览写请求污染正式数据。后续前后端联调需使用隔离 API，并明确其数据与访问控制。
 - 本次没有改生产部署命令、DNS、Worker 生产代码或其他分支，也没有创建、修改或删除生产战局。
+
+## 2026-10-12 隔离 Preview API 已部署
+
+- VPS 已启用用户级 `agent-attack-lab-preview.service`，监听 `127.0.0.1:8790`，使用独立 SQLite，不连接生产数据库或生产 Partner RPC。
+- Cloudflare Tunnel 已新增 `preview-api.yuanyiagentzhandui.cn -> http://127.0.0.1:8790`，并创建 Proxied CNAME；VPS cloudflared 已加载 Tunnel 版本 4。
+- Preview API 的 CORS 正则已支持多级 `workers.dev/pages.dev` Preview 来源；生产 CORS 白名单未改。
+- 账户 5ae 的 `codex/preview-isolation` Workers Preview 已设置：根目录 `frontend/frontend-ui`、构建 `npm ci && npm run build:preview`、部署 `npx wrangler preview`、`VITE_AGENT_API=https://preview-api.yuanyiagentzhandui.cn`。构建 UUID：`91e5d0de-2b9a-46d3-8b80-a985c1a63f25`，结果 success。
+- 公网隔离 API 验收：`/health` 返回 200；CORS 预检返回 200；空 topic 返回 422；合法 low 创建返回 201；完成战局删除返回 204。测试战局已清理，未触碰生产业务数据。
+- 历史说明：部署当时的执行环境直连 `workers.dev` Preview URL 超时。本轮本机现可访问页面并核对 bundle/CORS，但浏览器自动化受运行策略阻止，页面交互仍未验收。
 
 ## 1. 分工
 

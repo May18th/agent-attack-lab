@@ -9,7 +9,8 @@
     "deploy": "npx wrangler deploy",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:preview": "node scripts/check-preview-env.mjs && npm run build"
   },
   "dependencies": {
     "react": "^19.2.8",

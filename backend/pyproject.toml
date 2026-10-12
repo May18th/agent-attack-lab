@@ -20,6 +20,7 @@ dependencies = [
     "PyJWT[crypto]>=2.8",
     "pytest>=8.0",
     "uvicorn>=0.29",
+    "redis>=5.0,<7.0",
 ]
 
 # Production Wutong wheels are intentionally not a repository dependency:
