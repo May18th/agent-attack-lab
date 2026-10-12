@@ -4,6 +4,14 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-12 隔离 Preview 本轮复核
+
+- `codex/preview-isolation` 当前提交 `afa1d09`；PR #4 仍为 OPEN、merge state `CLEAN`。后端、前端、Cloudflare Pages 和账户 `5ae` Workers Preview 检查均通过；另一个 Cloudflare 账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的重复 Workers Builds trigger 仍失败，需该账户维护者处理。
+- 本机网络访问 Workers Preview 页面和 `pages.dev` branch preview 均返回 HTTP 200。下载当前 Workers Preview HTML/JS 后确认 bundle 配置为 `https://preview-api.yuanyiagentzhandui.cn`，不含生产 API 地址。该来源对 Preview API 的 CORS 预检返回 200，允许方法为 GET/POST/DELETE/OPTIONS。
+- 隔离 API 本轮复测：空 topic=422；low/mid/high 创建均为 201、状态 `completed`，对应删除均为 204。请求 ID：空 topic `req-e8c70732-0d48-405f-86fd-920d69761703`；low 创建/删除 `req-64151776-9df2-4ab1-ae6d-5ee8c177e3cf` / `req-ac5f9cb6-b138-4758-afaf-d1e796ac5f5b`；mid `req-5f528d9a-4ba2-4a81-b65b-0fc08cb3681f` / `req-722b6177-6fdd-4b9b-aae4-56a5ef57d849`；high `req-f8f36198-2183-41a3-aff2-5591ff026afa` / `req-37f9ca50-6ea8-46ef-9e7d-8725a51f052d`。均使用独立 Preview 数据库，写后清理；未访问生产写接口。
+- 浏览器自动化未通过：当前运行策略拒绝启动 Edge 子进程。上述 HTTP、静态 bundle 和 CORS 检查不等于页面内交互验收；仍需在可用浏览器中打开 `https://codex-preview-isolation-agent-attack-lab.3498414260.workers.dev`，检查渲染、控制台和实际请求，再做低中高难度交互。
+- 本轮仅清理未被服务占用的根目录 Vite 输出日志并更新交接记录；没有改生产服务、生产数据库、DNS、Tunnel 或 Registry。
+
 ## 2026-10-12 Workers Builds Preview 复核
 
 - Cloudflare Build trigger `codex/deployment-status-sync` 仅匹配该分支。已将 root directory 设为 `/frontend/frontend-ui`、build command 设为 `npm run build`；保留 Preview command `npx wrangler preview` 和现有路径筛选。
@@ -19,7 +27,7 @@
 - Preview API 的 CORS 正则已支持多级 `workers.dev/pages.dev` Preview 来源；生产 CORS 白名单未改。
 - 账户 5ae 的 `codex/preview-isolation` Workers Preview 已设置：根目录 `frontend/frontend-ui`、构建 `npm ci && npm run build:preview`、部署 `npx wrangler preview`、`VITE_AGENT_API=https://preview-api.yuanyiagentzhandui.cn`。构建 UUID：`91e5d0de-2b9a-46d3-8b80-a985c1a63f25`，结果 success。
 - 公网隔离 API 验收：`/health` 返回 200；CORS 预检返回 200；空 topic 返回 422；合法 low 创建返回 201；完成战局删除返回 204。测试战局已清理，未触碰生产业务数据。
-- 尚未宣称浏览器端 Preview 完成验收：当前执行环境直连 `workers.dev` Preview URL 超时，需要在能访问该 URL 的浏览器网络边界复验页面加载和脚本 API 指向。
+- 历史说明：部署当时的执行环境直连 `workers.dev` Preview URL 超时。本轮本机现可访问页面并核对 bundle/CORS，但浏览器自动化受运行策略阻止，页面交互仍未验收。
 
 ## 1. 分工
 
