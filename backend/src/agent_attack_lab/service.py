@@ -47,6 +47,7 @@ from agent_attack_lab.acp_agents import (
 )
 from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend, local_rule_case_count
+from agent_attack_lab.cache import RedisJsonCache
 from agent_attack_lab.external_cases import query_external_cases
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 from agent_attack_lab.storage import BattleStore
@@ -181,6 +182,7 @@ _aip_server_options = server_identity_options(
 )
 _event_data_max_bytes = 32768
 _leaderboard_cache: tuple[float, dict[str, Any]] | None = None
+_redis_cache = RedisJsonCache()
 _recovery_tasks: set[asyncio.Task[Any]] = set()
 
 
@@ -500,6 +502,7 @@ def _rate_limit_dependency(request: Request) -> None:
 def _invalidate_leaderboard_cache() -> None:
     global _leaderboard_cache
     _leaderboard_cache = None
+    _redis_cache.delete("agent-attack-lab:v1:leaderboard", "agent-attack-lab:v1:dashboard-summary")
 
 
 def _bounded_event_data(data: dict[str, Any]) -> dict[str, Any]:
@@ -679,6 +682,7 @@ async def _lifespan(_app: FastAPI):
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         _battle_store.close()
+        _redis_cache.close()
 
 
 app.router.lifespan_context = _lifespan
@@ -1919,11 +1923,17 @@ def metrics() -> dict[str, Any]:
     tags=["统计接口"],
 )
 def dashboard_summary() -> dict[str, int]:
-    return {
+    cache_key = "agent-attack-lab:v1:dashboard-summary"
+    cached = _redis_cache.get_json(cache_key)
+    if isinstance(cached, dict):
+        return {str(key): int(value) for key, value in cached.items()}
+    result = {
         **_battle_store.dashboard_summary(),
         "ruleLibraryCaseCount": local_rule_case_count(),
         "owaspLlmRuleCount": len(OWASP_LLM_CATEGORIES),
     }
+    _redis_cache.set_json(cache_key, result)
+    return result
 
 
 @app.get(
@@ -1942,14 +1952,30 @@ def list_external_cases(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    return query_external_cases(
+    normalized = {
+        "q": q.strip() if q else None,
+        "vendor": vendor.strip() if vendor else None,
+        "product": product.strip() if product else None,
+        "limit": limit,
+        "offset": offset,
+    }
+    cache_key = "agent-attack-lab:v1:external-cases:" + hashlib.sha256(
+        json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    cached = _redis_cache.get_json(cache_key)
+    if isinstance(cached, dict):
+        return cached
+    result = query_external_cases(
         _external_cases_database,
-        query=q.strip() if q else None,
-        vendor=vendor.strip() if vendor else None,
-        product=product.strip() if product else None,
+        query=normalized["q"],
+        vendor=normalized["vendor"],
+        product=normalized["product"],
         limit=limit,
         offset=offset,
     )
+    if result.get("available"):
+        _redis_cache.set_json(cache_key, result, ttl_seconds=300)
+    return result
 
 
 @app.get(
@@ -2289,6 +2315,10 @@ def leaderboard() -> dict[str, Any]:
     now = time.monotonic()
     if _leaderboard_cache and now - _leaderboard_cache[0] < 2:
         return _leaderboard_cache[1]
+    cached = _redis_cache.get_json("agent-attack-lab:v1:leaderboard")
+    if isinstance(cached, dict) and isinstance(cached.get("items"), list):
+        _leaderboard_cache = (now, cached)
+        return cached
     attacker_score = defender_score = 0
     rounds = 0
     for record in _battle_store.list(limit=100000):
@@ -2303,6 +2333,7 @@ def leaderboard() -> dict[str, Any]:
         ],
     }
     _leaderboard_cache = (now, result)
+    _redis_cache.set_json("agent-attack-lab:v1:leaderboard", result)
     return result
 
 
