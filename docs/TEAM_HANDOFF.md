@@ -4,6 +4,15 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-12 Preview API 验收复测（23:34-23:40 +08:00）
+
+- Preview 页面与 JS bundle 均 HTTP 200；bundle 只包含 `https://preview-api.yuanyiagentzhandui.cn` 作为 API 地址，未发现生产 API 或 localhost 地址。
+- Preview API 的 POST CORS 预检 HTTP 200，允许来源为目标 Preview Worker，允许方法 `GET, POST, DELETE, OPTIONS`。
+- 对隔离 Preview API 执行空白主题 422；low/mid/high 分别创建 201、最终 `completed`、详情读取 200，事件为 6/7/8 条；删除均 204，删除后详情及事件均 404。测试前缀查询为 0 条。一次早期 HTTP 状态解析器报错时创建的单条 Preview 测试战局已清理，删除 204 且详情/事件复查 404。
+- 未在生产 API 创建或删除战局。VPS 生产 API 和本机 Redis 状态只读确认仍正常。
+- 浏览器页面实际渲染、控制台、点击流程和移动视口无法在本轮执行：当前没有 CDP 浏览器会话，自动启动独立 Edge 被执行环境策略拒绝。不得把 HTTP/JS bundle 检查描述为真实浏览器验收。
+- GitHub PR #4 当前已批准、merge state `CLEAN`、仍开放；需由可用浏览器完成桌面/移动 low/mid/high 实际交互验收后再合并。
+
 ## 2026-10-12 Redis 缓存生产部署
 
 本地提交 `4895c5d` 的可选 Redis 缓存已部署到 VPS，部署采用文件级覆盖以保留 VPS 既有 `backend/scripts/start-service.sh` 未提交修改：

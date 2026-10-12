@@ -16,6 +16,14 @@
 - 生产回滚备份：`/opt/agent-attack-lab/.deploy-backups/redis-20261012-predeploy/`，包含覆盖前的 `service.py`、`pyproject.toml`、`uv.lock`；此前 `.deploy-backups/redis-20261012-/` 备份保留不动。
 - 未修改 `backend/scripts/start-service.sh`、Cloudflare DNS/Tunnel、公网 Redis 暴露、数据库或证书。不要提交 VPS `.env`、Redis 数据、备份目录或其他凭据。
 
+## 2026-10-12 Preview 验收复测（23:34-23:40 +08:00）
+
+- Preview 页面与脚本 bundle 均 HTTP 200；bundle 指向 `https://preview-api.yuanyiagentzhandui.cn`，未发现生产 API 或 `127.0.0.1:8787` 地址。
+- Preview API CORS POST 预检 HTTP 200，允许来源精确匹配 Preview Worker，允许方法 `GET, POST, DELETE, OPTIONS`。
+- 隔离 Preview API 写验收：空白 topic HTTP 422；low/mid/high 均创建 HTTP 201 且状态 `completed`，详情 HTTP 200，事件分别 6/7/8 条；删除均 HTTP 204，随后详情及事件均 HTTP 404。验收主题记录复查为 0 条；此前一次状态解析失败留下的单条 Preview 测试记录也已删除并验证 404。未触碰生产战局数据库。
+- 浏览器真实页面渲染、控制台、点击和移动端布局本轮无法验收：没有可连接的浏览器 CDP 会话，执行策略阻止启动独立 Edge 自动化进程。HTTP、bundle、API 验收不能替代人工浏览器交互。
+- PR #4 当前 `APPROVED`、merge state `CLEAN`、仍为 OPEN。按验收要求，真实浏览器桌面/移动交互通过前不合并。
+
 ## 2026-10-12 验收复测（12:15-12:51 +08:00）
 
 - 生产部署：VPS `/opt/agent-attack-lab` 当前提交 `a0d62429c82a2ad122829dc8104f25505c0a22c8`，与远端 `main` 一致。API、attacker、defender、preview 和 `cloudflared-agent-attack-lab` 用户服务均 `active` 且 `enabled`，user linger 为 `yes`。VPS 工作树另有 `backend/scripts/start-service.sh` 未提交修改，本轮未触碰。
