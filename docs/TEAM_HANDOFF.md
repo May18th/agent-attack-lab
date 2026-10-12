@@ -6,7 +6,7 @@
 
 ## 2026-10-12 生产与隔离 Preview 验收复测
 
-验收时间：2026-10-12 12:15-12:26（UTC+8）。本轮仅对生产执行只读请求、mTLS/AIP 临时任务和浏览器会话登录/退出；所有 `/battles` 写接口测试均发往独立 Preview API 或本机临时数据库。
+验收时间：2026-10-12 12:15-12:51（UTC+8）。生产 `/battles` 写接口仅使用唯一标识的验收主题，完成后逐条删除并验证战局及事件均不可见；其余隔离写测试发往 Preview API 或本机临时数据库。
 
 - VPS 部署提交：`a0d62429c82a2ad122829dc8104f25505c0a22c8`，与远端 `main` 相同。API、attacker、defender、preview、`cloudflared-agent-attack-lab` 服务均 active/enabled；user linger=yes。VPS 工作树有 `backend/scripts/start-service.sh` 未提交修改，验收期间未改动。
 - 生产 API 的 `/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1`、`/openapi.json` 均 HTTP 200；OpenAPI 有已完成战局删除路由。生产前端站点、`www` 和 Preview 页面均 HTTP 200，正式与 Preview bundle 分别指向生产 API、隔离 Preview API，均不包含密码输入表单或浏览器会话 API 调用。
@@ -16,7 +16,9 @@
 - Discovery explicit 查询本轮实测命中 Leader 和两个新 Partner AIC；三个 Agent 均 active，endpoints 分别为 api/attack/defense 正式域名，transport JSONRPC，安全方案 mutualTLS。没有改 Registry/Discovery。
 - Cloudflare API 只读检查：账号 Tunnel `yuanyi-agent-attack-lab-backend` healthy，配置版本 4，api/attack/defense/preview-api ingress 分别映射到 `127.0.0.1:8787/8788/8789/8790`。当前 Cloudflare 账号 Zone 列表未返回 `yuanyiagentzhandui.cn`；公共 DNS 解析正常，本轮未修改 DNS。
 - 隔离 Preview API：空 topic=422，request ID `req-d6b1cdc6-8ee6-4916-ae80-d1e876e6e232`。low/mid/high 均创建 201、最终 completed、读取到事件；删除均 204，删除后查询 404。low create/delete `req-2fadfddc-eb49-471a-866e-d0e0a68f6d3d` / `req-b620240f-d4e1-459d-ae85-0ca05e5a919c`；mid `req-5ed6e1e4-19d6-4714-85af-ee9af885c329` / `req-33e0a989-fce7-40b8-9550-7e62a187ec79`；high `req-4b54b0a8-e8dc-4460-90c5-9f3d8a9c1d35` / `req-416db6e5-cda7-4f82-a4d6-ab02c60c462a`。本机临时数据库契约测试 4 passed，覆盖运行中删除 409、完成战局删除清空事件。
-- 未完成：本轮没有对生产创建/删除战局；生产 Leader `/rpc` 到 `/battles` 的全链路、生产 low/mid/high 战局和真实浏览器交互没有重新验收。浏览器自动化因 node repl 的 Playwright 导入失败、前端未安装 Playwright 未能启动；HTTP 与静态资源核验不能代替交互验收。
+- 生产 Leader API 验收（2026-10-12 12:51:28-12:51:40 +08:00）：空 topic HTTP 422，request ID `req-f3f09b94-4d6d-400d-8e0a-e51230e71f08`。独特验收主题下 low/mid/high 均 HTTP 201 且 `completed`，随后删除 HTTP 204；删除后详情和事件查询均 HTTP 404。low create/delete `req-c08f72fb-e20f-4f37-a80d-2cea170fe357` / `req-a4363247-d97b-4251-b076-4216f55d30e2`，事件 6 条；mid `req-9de463d4-dbd9-49d3-8ad8-9e4a88a74527` / `req-2673e85a-e96a-48fb-b917-da448386d612`，事件 7 条；high `req-e7046f0d-3d22-4a4c-bdd6-b07d227dd9b1` / `req-65f0ced9-3b3d-45a0-b6a2-0f95675e4775`，事件 8 条。三者 `agentSource=acp-rule-fallback`，说明 Leader 已通过 ACP 到达 Partner，Partner 使用本地规则；未调用外部 LLM。测试数据已删除并复核。
+- 浏览器会话：本轮验收登录和注销均 HTTP 200。另有一个单独登录探测 Cookie 未保留，服务端会话按 8 小时 TTL 自动过期，预计当日约 20:50（具体分钟无法确认）；未重启服务以免影响其他会话。登录密码不进入交接/Git。
+- 未完成：本机没有可用浏览器控制插件或 Edge 远程调试端口，真实页面渲染、控制台、实际浏览器网络请求及桌面/移动交互仍未验收；Leader 自身 `/rpc` 直连入口也未单独验收。运行中删除 409 由本机隔离契约测试覆盖，没有在生产制造运行中战局。
 
 ## 2026-10-12 公网 Partner mTLS 与 AIP 复测
 

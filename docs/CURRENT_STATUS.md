@@ -1,20 +1,21 @@
 # 当前项目状态
 
-更新时间：2026-10-11
+更新时间：2026-10-12
 
 本文只记录当前状态；历史执行证据见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) 与 Git 历史。
 
-## 2026-10-12 验收复测（12:15-12:26 +08:00）
+## 2026-10-12 验收复测（12:15-12:51 +08:00）
 
 - 生产部署：VPS `/opt/agent-attack-lab` 当前提交 `a0d62429c82a2ad122829dc8104f25505c0a22c8`，与远端 `main` 一致。API、attacker、defender、preview 和 `cloudflared-agent-attack-lab` 用户服务均 `active` 且 `enabled`，user linger 为 `yes`。VPS 工作树另有 `backend/scripts/start-service.sh` 未提交修改，本轮未触碰。
 - 公网只读：正式 API `/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1`、`/openapi.json` 均 HTTP 200；OpenAPI 包含 `DELETE /battles/{battle_id}`。正式站首页、`www`、隔离 Preview 首页和 Preview API `/health` 均 HTTP 200。正式前端 bundle 仅指向生产 API，Preview bundle 仅指向隔离 API；两者都未发现浏览器密码表单或 `/auth/session` 调用。
 - CORS：正式前端 `https://www.yuanyiagentzhandui.cn` 到生产 API 的 POST 预检 HTTP 200；Preview Worker 到 `preview-api.yuanyiagentzhandui.cn` 的 POST 预检 HTTP 200，均返回匹配的 `Access-Control-Allow-Origin`，允许方法 `GET, POST, DELETE, OPTIONS`。
-- 浏览器会话：未登录 `/auth/session` 为 `authenticated=false`；使用既有管理员凭据登录 HTTP 200，`Secure`、`HttpOnly`、`SameSite=Lax` Cookie 生效，登录后 `/dashboard` 返回管理页；独立复测会话注销 HTTP 200，状态恢复 `authenticated=false`。一次较早的受保护回放请求超时，未收到 X-Request-ID；对应临时 Cookie 未写盘或输出，服务端内存中的会话记录按 8 小时 TTL 自行过期（约 20:23 +08:00）。未重启服务以免清除其他用户会话。
+- 浏览器会话：未登录 `/auth/session` 为 `authenticated=false`；管理员凭据登录 HTTP 200，`Secure`、`HttpOnly`、`SameSite=Lax` Cookie 生效，登录后 `/dashboard` 返回管理页；两次已保存 Cookie 的验收会话均注销 HTTP 200。一次较早的受保护回放请求超时，未收到 X-Request-ID；对应临时 Cookie 未写盘或输出，服务端会话按 8 小时 TTL 到期（约 20:23 +08:00）。本轮单独登录探测也有一个未保留 Cookie 的会话，按 8 小时 TTL 自动过期（预计当日约 20:50，具体分钟无法确认）。未重启服务以免清除其他用户会话；不要将登录密码写入交接或 Git。
 - Partner mTLS/AIP：attack、defense `/health` 均 HTTP 200；无客户端证书 `/rpc` 均 HTTP 403。使用 Leader clientAuth 与 trust bundle 分别执行 AIP Start、Complete，两边均 HTTP 200，响应结构通过，task 最终 `completed`；攻击返回 1 个 low 样本，防守返回合法检测结构。两边均为 `local-rule`，未调用外部模型。Leader 主 `/rpc` 未执行真实 mTLS 调用。
 - Discovery：梧桐 Discovery explicit 查询命中 Leader、attack、defense 三个当前 AIC；均 `active=true`，RPC URL 与正式域名一致，`transport=JSONRPC`、security 声明 `mtls`。本轮未更新 Registry/Discovery。
 - Cloudflare：当前账号 Tunnel `yuanyi-agent-attack-lab-backend` 为 `healthy`，远程配置版本 4；api/attack/defense/preview-api 分别映射到 VPS `127.0.0.1:8787/8788/8789/8790`。公网 DNS 查询成功；本账号 Zone 列表未返回 `yuanyiagentzhandui.cn`，因此没有读取或修改 Zone DNS 记录。
 - 隔离 Preview 写验收：空白 topic HTTP 422；low/mid/high 均创建 HTTP 201 且状态 `completed`，读取事件分别为 6/7/8 条；删除均 HTTP 204，删除后查询均 HTTP 404。请求 ID：空主题 `req-d6b1cdc6-8ee6-4916-ae80-d1e876e6e232`；low create/delete `req-2fadfddc-eb49-471a-866e-d0e0a68f6d3d` / `req-b620240f-d4e1-459d-ae85-0ca05e5a919c`；mid `req-5ed6e1e4-19d6-4714-85af-ee9af885c329` / `req-33e0a989-fce7-40b8-9550-7e62a187ec79`；high `req-4b54b0a8-e8dc-4460-90c5-9f3d8a9c1d35` / `req-416db6e5-cda7-4f82-a4d6-ab02c60c462a`。本机隔离存储契约测试 `4 passed`，覆盖运行中战局删除 HTTP 409 与删除事件清理。
-- 边界：本轮没有对生产 `/battles` 执行创建或删除，避免写入/清理正式数据库；生产 low/mid/high 和真实浏览器页面交互未重新验收。Browser automation 未能启动（node repl Playwright 导入错误，前端未安装 Playwright）；HTTP/静态 bundle 检查不替代页面交互验收。Leader 生产 `/rpc` 与 Discovery 到生产战局的完整链路尚未实测。
+- 生产 Leader API 写验收（12:51:28-12:51:40 +08:00）：空 topic=422，request ID `req-f3f09b94-4d6d-400d-8e0a-e51230e71f08`。独特前缀 `[prod-accept-20261012-125128]` 下 low/mid/high 均创建 201、完成后删除 204；删除后战局详情及事件查询均 404。low create/delete `req-c08f72fb-e20f-4f37-a80d-2cea170fe357` / `req-a4363247-d97b-4251-b076-4216f55d30e2`（6 events）；mid `req-9de463d4-dbd9-49d3-8ad8-9e4a88a74527` / `req-2673e85a-e96a-48fb-b917-da448386d612`（7 events）；high `req-e7046f0d-3d22-4a4c-bdd6-b07d227dd9b1` / `req-65f0ced9-3b3d-45a0-b6a2-0f95675e4775`（8 events）。三个难度均返回 `agentSource=acp-rule-fallback`，表明 Leader 已通过 ACP 调用 Partner，Partner 使用本地规则；没有调用外部 LLM。测试战局及事件均已清理。
+- 边界：生产 `/battles` 写接口 low/mid/high 与 Partner 链路已验收；运行中删除 409 由本机隔离存储契约测试覆盖，本轮未在生产制造运行中战局。Leader 自身 `/rpc` 直连调用、Discovery 到生产战局的完整链路和真实浏览器页面交互仍未验收。Browser automation 未能启动（Node REPL 没有浏览器句柄，本机 Edge 未开启远程调试端口）；HTTP/静态 bundle 检查不替代页面交互验收。
 
 ## PR #3 Preview 更新（2026-10-12）
 
