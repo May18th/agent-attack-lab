@@ -2,31 +2,45 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 import agent_attack_lab.agents.attacker as attacker
 import agent_attack_lab.agents.defender as defender
 from agent_attack_lab.agents.llm_runtime import LLMError
 
 
-def test_attacker_uses_configured_model_and_validates_generated_schema(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("difficulty", "expected_variation", "expected_count"),
+    [
+        ("low", "单一请求与基准身份；只观察一个授权边界。", 1),
+        ("mid", "更换目标对象或凭据状态，并对比授权前后的响应差异。", 2),
+        ("high", "组合身份、资源状态与重复请求等条件；只在隔离环境检查边界交互。", 3),
+    ],
+)
+def test_attacker_uses_configured_model_and_validates_generated_schema(
+    monkeypatch, difficulty, expected_variation, expected_count
+) -> None:
     seen: dict[str, object] = {}
 
     async def fake_complete(system_prompt, user_payload):
         seen.update(payload=user_payload, prompt=system_prompt)
-        return {
-            "samples": [{
+        sample = {
                 "type": "violation", "severity": "low", "scenario": "payment-specific scenario",
                 "objective": "check payment ownership", "content": "synthetic payment test",
-            }]
-        }
+            }
+        count = {"low": 1, "mid": 2, "high": 3}[user_payload["difficulty"]]
+        return {"samples": [sample for _ in range(count)]}
 
     monkeypatch.setattr(attacker, "is_configured", lambda: True)
     monkeypatch.setattr(attacker, "complete_json", fake_complete)
-    result = asyncio.run(attacker.process({"topic": "电商支付越权", "difficulty": "low"}))
+    result = asyncio.run(attacker.process({"topic": "电商支付越权", "difficulty": difficulty}))
 
     assert result["agentMode"] == "llm"
     assert result["samples"][0]["topic"] == "电商支付越权"
     assert result["samples"][0]["simulation"] is True
-    assert seen["payload"] == {"topic": "电商支付越权", "difficulty": "low"}
+    assert len(result["samples"]) == expected_count
+    assert all(sample["testVariation"] == expected_variation for sample in result["samples"])
+    assert seen["payload"] == {"topic": "电商支付越权", "difficulty": difficulty}
     assert '"samples"' in seen["prompt"]
 
 

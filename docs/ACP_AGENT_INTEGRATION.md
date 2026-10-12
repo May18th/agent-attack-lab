@@ -9,6 +9,8 @@
 - 某个角色未配置 URL 时，该角色明确使用本地规则引擎。
 - URL 已配置但远端超时、协议错误或输出结构错误时，战局失败，不会静默回退到本地规则。
 - 后台实时事件、战局结果中的 `agentSource` 会区分 `acp-llm`、`acp-rule-fallback`、`local-rule` 及未知来源。
+- 每次攻击/防守执行新增 `agent.call.started` 与终态事件，携带同一 `correlationId`、角色、调度模式、耗时和来源；该 ID 同时用作 AIP `sessionId`。战局结果事件会回填对应调用 ID。
+- `/dashboard/summary` 提供留存事件范围内的 Agent 执行数、ACP 请求成功/失败数、规则兜底数和平均耗时。Partner 返回 `acp-llm` 仅是来源字段声明，不构成模型提供方的独立证明。
 
 `POST /agent/attack`、`POST /agent/defend` 和本服务的 `/rpc` 仍是本地演示 Agent 入口；独立 Agent 的战局编排发生在 `POST /battles`。
 

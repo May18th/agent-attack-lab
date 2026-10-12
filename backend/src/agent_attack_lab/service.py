@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from html import escape as escape_html
 from pathlib import Path
 from threading import Lock
-from typing import Any, Literal
+from typing import Any, Awaitable, Callable, Literal
 from urllib.parse import quote, urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
@@ -50,6 +50,7 @@ from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, d
 from agent_attack_lab.cache import RedisJsonCache
 from agent_attack_lab.external_cases import query_external_cases
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
+from agent_attack_lab.scoring import SCORING_VERSION, score_battle
 from agent_attack_lab.storage import BattleStore
 
 
@@ -105,7 +106,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
-    expose_headers=["X-Total-Count"],
+    expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID"],
 )
 
 _frontend_dist = Path(__file__).resolve().parents[3] / "frontend" / "frontend-ui" / "dist"
@@ -502,7 +503,11 @@ def _rate_limit_dependency(request: Request) -> None:
 def _invalidate_leaderboard_cache() -> None:
     global _leaderboard_cache
     _leaderboard_cache = None
-    _redis_cache.delete("agent-attack-lab:v1:leaderboard", "agent-attack-lab:v1:dashboard-summary")
+    _redis_cache.delete(
+        "agent-attack-lab:v1:leaderboard",
+        "agent-attack-lab:v1:dashboard-summary",
+        "agent-attack-lab:v2:dashboard-summary",
+    )
 
 
 def _bounded_event_data(data: dict[str, Any]) -> dict[str, Any]:
@@ -541,8 +546,10 @@ def _event(battle_id: str, sequence: int, event_type: str, status: str, data: di
     }
 
 
-async def _battle_attack(payload: BattleRequest) -> tuple[dict[str, Any], str]:
-    result = await call_attacker(payload.model_dump())
+async def _battle_attack(
+    payload: BattleRequest, *, correlation_id: str
+) -> tuple[dict[str, Any], str]:
+    result = await call_attacker(payload.model_dump(), correlation_id=correlation_id)
     source = "local-rule"
     if result is None:
         result = attack(AttackRequest.model_validate(payload.model_dump()))
@@ -554,8 +561,10 @@ async def _battle_attack(payload: BattleRequest) -> tuple[dict[str, Any], str]:
     return {**result, "agentSource": source}, source
 
 
-async def _battle_defend(sample: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    result = await call_defender({"sample": sample})
+async def _battle_defend(
+    sample: dict[str, Any], *, correlation_id: str
+) -> tuple[dict[str, Any], str]:
+    result = await call_defender({"sample": sample}, correlation_id=correlation_id)
     source = "local-rule"
     if result is None:
         result = defend(DefendRequest(sample=sample))
@@ -565,6 +574,62 @@ async def _battle_defend(sample: dict[str, Any]) -> tuple[dict[str, Any], str]:
             "acp-llm" if result.get("agentMode") == "llm" else "acp-rule-fallback"
         )
     return {**result, "agentSource": source}, source
+
+
+async def _tracked_agent_call(
+    *,
+    battle_id: str,
+    role: Literal["attacker", "defender"],
+    invoke: Callable[[str], Awaitable[tuple[dict[str, Any], str]]],
+    add_event: Callable[[str, str, dict[str, Any]], None],
+) -> tuple[dict[str, Any], str, str]:
+    correlation_id = f"call-{uuid.uuid4()}"
+    dispatch_mode = "acp" if acp_agent_configured(role) else "local"
+    event_data: dict[str, Any] = {
+        "correlationId": correlation_id,
+        "agentRole": role,
+        "dispatchMode": dispatch_mode,
+    }
+    expected_aic = os.getenv(
+        f"AGENT_{role.upper()}_EXPECTED_AIC",
+        os.getenv("AGENT_AIP_EXPECTED_PARTNER_AIC", ""),
+    ).strip()
+    if expected_aic:
+        event_data["expectedPeerAic"] = expected_aic
+
+    started = time.monotonic()
+    add_event("agent.call.started", "running", event_data)
+    try:
+        result, source = await invoke(correlation_id)
+    except Exception as exc:
+        add_event(
+            "agent.call.failed",
+            "failed",
+            {
+                **event_data,
+                "durationMs": round((time.monotonic() - started) * 1000),
+                "errorType": type(exc).__name__,
+            },
+        )
+        logger.warning(
+            "Battle %s %s call failed (correlation_id=%s, error_type=%s)",
+            battle_id,
+            role,
+            correlation_id,
+            type(exc).__name__,
+        )
+        raise
+
+    add_event(
+        "agent.call.completed",
+        "completed",
+        {
+            **event_data,
+            "durationMs": round((time.monotonic() - started) * 1000),
+            "resultSource": source,
+        },
+    )
+    return result, source, correlation_id
 
 
 async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
@@ -594,7 +659,14 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             },
         )
         await asyncio.sleep(0.8)
-        attack_result, attacker_source = await _battle_attack(payload)
+        attack_result, attacker_source, attack_call_id = await _tracked_agent_call(
+            battle_id=battle_id,
+            role="attacker",
+            invoke=lambda correlation_id: _battle_attack(
+                payload, correlation_id=correlation_id
+            ),
+            add_event=add_event,
+        )
         record["attackerOut"] = attack_result
         _battle_store.save(record)
         _invalidate_leaderboard_cache()
@@ -602,13 +674,22 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             add_event(
                 "attack.sample.generated",
                 "completed",
-                {"round": index, "sample": sample, "attackerSource": attacker_source},
+                {
+                    "round": index,
+                    "sample": sample,
+                    "attackerSource": attacker_source,
+                    "correlationId": attack_call_id,
+                },
             )
             await asyncio.sleep(0.35)
         add_event(
             "attack.completed",
             "completed",
-            {"sampleCount": len(attack_result["samples"]), "attackerSource": attacker_source},
+            {
+                "sampleCount": len(attack_result["samples"]),
+                "attackerSource": attacker_source,
+                "correlationId": attack_call_id,
+            },
         )
 
         defender_results: list[dict[str, Any]] = []
@@ -622,7 +703,14 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 },
             )
             await asyncio.sleep(0.8)
-            defense, defender_source = await _battle_defend(sample)
+            defense, defender_source, defense_call_id = await _tracked_agent_call(
+                battle_id=battle_id,
+                role="defender",
+                invoke=lambda correlation_id, current_sample=sample: _battle_defend(
+                    current_sample, correlation_id=correlation_id
+                ),
+                add_event=add_event,
+            )
             defender_results.append(defense)
             record["defenderOut"] = defender_results
             _battle_store.save(record)
@@ -640,6 +728,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     "analysisMode": defense.get("analysisMode"),
                     "verificationStatus": defense.get("verificationStatus"),
                     "scopeNotice": defense.get("scopeNotice"),
+                    "correlationId": defense_call_id,
                 },
             )
         add_event("defense.completed", "completed", {"roundCount": len(defender_results)})
@@ -1003,6 +1092,13 @@ def dashboard(
     .round-details { margin-top: 14px; border-top: 1px solid #263950; padding-top: 10px; }
     .round-details summary { color: #a6b5c8; cursor: pointer; font-size: 11px; }
     .round-details .round-list { margin-top: 10px; }
+    .internal-score { margin-top: 14px; padding: 12px; border: 1px solid #304357; border-radius: 6px; background: #0d1725; }
+    .internal-score h3 { margin: 0; color: #dce9f5; font-size: 13px; }
+    .internal-score-note { margin: 6px 0 10px; color: #8ea1b7; font-size: 10px; line-height: 1.5; }
+    .internal-score-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .internal-score-role { min-width: 0; padding: 10px; border: 1px solid #263950; border-radius: 5px; }
+    .internal-score-role strong { color: #80d9c7; font-size: 12px; }
+    .internal-score-role ul { margin: 8px 0 0; padding-left: 17px; color: #aebed0; font-size: 10px; line-height: 1.6; }
     #result[hidden] { display: none; }
     .history-row-active { background: #15332f; }
     @media (max-width: 760px) {
@@ -1017,6 +1113,7 @@ def dashboard(
       .replay-controls { grid-template-columns: repeat(4, auto) minmax(60px, 1fr); }
       .replay-controls select { grid-column: 5; }
       .replay-count { grid-column: 1 / 5; grid-row: 2; }
+      .internal-score-grid { grid-template-columns: minmax(0, 1fr); }
     }
     @media (max-width: 480px) {
       .topbar { display: block; }
@@ -1087,6 +1184,12 @@ def dashboard(
         <div class="metric"><b id="sample-count">0</b><span>已保存样本</span></div>
         <div class="metric"><b id="rule-hit-count">0</b><span>规则命中</span></div>
         <div class="metric"><b id="risk-count">0</b><span>风险记录</span></div>
+        <div class="metric"><b id="acp-request-count">0</b><span>ACP 调用次数</span></div>
+        <div class="metric"><b id="acp-outcome">0 / 0</b><span>ACP 成功 / 失败</span></div>
+        <div class="metric"><b id="acp-fallback-count">0</b><span>ACP 规则兜底</span></div>
+        <div class="metric"><b id="local-call-count">0</b><span>本地规则执行</span></div>
+        <div class="metric"><b id="llm-result-count">0</b><span>返回声明为 LLM</span></div>
+        <div class="metric"><b id="agent-latency">0</b><span>Agent 平均耗时（毫秒）</span></div>
       </div>
       <p id="saved-data-note" class="hint">统计来自已保存战局，不含准确率推断。</p>
       <div class="table-wrap"><table><thead><tr><th>主题</th><th>难度</th><th>状态</th><th>时间</th><th>操作</th></tr></thead><tbody id="history"><tr><td colspan="5" class="empty">暂无历史战局</td></tr></tbody></table></div>
@@ -1097,8 +1200,9 @@ def dashboard(
     function escapeHtml(value) { return String(value).replace(/[&<>\"']/g, function (char) { return ({"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"&#039;"})[char]; }); }
     function formatTime(value) { return value ? new Date(value).toLocaleString("zh-CN", {hour12: false}) : "--"; }
     var activeRound = null;
-    function eventLabel(type) { return ({"battle.created":"战局已创建","battle.retry":"战局已重新提交","attack.started":"攻击阶段开始","attack.sample.generated":"攻击方提交样本","attack.completed":"攻击样本已生成","round.started":"开始检测本轮样本","round.completed":"本轮防守检测完成","defense.completed":"防守阶段完成","battle.completed":"战局完成","battle.failed":"战局失败"})[type] || type; }
+    function eventLabel(type) { return ({"battle.created":"战局已创建","battle.retry":"战局已重新提交","attack.started":"攻击阶段开始","agent.call.started":"Agent 调用开始","agent.call.completed":"Agent 调用完成","agent.call.failed":"Agent 调用失败","attack.sample.generated":"攻击方提交样本","attack.completed":"攻击样本已生成","round.started":"开始检测本轮样本","round.completed":"本轮防守检测完成","defense.completed":"防守阶段完成","battle.completed":"战局完成","battle.failed":"战局失败"})[type] || type; }
     function updateLiveFlow(event) {
+      if (event.type.indexOf("agent.call.") === 0) return;
       var active = 0;
       var state = "准备阶段";
       updateBattleVisual(event);
@@ -1591,9 +1695,53 @@ def dashboard(
       $("history").innerHTML = items.length ? items.slice(0, 8).map(function (item) { return `<tr><td>${escapeHtml(item.topic)}</td><td>${difficulty(item.difficulty)}</td><td>${escapeHtml(statusLabel(item.status))}</td><td>${formatTime(item.createdAt)}</td><td><button type="button" class="history-open" data-battle-id="${escapeHtml(item.id)}">查看 / 回放</button></td></tr>`; }).join("") : '<tr><td colspan="5" class="empty">暂无历史战局</td></tr>';
     }
     function renderDashboardSummary(summary) {
-      var targets = {totalBattles: "total", completedBattles: "completed-count", failedBattles: "failed-count", sampleCount: "sample-count", ruleHitCount: "rule-hit-count", riskCount: "risk-count"};
+      var targets = {totalBattles: "total", completedBattles: "completed-count", failedBattles: "failed-count", sampleCount: "sample-count", ruleHitCount: "rule-hit-count", riskCount: "risk-count", acpRequestCount: "acp-request-count", acpRuleFallbackCount: "acp-fallback-count", reportedLlmResultCount: "llm-result-count", averageAgentCallLatencyMs: "agent-latency"};
       Object.keys(targets).forEach(function (key) { $(targets[key]).textContent = Number(summary[key] || 0).toLocaleString("zh-CN"); });
-      $("saved-data-note").textContent = "统计来自全部已保存战局 · 本地模拟样本 " + Number(summary.simulationSampleCount || 0).toLocaleString("zh-CN") + " 条 · 至少发生一次 ACP 调用 " + Number(summary.acpCallBattles || 0).toLocaleString("zh-CN") + " 场。ACP 是通信协议，不代表真实目标已验证。";
+      $("acp-outcome").textContent = Number(summary.acpSuccessCount || 0).toLocaleString("zh-CN") + " / " + Number(summary.acpFailureCount || 0).toLocaleString("zh-CN");
+      $("local-call-count").textContent = Number(summary.localRuleExecutionCount || 0).toLocaleString("zh-CN");
+      $("saved-data-note").textContent = "统计来自当前已保存战局 · " + Number(summary.agentExecutionCount || 0).toLocaleString("zh-CN") + " 次 Agent 执行（攻击 " + Number(summary.attackerCallCount || 0).toLocaleString("zh-CN") + " / 防守 " + Number(summary.defenderCallCount || 0).toLocaleString("zh-CN") + "）· 本地模拟样本 " + Number(summary.simulationSampleCount || 0).toLocaleString("zh-CN") + " 条。ACP 只表示协议调用；LLM 次数依据 Partner 返回来源字段，未做独立模型验证。";
+    }
+    function renderInternalScore(battleId, panel) {
+      fetch("/battles/" + encodeURIComponent(battleId) + "/score", {cache: "no-store"}).then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      }).then(function (result) {
+        if (!document.contains(panel)) return;
+        panel.replaceChildren();
+        var title = document.createElement("h3");
+        title.textContent = "内部 Agent 评分 · " + result.version;
+        panel.appendChild(title);
+        var note = document.createElement("p");
+        note.className = "internal-score-note";
+        note.textContent = result.message;
+        panel.appendChild(note);
+        var grid = document.createElement("div");
+        grid.className = "internal-score-grid";
+        [["攻击 Agent", result.attacker], ["防守 Agent", result.defender]].forEach(function (entry) {
+          var card = document.createElement("section");
+          card.className = "internal-score-role";
+          var heading = document.createElement("strong");
+          heading.textContent = entry[0] + "：" + (entry[1].score === null ? "证据不足" : entry[1].score + " / " + entry[1].maxScore);
+          card.appendChild(heading);
+          var explanation = document.createElement("p");
+          explanation.className = "internal-score-note";
+          explanation.textContent = entry[1].message;
+          card.appendChild(explanation);
+          if (entry[1].categories && entry[1].categories.length) {
+            var list = document.createElement("ul");
+            entry[1].categories.forEach(function (category) {
+              var item = document.createElement("li");
+              item.textContent = category.label + " " + category.score + "/" + category.maxScore;
+              list.appendChild(item);
+            });
+            card.appendChild(list);
+          }
+          grid.appendChild(card);
+        });
+        panel.appendChild(grid);
+      }).catch(function () {
+        if (document.contains(panel)) panel.textContent = "内部评分暂不可用";
+      });
     }
     function renderBattle(battle) {
       var samples = battle.attackerOut.samples || [];
@@ -1614,6 +1762,11 @@ def dashboard(
       }).join("") || '<div class="empty">本轮没有生成样本（No samples generated）</div>';
       var sourceLabel = escapeHtml(isSimulation ? "本地模拟" : attackerSource);
       $("result").innerHTML = `<div class="battle-head"><strong>${escapeHtml(battle.topic)} · ${difficulty(battle.difficulty)}难度</strong><span>${sourceLabel} · ${escapeHtml(statusLabel(battle.status))} · ${formatTime(battle.createdAt)}</span></div><div class="flow"><div class="flow-step"><i>1</i><b>战局创建</b><small>接收主题与难度</small></div><div class="flow-step"><i>2</i><b>攻击生成</b><small>输出 ${samples.length} 个样本</small></div><div class="flow-step"><i>3</i><b>规则分析</b><small>检查提交样本文本</small></div><div class="flow-step"><i>4</i><b>结果汇总</b><small>提出 ${fixedCount} 项验证建议</small></div></div><div class="battle-summary"><div class="summary-item"><b>${samples.length}</b><span>样本数</span></div><div class="summary-item"><b>${caughtCount}</b><span>规则命中</span></div><div class="summary-item"><b>${riskCount}</b><span>条件性风险</span></div><div class="summary-item"><b>${fixedCount}</b><span>验证建议</span></div></div><details class="round-details"><summary>查看逐轮证据详情（${samples.length} 轮）</summary><div class="round-list">${rounds}</div></details>`;
+      var scorePanel = document.createElement("section");
+      scorePanel.className = "internal-score";
+      scorePanel.textContent = "正在计算攻击与防守评分……";
+      $("result").appendChild(scorePanel);
+      renderInternalScore(battle.id, scorePanel);
       applyEvidenceLabels(battle);
     }
     function applyEvidenceLabels(battle) {
@@ -1919,11 +2072,15 @@ def metrics() -> dict[str, Any]:
 @app.get(
     "/dashboard/summary",
     summary="查询后台统计摘要",
-    description="规则命中、风险记录和已保存样本分别从全部已保存战局聚合；本地模拟用例数按规则库中的唯一用例编号统计。",
+    description=(
+        "历史业务指标从当前已保存战局聚合；Agent/ACP 调用指标仅统计有 agent.call.completed/failed 事件的调用，"
+        "不把战局数等同于调用次数。reportedLlmResultCount 表示 Partner 返回来源字段声明为 acp-llm，"
+        "并非独立模型提供方证明；acpSuccessCount 表示 AIP 结果成功返回，不代表真实目标已验证。"
+    ),
     tags=["统计接口"],
 )
 def dashboard_summary() -> dict[str, int]:
-    cache_key = "agent-attack-lab:v1:dashboard-summary"
+    cache_key = "agent-attack-lab:v2:dashboard-summary"
     cached = _redis_cache.get_json(cache_key)
     if isinstance(cached, dict):
         return {str(key): int(value) for key, value in cached.items()}
@@ -2063,24 +2220,68 @@ async def create_battle(
             "attackerSource": "acp-pending" if acp_agent_configured("attacker") else "local-rule",
         },
     )
+    attack_result: dict[str, Any] = {"samples": []}
+    defense_results: list[dict[str, Any]] = []
+    defense_call_ids: list[str] = []
     try:
-        attack_result, attacker_source = await _battle_attack(payload)
+        attack_result, attacker_source, attack_call_id = await _tracked_agent_call(
+            battle_id=battle_id,
+            role="attacker",
+            invoke=lambda correlation_id: _battle_attack(
+                payload, correlation_id=correlation_id
+            ),
+            add_event=add_event,
+        )
         add_event(
             "attack.completed",
             "completed",
-            {"sampleCount": len(attack_result["samples"]), "attackerSource": attacker_source},
+            {
+                "sampleCount": len(attack_result["samples"]),
+                "attackerSource": attacker_source,
+                "correlationId": attack_call_id,
+            },
         )
-        defense_results: list[dict[str, Any]] = []
         for sample in attack_result["samples"]:
-            defense, _ = await _battle_defend(sample)
+            defense, _, defense_call_id = await _tracked_agent_call(
+                battle_id=battle_id,
+                role="defender",
+                invoke=lambda correlation_id, current_sample=sample: _battle_defend(
+                    current_sample, correlation_id=correlation_id
+                ),
+                add_event=add_event,
+            )
             defense_results.append(defense)
-    except ACPAgentError as exc:
-        logger.warning("Synchronous battle failed (%s)", type(exc).__name__)
-        raise HTTPException(
-            status_code=502,
-            detail="独立 ACP Agent 调用失败，请检查服务端配置和日志",
-        ) from None
-    for index, (sample, defense) in enumerate(zip(attack_result["samples"], defense_results), start=1):
+            defense_call_ids.append(defense_call_id)
+    except Exception as exc:
+        message = (
+            "独立 ACP Agent 调用失败，请检查服务端配置和日志"
+            if isinstance(exc, ACPAgentError)
+            else "战局执行失败，请检查服务端日志"
+        )
+        add_event("battle.failed", "failed", {"error": message})
+        failed_record = BattleRecord(
+            id=battle_id,
+            difficulty=payload.difficulty,
+            topic=payload.topic,
+            status="failed",
+            createdAt=created_at,
+            attackerOut=attack_result,
+            defenderOut=defense_results,
+        )
+        _battle_store.save(failed_record.model_dump())
+        for event in events:
+            _battle_store.save_event(event)
+        _invalidate_leaderboard_cache()
+        if isinstance(exc, ACPAgentError):
+            raise HTTPException(
+                status_code=502,
+                detail=message,
+                headers={"X-Battle-ID": battle_id},
+            ) from None
+        raise
+    for index, (sample, defense, correlation_id) in enumerate(
+        zip(attack_result["samples"], defense_results, defense_call_ids), start=1
+    ):
         add_event(
             "round.completed",
             "completed",
@@ -2094,6 +2295,7 @@ async def create_battle(
                 "analysisMode": defense.get("analysisMode"),
                 "verificationStatus": defense.get("verificationStatus"),
                 "scopeNotice": defense.get("scopeNotice"),
+                "correlationId": correlation_id,
             },
         )
     add_event("defense.completed", "completed", {"roundCount": len(defense_results)})
@@ -2239,6 +2441,7 @@ def _scores(record: dict[str, Any]) -> tuple[int, int]:
 
 def _markdown_report(record: dict[str, Any], events: list[dict[str, Any]]) -> str:
     attacker_score, defender_score = _scores(record)
+    internal_score = score_battle(record, events)
     lines = [
         f"# 智能体攻防战报：{record['topic']}",
         "",
@@ -2248,6 +2451,25 @@ def _markdown_report(record: dict[str, Any], events: list[dict[str, Any]]) -> st
         f"- 创建时间：{record['createdAt']}",
         f"- 攻击方得分：{attacker_score}",
         f"- 防守方得分：{defender_score}",
+        "",
+        "## 内部运行质量评分",
+        "",
+        f"- 规则版本：`{internal_score['version']}`",
+        f"- 口径：{internal_score['message']}",
+        *[
+            f"- {role_name}：{role_score['score']}/{role_score['maxScore']}"
+            if role_score["score"] is not None
+            else f"- {role_name}：证据不足（{role_score['message']}）"
+            for role_name, role_score in (
+                ("攻击方", internal_score["attacker"]),
+                ("防守方", internal_score["defender"]),
+            )
+        ],
+        *[
+            f"  - {item['label']}：{item['score']}/{item['maxScore']}（{item['basis']}）"
+            for role_score in (internal_score["attacker"], internal_score["defender"])
+            for item in role_score["categories"]
+        ],
         "",
         "## 对抗过程",
         "",
@@ -2300,6 +2522,64 @@ def battle_report(
         "battle": record,
         "events": events,
         "scores": {"attacker": attacker_score, "defender": defender_score},
+        "internalScore": score_battle(record, events),
+    }
+
+
+@app.get(
+    "/battles/{battle_id}/score",
+    summary="查看战局内部运行质量评分",
+    description="根据战局事件计算可追溯的运行评分，不代表攻击成功率或检测准确率。",
+    tags=["评分接口"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def battle_internal_score(battle_id: str) -> dict[str, Any]:
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    return score_battle(record, _battle_store.list_events(battle_id))
+
+
+@app.get(
+    "/internal-scores",
+    summary="查看近期战局内部运行质量评分",
+    description="聚合最近战局的运行质量评分；缺少逐调用事件的历史战局单独标记为证据不足。",
+    tags=["评分接口"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    items = []
+    for record in _battle_store.list(limit=limit):
+        score = score_battle(record, _battle_store.list_events(record["id"]))
+        items.append({
+            "battleId": record["id"],
+            "topic": record["topic"],
+            "difficulty": record["difficulty"],
+            "status": record["status"],
+            "createdAt": record["createdAt"],
+            **score,
+        })
+    attacker_scores = [
+        item["attacker"]["score"] for item in items
+        if isinstance(item["attacker"]["score"], int)
+    ]
+    defender_scores = [
+        item["defender"]["score"] for item in items
+        if isinstance(item["defender"]["score"], int)
+    ]
+    return {
+        "version": SCORING_VERSION,
+        "attacker": {
+            "scoredBattleCount": len(attacker_scores),
+            "insufficientEvidenceCount": len(items) - len(attacker_scores),
+            "averageScore": round(sum(attacker_scores) / len(attacker_scores), 1) if attacker_scores else None,
+        },
+        "defender": {
+            "scoredBattleCount": len(defender_scores),
+            "insufficientEvidenceCount": len(items) - len(defender_scores),
+            "averageScore": round(sum(defender_scores) / len(defender_scores), 1) if defender_scores else None,
+        },
+        "items": items,
     }
 
 

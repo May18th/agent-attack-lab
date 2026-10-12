@@ -1,8 +1,25 @@
 # 当前项目状态
 
-更新时间：2026-10-12
+更新时间：2026-10-13
 
 本文只记录当前状态；历史执行证据见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) 与 Git 历史。
+
+## 2026-10-13 比赛评分细则适配（本地工作区）
+
+- 按项目作品比赛评审细则新增 [`SCORING_ALIGNMENT.md`](SCORING_ALIGNMENT.md)，仅用于参赛材料/证据准备；攻防实验室内部规则与比赛分值分离，见 [`INTERNAL_SCORING.md`](INTERNAL_SCORING.md)。
+- 后端本地改动为每次攻击/防守执行记录 correlationId、AIP session 关联、角色、调度模式、结果来源、耗时与脱敏失败类型；同步失败可用 `X-Battle-ID` 查询保留的失败事件。
+- `/dashboard/summary` 和后台页新增留存战局中的 Agent/ACP 分项统计。历史战局没有逐调用事件，不会回填或推算这些指标；删除战局后其相关调用事件也被清理。
+- 本地完整后端测试：比赛证据适配阶段 `107 passed, 4 skipped`；加入两侧内部评分后的当前完整测试结果见下节。跳过项因 Windows 环境缺少 Bash，另有既存 Starlette/httpx 弃用警告。敏感文件扫描通过。
+- 当前 Partner 仍可能使用规则兜底；`reportedLlmResultCount` 是 Partner 自报来源字段。上述新改动尚未 Git 审核或生产部署，不能作为公网已上线证据。
+
+## 2026-10-13 攻防实验室内部评分 v2（本地工作区）
+
+- 新增攻击 Agent、防守 Agent 各自独立的 100 分制评分；根据样本/分析结构、测试设计/证据、调用完成和 correlationId 可追溯性计算，不合并胜负分，也不套用比赛作品评分。
+- 内部后台战局详情展示两侧分数及分项；新增 `GET /battles/{id}/score`、`GET /internal-scores`，JSON 与 Markdown 战报也包含两侧评分。旧的攻防积分及 `/leaderboard` 保持不变。
+- 没有逐 Agent 调用事件的历史战局会标为 `insufficient_evidence`；不将缺少证据记成零分。当前评分不代表攻击成功率、漏洞检出准确率、真实模型调用或目标修复效果。
+- 评分优化：LLM 攻击样本补齐 `testVariation`；调用来源按成功调用的完整留痕比例计分；按通常四舍五入；规则版本为 `internal-agent-v2`，旧战局按当前版本实时重算。
+- 当前完整后端测试：`113 passed, 4 skipped`；跳过项因 Windows 环境缺少 Bash，保留一条既存 Starlette/httpx 弃用警告。敏感文件扫描通过。
+- 评分代码与页面改动仅在本地，尚未提交或部署；公网后台没有因此更新。
 
 ## 2026-10-12 Redis 缓存生产部署（22:32-22:36 +08:00）
 

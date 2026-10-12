@@ -95,13 +95,19 @@ def test_sdk_posts_aip_v2_start_command(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.delenv("AGENT_RPC_API_KEY", raising=False)
     monkeypatch.setattr(aip_rpc_client.httpx, "AsyncClient", lambda **_kwargs: FakeHttpClient())
 
-    result = asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "wire test"}))
+    result = asyncio.run(
+        acp_agents.call_attacker(
+            {"difficulty": "low", "topic": "wire test"},
+            correlation_id="call-trace-123",
+        )
+    )
 
     command = request_body["params"]["command"]
     assert request_body["method"] == "rpc"
     assert command["command"] == "start"
     assert command["senderRole"] == "leader"
     assert command["senderId"] == "agent-lab-test"
+    assert command["sessionId"] == "call-trace-123"
     assert json.loads(command["dataItems"][0]["text"]) == {
         "difficulty": "low",
         "topic": "wire test",

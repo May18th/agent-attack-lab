@@ -54,6 +54,7 @@ uv run pytest -q
 - `POST /battles/{battle_id}/retry`：重试失败的异步战局。
 - `WS /ws/battles/{battle_id}`：WebSocket 事件推送。
 - `GET /reports/{battle_id}?format=markdown`：下载 Markdown 战报；默认返回 JSON 战报。
+- `GET /battles/{battle_id}/score`、`GET /internal-scores?limit=50`：分别查看攻击 Agent 和防守 Agent 的内部评分与近期均分；这不是比赛评分或检测准确率。规则见 [`docs/INTERNAL_SCORING.md`](../docs/INTERNAL_SCORING.md)。
 - `GET /leaderboard`：按攻击方、防守方累计得分统计排行榜。
 - `GET /metrics`：查看运行时间、请求数、错误数、战局数和事件数。
 

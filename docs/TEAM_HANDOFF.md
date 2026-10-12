@@ -4,6 +4,22 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-13 比赛评分细则适配（本地待验收）
+
+- 新增 [`SCORING_ALIGNMENT.md`](SCORING_ALIGNMENT.md)，仅按比赛对项目作品的评审项整理参赛证据，不是攻防实验室内部评分规则；标出需平台侧或人工补齐的材料。
+- 本地已新增逐 Agent 调用 correlationId、AIP session 关联、耗时/来源/失败事件、留存事件统计及后台指标；同步调用失败将保留失败战局，并通过 `X-Battle-ID` 响应头定位。完整后端测试 `107 passed, 4 skipped`，敏感文件扫描通过。
+- 代码尚未 Git 审核或部署；生产环境当前状态仍以此前已部署记录为准。不要将本地新统计当作平台访问量，也不要将 Partner 自报 `acp-llm` 当作真实模型的独立证明。
+- 部署/答辩前还需：隔离环境验收、真实平台 Discovery 与调用演示、录制完整互联视频、申请梧桐侧访问数据，以及决定是否接入模型。当前不自动配置外部 LLM、不部署生产。
+
+## 2026-10-13 攻防实验室内部评分系统 v2（本地待验收）
+
+- 新增 [`INTERNAL_SCORING.md`](INTERNAL_SCORING.md)：攻击 Agent 与防守 Agent 分别独立按 100 分计，衡量输出结构、测试/证据完整度、执行和调用追溯，不合并胜负分，也不使用比赛评分权重。
+- 后端新增 `/battles/{id}/score` 与 `/internal-scores`；战报 JSON/Markdown 含两侧评分；已登录后台战局结果显示攻击/防守分数和维度。现有 `/leaderboard` 与旧有游戏积分未改变。
+- 缺少调用事件的某侧按 `insufficient_evidence` 返回 null；评分不声称准确率、真实攻击效果、模型真实性或目标已修复。
+- v2 修正：LLM 攻击样本补齐 `testVariation`；来源留痕按成功调用中具有非空 `dispatchMode` 和 `resultSource` 的比例计分；统一普通四舍五入，并升级规则版本。旧战局从原始事件按当前版本实时重算，不保留历史分数快照。
+- 完整后端测试 `113 passed, 4 skipped`（跳过项因 Windows 缺少 Bash；另有既存 Starlette/httpx 弃用警告）。
+- 代码/页面当前仅为本地修改，尚未 Git 审核或隔离 Preview 部署；验收完成前不要将新评分描述成公网功能。
+
 ## 2026-10-12 Preview API 验收复测（23:34-23:40 +08:00）
 
 - Preview 页面与 JS bundle 均 HTTP 200；bundle 只包含 `https://preview-api.yuanyiagentzhandui.cn` 作为 API 地址，未发现生产 API 或 localhost 地址。

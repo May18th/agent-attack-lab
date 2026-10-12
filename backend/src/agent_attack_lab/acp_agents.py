@@ -141,7 +141,12 @@ def _validate_result(role: Role, data: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
+async def _invoke(
+    role: Role,
+    payload: dict[str, Any],
+    *,
+    correlation_id: str | None = None,
+) -> dict[str, Any] | None:
     endpoint = os.getenv(f"AGENT_{role.upper()}_RPC_URL", "").strip()
     if not endpoint:
         return None
@@ -197,7 +202,7 @@ async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
                 trust_env=False,
             )
             await original_http.aclose()
-        session_id = f"session-{uuid.uuid4()}"
+        session_id = correlation_id or f"session-{uuid.uuid4()}"
 
         async def start_and_wait() -> TaskResult:
             task = await client.start_task(
@@ -227,9 +232,13 @@ async def _invoke(role: Role, payload: dict[str, Any]) -> dict[str, Any] | None:
             await client.close()
 
 
-async def call_attacker(payload: dict[str, Any]) -> dict[str, Any] | None:
-    return await _invoke("attacker", payload)
+async def call_attacker(
+    payload: dict[str, Any], *, correlation_id: str | None = None
+) -> dict[str, Any] | None:
+    return await _invoke("attacker", payload, correlation_id=correlation_id)
 
 
-async def call_defender(payload: dict[str, Any]) -> dict[str, Any] | None:
-    return await _invoke("defender", payload)
+async def call_defender(
+    payload: dict[str, Any], *, correlation_id: str | None = None
+) -> dict[str, Any] | None:
+    return await _invoke("defender", payload, correlation_id=correlation_id)
