@@ -4,6 +4,20 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-12 生产与隔离 Preview 验收复测
+
+验收时间：2026-10-12 12:15-12:26（UTC+8）。本轮仅对生产执行只读请求、mTLS/AIP 临时任务和浏览器会话登录/退出；所有 `/battles` 写接口测试均发往独立 Preview API 或本机临时数据库。
+
+- VPS 部署提交：`a0d62429c82a2ad122829dc8104f25505c0a22c8`，与远端 `main` 相同。API、attacker、defender、preview、`cloudflared-agent-attack-lab` 服务均 active/enabled；user linger=yes。VPS 工作树有 `backend/scripts/start-service.sh` 未提交修改，验收期间未改动。
+- 生产 API 的 `/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1`、`/openapi.json` 均 HTTP 200；OpenAPI 有已完成战局删除路由。生产前端站点、`www` 和 Preview 页面均 HTTP 200，正式与 Preview bundle 分别指向生产 API、隔离 Preview API，均不包含密码输入表单或浏览器会话 API 调用。
+- 正式站到生产 API、Preview Worker 到 Preview API 的 CORS POST 预检均 HTTP 200；两者允许来源与请求 Origin 完全匹配，允许方法 `GET, POST, DELETE, OPTIONS`。
+- 浏览器会话 API 级验证：未登录状态 false；管理员密码登录 200、Cookie 带 Secure/HttpOnly/SameSite=Lax；登录后管理页返回管理内容；后续临时会话注销 200，状态恢复 false。一次较早回放请求超时，未收到 request ID；该轮 Cookie 未写盘/输出，服务端内存 session 按 8 小时 TTL 到期（约 20:23 +08:00）。未重启生产服务以避免影响其他会话。不要将登录密码写入交接或 Git。
+- Partner 公网验证：无客户端证书时 attack/defense `/health` 均 200、`/rpc` 均 403；Leader clientAuth + 梧桐 trust bundle 的 AIP Start 与 Complete 在两个 Partner 上均 200，结果结构有效、task 均 completed。攻击返回 1 个 low 样本；防守返回有效结构；`agentMode=local-rule`，没有调用外部模型。
+- Discovery explicit 查询本轮实测命中 Leader 和两个新 Partner AIC；三个 Agent 均 active，endpoints 分别为 api/attack/defense 正式域名，transport JSONRPC，安全方案 mutualTLS。没有改 Registry/Discovery。
+- Cloudflare API 只读检查：账号 Tunnel `yuanyi-agent-attack-lab-backend` healthy，配置版本 4，api/attack/defense/preview-api ingress 分别映射到 `127.0.0.1:8787/8788/8789/8790`。当前 Cloudflare 账号 Zone 列表未返回 `yuanyiagentzhandui.cn`；公共 DNS 解析正常，本轮未修改 DNS。
+- 隔离 Preview API：空 topic=422，request ID `req-d6b1cdc6-8ee6-4916-ae80-d1e876e6e232`。low/mid/high 均创建 201、最终 completed、读取到事件；删除均 204，删除后查询 404。low create/delete `req-2fadfddc-eb49-471a-866e-d0e0a68f6d3d` / `req-b620240f-d4e1-459d-ae85-0ca05e5a919c`；mid `req-5ed6e1e4-19d6-4714-85af-ee9af885c329` / `req-33e0a989-fce7-40b8-9550-7e62a187ec79`；high `req-4b54b0a8-e8dc-4460-90c5-9f3d8a9c1d35` / `req-416db6e5-cda7-4f82-a4d6-ab02c60c462a`。本机临时数据库契约测试 4 passed，覆盖运行中删除 409、完成战局删除清空事件。
+- 未完成：本轮没有对生产创建/删除战局；生产 Leader `/rpc` 到 `/battles` 的全链路、生产 low/mid/high 战局和真实浏览器交互没有重新验收。浏览器自动化因 node repl 的 Playwright 导入失败、前端未安装 Playwright 未能启动；HTTP 与静态资源核验不能代替交互验收。
+
 ## 2026-10-12 公网 Partner mTLS 与 AIP 复测
 
 - 本机 DNS 将 `attack.yuanyiagentzhandui.cn`、`defense.yuanyiagentzhandui.cn` 均解析至 `47.108.92.113`，TCP 443 可达。Windows 自带 curl（Schannel）直连两域名的 `/health`、`/rpc` 均在 TLS 阶段以连接重置结束；PowerShell 同样收到 TLS EOF。该结果只描述此 Windows TLS 客户端探测，不足以判定源站或 Partner 服务异常。
