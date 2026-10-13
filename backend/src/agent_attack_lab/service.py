@@ -19,7 +19,7 @@ from threading import Lock
 from typing import Any, Awaitable, Callable, Literal
 from urllib.parse import quote, urlsplit
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,10 +48,20 @@ from agent_attack_lab.acp_agents import (
 from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend, local_rule_case_count
 from agent_attack_lab.cache import RedisJsonCache
-from agent_attack_lab.external_cases import query_external_cases
+from agent_attack_lab.external_cases import list_external_sources, query_external_cases
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 from agent_attack_lab.scoring import SCORING_VERSION, score_battle
 from agent_attack_lab.storage import BattleStore
+from agent_attack_lab.rules_catalog import (
+    create_rule,
+    delete_rule,
+    get_rule,
+    list_rules,
+    list_versions,
+    rollback_rule,
+    update_rule,
+    validate_rule,
+)
 
 
 logger = logging.getLogger("agent_attack_lab")
@@ -138,11 +148,23 @@ class BrowserLoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class RuleRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1000)
+    payload: dict[str, Any]
+
+
+class RulePatchRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+    payload: dict[str, Any] | None = None
+
+
 class BattleRecord(BaseModel):
     id: str
     difficulty: Literal["low", "mid", "high"]
     topic: str
-    status: Literal["pending", "running", "completed", "failed"]
+    status: Literal["pending", "running", "completed", "failed", "cancelled"]
     createdAt: str
     attackerOut: dict[str, Any]
     defenderOut: list[dict[str, Any]]
@@ -185,6 +207,9 @@ _event_data_max_bytes = 32768
 _leaderboard_cache: tuple[float, dict[str, Any]] | None = None
 _redis_cache = RedisJsonCache()
 _recovery_tasks: set[asyncio.Task[Any]] = set()
+_battle_tasks: dict[str, asyncio.Task[Any]] = {}
+_battle_tasks_lock = Lock()
+_cancelled_battles: set[str] = set()
 
 
 def _env_int(name: str, default: int, minimum: int = 0) -> int:
@@ -221,6 +246,7 @@ _event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=10
 _external_cases_database = Path(
     os.getenv("AGENT_EXTERNAL_CASE_DB", ".data/external_security_cases.sqlite3")
 )
+_rules_database = Path(os.getenv("AGENT_RULE_DATABASE", ".data/rules.sqlite3"))
 _rate_windows: dict[str, deque[float]] = defaultdict(deque)
 _rate_lock = Lock()
 _public_battle_rate_windows: dict[str, deque[float]] = defaultdict(deque)
@@ -646,7 +672,12 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         sequence += 1
         _battle_store.save_event(event)
 
+    def ensure_not_cancelled() -> None:
+        if battle_id in _cancelled_battles:
+            raise asyncio.CancelledError
+
     try:
+        ensure_not_cancelled()
         record["status"] = "running"
         _battle_store.save(record)
         _invalidate_leaderboard_cache()
@@ -659,6 +690,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             },
         )
         await asyncio.sleep(0.8)
+        ensure_not_cancelled()
         attack_result, attacker_source, attack_call_id = await _tracked_agent_call(
             battle_id=battle_id,
             role="attacker",
@@ -671,6 +703,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         _battle_store.save(record)
         _invalidate_leaderboard_cache()
         for index, sample in enumerate(attack_result["samples"], start=1):
+            ensure_not_cancelled()
             add_event(
                 "attack.sample.generated",
                 "completed",
@@ -694,6 +727,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
 
         defender_results: list[dict[str, Any]] = []
         for index, sample in enumerate(attack_result["samples"], start=1):
+            ensure_not_cancelled()
             add_event(
                 "round.started",
                 "running",
@@ -703,6 +737,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 },
             )
             await asyncio.sleep(0.8)
+            ensure_not_cancelled()
             defense, defender_source, defense_call_id = await _tracked_agent_call(
                 battle_id=battle_id,
                 role="defender",
@@ -732,10 +767,18 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 },
             )
         add_event("defense.completed", "completed", {"roundCount": len(defender_results)})
+        ensure_not_cancelled()
         record["status"] = "completed"
         _battle_store.save(record)
         _invalidate_leaderboard_cache()
         add_event("battle.completed", "completed", {"status": record["status"]})
+    except asyncio.CancelledError:
+        if record.get("status") in {"completed", "failed", "cancelled"}:
+            return
+        record["status"] = "cancelled"
+        _battle_store.save(record)
+        add_event("battle.cancelled", "cancelled", {"status": "cancelled"})
+        await asyncio.to_thread(_invalidate_leaderboard_cache)
     except Exception as exc:
         logger.exception("Battle %s failed", battle_id)
         record["status"] = "failed"
@@ -747,6 +790,10 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             else "战局执行失败，请检查服务端日志"
         )
         add_event("battle.failed", "failed", {"error": message})
+    finally:
+        with _battle_tasks_lock:
+            _battle_tasks.pop(battle_id, None)
+        _cancelled_battles.discard(battle_id)
 
 
 @asynccontextmanager
@@ -760,6 +807,8 @@ async def _lifespan(_app: FastAPI):
             recovered_ids.add(record["id"])
             payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
             task = asyncio.create_task(_run_battle_async(record["id"], payload))
+            with _battle_tasks_lock:
+                _battle_tasks[record["id"]] = task
             _recovery_tasks.add(task)
             task.add_done_callback(_recovery_tasks.discard)
     try:
@@ -1200,7 +1249,7 @@ def dashboard(
     function escapeHtml(value) { return String(value).replace(/[&<>\"']/g, function (char) { return ({"&":"&amp;","<":"&lt;",">":"&gt;","\\\"":"&quot;","'":"&#039;"})[char]; }); }
     function formatTime(value) { return value ? new Date(value).toLocaleString("zh-CN", {hour12: false}) : "--"; }
     var activeRound = null;
-    function eventLabel(type) { return ({"battle.created":"战局已创建","battle.retry":"战局已重新提交","attack.started":"攻击阶段开始","agent.call.started":"Agent 调用开始","agent.call.completed":"Agent 调用完成","agent.call.failed":"Agent 调用失败","attack.sample.generated":"攻击方提交样本","attack.completed":"攻击样本已生成","round.started":"开始检测本轮样本","round.completed":"本轮防守检测完成","defense.completed":"防守阶段完成","battle.completed":"战局完成","battle.failed":"战局失败"})[type] || type; }
+    function eventLabel(type) { return ({"battle.created":"战局已创建","battle.retry":"战局已重新提交","attack.started":"攻击阶段开始","agent.call.started":"Agent 调用开始","agent.call.completed":"Agent 调用完成","agent.call.failed":"Agent 调用失败","attack.sample.generated":"攻击方提交样本","attack.completed":"攻击样本已生成","round.started":"开始检测本轮样本","round.completed":"本轮防守检测完成","defense.completed":"防守阶段完成","battle.completed":"战局完成","battle.failed":"战局失败","battle.cancelled":"战局已取消"})[type] || type; }
     function updateLiveFlow(event) {
       if (event.type.indexOf("agent.call.") === 0) return;
       var active = 0;
@@ -1551,8 +1600,8 @@ def dashboard(
             if (!line) continue;
             var event = JSON.parse(line.slice(6));
             addEvent(event);
-            if (["attack.completed", "round.started", "round.completed", "battle.completed"].indexOf(event.type) >= 0) await refreshBattle(battleId);
-            if (event.type === "battle.completed" || event.type === "battle.failed") {
+            if (["attack.completed", "round.started", "round.completed", "battle.completed", "battle.cancelled"].indexOf(event.type) >= 0) await refreshBattle(battleId);
+            if (event.type === "battle.completed" || event.type === "battle.failed" || event.type === "battle.cancelled") {
               loadDashboardSummary();
               loadHistory();
             }
@@ -1668,7 +1717,7 @@ def dashboard(
       return labels[value] || (typeof value === "string" && value ? "未识别来源 · " + value : "来源未知");
     }
     function sampleType(value) { return ({defect: "缺陷", violation: "违规", vuln: "漏洞"})[value] || value; }
-    function statusLabel(value) { return ({pending: "等待中", running: "进行中", completed: "已完成", failed: "失败", recommended: "建议"})[value] || value; }
+    function statusLabel(value) { return ({pending: "等待中", running: "进行中", completed: "已完成", failed: "失败", cancelled: "已取消", recommended: "建议"})[value] || value; }
     function findingText(value) { return ({"missing input validation": "缺少输入校验", "unvalidated input": "未校验输入", "add_input_validation": "增加输入校验", reject_instruction: "拒绝越权指令", use_parameterized_query: "改用参数化查询"})[value] || value; }
     function resultList(items, field, emptyText) {
       if (!items || !items.length) return '<li class="muted">' + escapeHtml(emptyText) + '</li>';
@@ -2136,6 +2185,145 @@ def list_external_cases(
 
 
 @app.get(
+    "/external-cases/sources",
+    summary="查看外部案例来源清单",
+    description="只读返回已导入来源的发布者、版本、时间、URL、哈希和记录数，不提供任意 URL 抓取。",
+    tags=["外部案例"],
+)
+def external_case_sources() -> dict[str, Any]:
+    return list_external_sources(_external_cases_database)
+
+
+@app.get(
+    "/rules",
+    summary="列出规则目录",
+    description="返回数据型规则目录，不代表规则已接入当前执行链。",
+    tags=["规则目录"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def rules_list() -> dict[str, Any]:
+    return {"execution": "catalog_only", "items": list_rules(_rules_database)}
+
+
+@app.post(
+    "/rules",
+    status_code=201,
+    summary="创建规则目录项",
+    tags=["规则目录"],
+    dependencies=[Depends(_rate_limit_dependency)],
+)
+def rules_create(payload: RuleRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    try:
+        return create_rule(
+            _rules_database,
+            name=payload.name,
+            description=payload.description,
+            payload=payload.payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get(
+    "/rules/{rule_id}",
+    summary="查看规则目录项",
+    tags=["规则目录"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def rules_get(rule_id: str) -> dict[str, Any]:
+    result = get_rule(_rules_database, rule_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="规则不存在")
+    return result
+
+
+@app.patch(
+    "/rules/{rule_id}",
+    summary="创建规则新版本",
+    tags=["规则目录"],
+    dependencies=[Depends(_rate_limit_dependency)],
+)
+def rules_patch(rule_id: str, payload: RulePatchRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    try:
+        result = update_rule(
+            _rules_database,
+            rule_id,
+            name=payload.name,
+            description=payload.description,
+            payload=payload.payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="规则不存在")
+    return result
+
+
+@app.delete(
+    "/rules/{rule_id}",
+    status_code=204,
+    summary="删除规则目录项",
+    tags=["规则目录"],
+    dependencies=[Depends(_rate_limit_dependency)],
+)
+def rules_delete(rule_id: str, request: Request) -> Response:
+    _check_browser_or_api_auth(request)
+    if not delete_rule(_rules_database, rule_id):
+        raise HTTPException(status_code=404, detail="规则不存在")
+    return Response(status_code=204)
+
+
+@app.get(
+    "/rules/{rule_id}/versions",
+    summary="查看规则版本",
+    tags=["规则目录"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def rules_versions(rule_id: str) -> dict[str, Any]:
+    if get_rule(_rules_database, rule_id) is None:
+        raise HTTPException(status_code=404, detail="规则不存在")
+    return {"ruleId": rule_id, "items": list_versions(_rules_database, rule_id)}
+
+
+@app.post(
+    "/rules/{rule_id}/rollback",
+    summary="回滚规则目录版本",
+    tags=["规则目录"],
+    dependencies=[Depends(_rate_limit_dependency)],
+)
+def rules_rollback(rule_id: str, request: Request, version: int = Query(ge=1)) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    result = rollback_rule(_rules_database, rule_id, version)
+    if result is None:
+        raise HTTPException(status_code=404, detail="规则或目标版本不存在")
+    return result
+
+
+@app.post(
+    "/rules/{rule_id}/test",
+    summary="校验规则目录项",
+    description="只校验数据结构，不执行导入的代码或命令。",
+    tags=["规则目录"],
+    dependencies=[Depends(_rate_limit_dependency)],
+)
+def rules_test(
+    rule_id: str,
+    request: Request,
+    sample: dict[str, Any] | None = Body(default=None),
+) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    try:
+        result = validate_rule(_rules_database, rule_id, sample)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="规则不存在")
+    return result
+
+
+@app.get(
     "/battles/{battle_id}/audit",
     summary="审计战局事件完整性",
     description="只读检查事件序列、战局归属、状态和 Agent 来源是否一致，不修改战局数据。",
@@ -2147,6 +2335,39 @@ def battle_audit(battle_id: str) -> dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return audit_battle(record, _battle_store.list_events(battle_id))
+
+
+@app.get(
+    "/acp/calls/{call_id}/audit",
+    summary="查询 ACP 调用审计",
+    description="按 correlationId 返回脱敏的开始、完成或失败事件；不会返回证书、密钥或完整请求载荷。",
+    tags=["ACP 审计"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def acp_call_audit(call_id: str) -> dict[str, Any]:
+    if not call_id or len(call_id) > 128:
+        raise HTTPException(status_code=400, detail="无效的调用编号")
+    events = _battle_store.list_agent_call_events(call_id)
+    if not events:
+        raise HTTPException(status_code=404, detail="ACP 调用不存在")
+    return {
+        "callId": call_id,
+        "events": [
+            {
+                "battleId": event["battleId"],
+                "sequence": event["sequence"],
+                "type": event["type"],
+                "status": event["status"],
+                "createdAt": event["createdAt"],
+                "data": {
+                    key: value
+                    for key, value in event.get("data", {}).items()
+                    if key not in {"sample", "request", "response", "credentials", "certificate"}
+                },
+            }
+            for event in events
+        ],
+    }
 
 
 @app.post(
@@ -2191,7 +2412,14 @@ async def create_battle(
                 },
             )
         )
-        background_tasks.add_task(_run_battle_async, battle_id, payload)
+        async def launch_background_battle() -> None:
+            task = asyncio.current_task()
+            if task is not None:
+                with _battle_tasks_lock:
+                    _battle_tasks[battle_id] = task
+            await _run_battle_async(battle_id, payload)
+
+        background_tasks.add_task(launch_background_battle)
         return record
 
     events: list[dict[str, Any]] = []
@@ -2373,6 +2601,42 @@ def delete_battle(battle_id: str, request: Request) -> Response:
     _battle_store.delete(battle_id)
     _invalidate_leaderboard_cache()
     return Response(status_code=204)
+
+
+@app.post(
+    "/battles/{battle_id}/cancel",
+    status_code=202,
+    summary="取消运行中的战局",
+    description="请求取消 pending 或 running 战局；取消完成后状态为 cancelled，事件流以 battle.cancelled 结束。",
+    tags=["战局接口"],
+    dependencies=[Depends(_rate_limit_dependency)],
+)
+async def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
+    _check_browser_or_api_auth(request)
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    if record["status"] in {"completed", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="战局已经结束")
+    _cancelled_battles.add(battle_id)
+    with _battle_tasks_lock:
+        task = _battle_tasks.get(battle_id)
+    if task is not None and not task.done():
+        task.cancel()
+    else:
+        record["status"] = "cancelled"
+        _battle_store.save(record)
+        _battle_store.save_event(
+            _event(
+                battle_id,
+                max((item["sequence"] for item in _battle_store.list_events(battle_id)), default=0) + 1,
+                "battle.cancelled",
+                "cancelled",
+                {"status": "cancelled"},
+            )
+        )
+        _cancelled_battles.discard(battle_id)
+    return BattleRecord.model_validate(_battle_store.get(battle_id) or record)
 
 
 @app.get(
@@ -2630,7 +2894,7 @@ async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> S
             for event in events[sent:]:
                 yield f"id: {event['id']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
                 sent += 1
-            terminal = bool(events and events[-1]["type"] in {"battle.completed", "battle.failed"})
+            terminal = bool(events and events[-1]["type"] in {"battle.completed", "battle.failed", "battle.cancelled"})
             if not follow or terminal and sent >= len(events):
                 break
             attempts += 1
@@ -2657,7 +2921,7 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
             for event in events[sent:]:
                 await websocket.send_json(event)
                 sent += 1
-            if events and events[-1]["type"] in {"battle.completed", "battle.failed"} and sent >= len(events):
+            if events and events[-1]["type"] in {"battle.completed", "battle.failed", "battle.cancelled"} and sent >= len(events):
                 await websocket.send_json({"type": "stream.completed", "battleId": battle_id})
                 break
             await asyncio.sleep(0.5)

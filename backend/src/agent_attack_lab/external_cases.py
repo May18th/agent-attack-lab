@@ -123,3 +123,46 @@ def query_external_cases(
         "total": int(total_row[0]),
         "sourceCount": int(source_count),
     }
+
+
+def list_external_sources(database: Path) -> dict[str, Any]:
+    """Return source manifests without exposing raw case payloads."""
+    if not database.is_file():
+        return {"available": False, "reason": "database_missing", "items": []}
+    try:
+        with _connect_read_only(database) as connection:
+            rows = connection.execute(
+                """
+                SELECT s.id, s.publisher, s.source_type, s.source_url,
+                       s.catalog_version, s.released_at, s.retrieved_at,
+                       s.content_sha256, s.record_count, s.schema_version,
+                       COUNT(c.id) AS imported_count
+                FROM external_sources AS s
+                LEFT JOIN external_cases AS c ON c.source_id = s.id
+                GROUP BY s.id, s.publisher, s.source_type, s.source_url,
+                         s.catalog_version, s.released_at, s.retrieved_at,
+                         s.content_sha256, s.record_count, s.schema_version
+                ORDER BY s.retrieved_at DESC, s.id DESC
+                """
+            ).fetchall()
+    except sqlite3.DatabaseError:
+        return {"available": False, "reason": "database_unavailable", "items": []}
+    return {
+        "available": True,
+        "items": [
+            {
+                "id": row["id"],
+                "publisher": row["publisher"],
+                "sourceType": row["source_type"],
+                "sourceUrl": row["source_url"],
+                "catalogVersion": row["catalog_version"],
+                "releasedAt": row["released_at"],
+                "retrievedAt": row["retrieved_at"],
+                "contentSha256": row["content_sha256"],
+                "recordCount": row["record_count"],
+                "importedCount": row["imported_count"],
+                "schemaVersion": row["schema_version"],
+            }
+            for row in rows
+        ],
+    }
