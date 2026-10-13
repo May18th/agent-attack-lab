@@ -56,6 +56,45 @@ def test_attacker_uses_aip_start_and_parses_product(monkeypatch: pytest.MonkeyPa
     assert fake_client.closed
 
 
+def test_task_polling_uses_capped_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    completed = task_result({"samples": []})
+    working = completed.model_copy(update={
+        "status": TaskStatus(
+            state=TaskState.Working,
+            stateChangedAt="2026-10-07T00:00:00+00:00",
+        )
+    })
+
+    class PollingClient(FakeAipClient):
+        def __init__(self) -> None:
+            super().__init__(completed)
+            self.states = [working, working, completed, completed]
+
+        async def start_task(self, *, session_id: str, user_input: str) -> TaskResult:
+            self.request = {"session_id": session_id, "user_input": user_input}
+            return self.states.pop(0)
+
+        async def get_task(self, *, task_id: str, session_id: str) -> TaskResult:
+            return self.states.pop(0)
+
+    fake_client = PollingClient()
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
+    monkeypatch.setattr(acp_agents, "AipRpcClient", lambda **_: fake_client)
+    monkeypatch.setattr(acp_agents.asyncio, "sleep", fake_sleep)
+
+    assert asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "poll"})) == {
+        "samples": [],
+        "agentSource": "acp-rule-fallback",
+    }
+    assert delays == [0.1, 0.2]
+    assert fake_client.closed
+
+
 def test_sdk_posts_aip_v2_start_command(monkeypatch: pytest.MonkeyPatch) -> None:
     from acps_sdk.aip import aip_rpc_client
 
