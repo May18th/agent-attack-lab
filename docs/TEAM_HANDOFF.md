@@ -8,7 +8,7 @@
 
 - 新增 [`SCORING_ALIGNMENT.md`](SCORING_ALIGNMENT.md)，仅按比赛对项目作品的评审项整理参赛证据，不是攻防实验室内部评分规则；标出需平台侧或人工补齐的材料。
 - 本地已新增逐 Agent 调用 correlationId、AIP session 关联、耗时/来源/失败事件、留存事件统计及后台指标；同步调用失败将保留失败战局，并通过 `X-Battle-ID` 响应头定位。完整后端测试 `107 passed, 4 skipped`，敏感文件扫描通过。
-- 相关代码已包含在 `codex/internal-scoring-v2` 分支提交 `158d820`；该分支目前尚无 PR。隔离 Preview 已部署并验收，生产环境未更新。不要将本地新统计当作平台访问量，也不要将 Partner 自报 `acp-llm` 当作真实模型的独立证明。
+- 相关代码已包含在 `codex/internal-scoring-v2` 分支提交 `158d820`；交接文档提交 `ac05961`。PR #6 已创建，自动检查通过，等待队友审核。隔离 Preview 已部署并验收，生产环境未更新。不要将本地新统计当作平台访问量，也不要将 Partner 自报 `acp-llm` 当作真实模型的独立证明。
 - 部署/答辩前还需：隔离环境验收、真实平台 Discovery 与调用演示、录制完整互联视频、申请梧桐侧访问数据，以及决定是否接入模型。当前不自动配置外部 LLM、不部署生产。
 
 ## 2026-10-13 攻防实验室内部评分系统 v2（本地待验收）
@@ -18,7 +18,7 @@
 - 缺少调用事件的某侧按 `insufficient_evidence` 返回 null；评分不声称准确率、真实攻击效果、模型真实性或目标已修复。
 - v2 修正：LLM 攻击样本补齐 `testVariation`；来源留痕按成功调用中具有非空 `dispatchMode` 和 `resultSource` 的比例计分；统一普通四舍五入，并升级规则版本。旧战局从原始事件按当前版本实时重算，不保留历史分数快照。
 - 完整后端测试 `113 passed, 4 skipped`（跳过项因 Windows 缺少 Bash；另有既存 Starlette/httpx 弃用警告）。
-- 提交 `158d820` 已推送到 `codex/internal-scoring-v2`，但目前尚无 GitHub PR，需先创建 PR 并由队友审核。隔离 Preview 已部署验收；生产环境未部署。
+- 提交 `158d820` 和 Preview 交接文档 `ac05961` 已推送到 `codex/internal-scoring-v2`；GitHub PR #6 已创建，后端、前端、Cloudflare Pages、Workers Builds 检查均通过，等待队友审核。隔离 Preview 已部署验收；生产环境未部署。
 
 ## 2026-10-13 内部评分 v2 隔离 Preview 验收
 
@@ -27,7 +27,7 @@
 - 对隔离 Preview API 执行 low/mid/high：创建均 HTTP 201，单场评分接口均 HTTP 200，版本 `internal-agent-v2`，状态 `scored`；攻击评分均为 65/100，防守均为 100/100。测试战局均删除 HTTP 204，之后详情和事件查询均 HTTP 404。无生产写请求。
 - 测试 request ID：low `req-4f506cfd-c552-48e3-9bca-da9f8c80dcb8`；mid `req-0a4d1c72-542a-4652-9c25-3333e186ad76`；high `req-7662d63a-a4e6-4a62-97f9-ac684f3cc416`；近期评分汇总 `req-ac10da63-b271-4277-9647-0f4cd986e7ce`。生产 `/health` 仍为 200，API 和 Preview 服务均 active。
 - `/dashboard` HTML 中已包含评分渲染逻辑并调用 `/score` 路由；本轮未做真实浏览器渲染、控制台和点击验收。勿将 HTTP 验收描述为桌面/移动浏览器验收。
-- 下一步：创建 `codex/internal-scoring-v2` 到 `main` 的 PR 并交队友审核；PR 合并前不部署生产。保留 VPS 原有未提交文件及 `.deploy-backups/`，不要直接切换 VPS 主工作树。
+- 下一步：队友审核并合并 PR #6；合并前不部署生产。仍需在真实浏览器完成 Preview 后台渲染、控制台、桌面/移动交互验收。保留 VPS 原有未提交文件及 `.deploy-backups/`，不要直接切换 VPS 主工作树。
 
 ## 2026-10-12 Preview API 验收复测（23:34-23:40 +08:00）
 
