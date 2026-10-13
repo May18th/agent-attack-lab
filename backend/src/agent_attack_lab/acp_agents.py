@@ -210,12 +210,10 @@ async def _invoke(
                 user_input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             )
             deadline = time.monotonic() + timeout_seconds - 1
-            poll_interval = 0.1
             while _state_name(task) in {"accepted", "working"}:
                 if time.monotonic() >= deadline:
                     raise asyncio.TimeoutError
-                await asyncio.sleep(poll_interval)
-                poll_interval = min(poll_interval * 2, 0.5)
+                await asyncio.sleep(0.5)
                 task = await client.get_task(task_id=task.taskId, session_id=session_id)
             return task
 

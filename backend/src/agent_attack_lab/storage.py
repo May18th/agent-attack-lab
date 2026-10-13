@@ -312,12 +312,9 @@ class BattleStore:
             else:
                 self._connection.execute(
                     """
-                    INSERT INTO battles
+                    INSERT OR REPLACE INTO battles
                     (id, difficulty, topic, status, created_at, attacker_out, defender_out)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET difficulty=excluded.difficulty,
-                    topic=excluded.topic, status=excluded.status, created_at=excluded.created_at,
-                    attacker_out=excluded.attacker_out, defender_out=excluded.defender_out
                     """, values,
                 )
             self._connection.commit()
@@ -350,10 +347,9 @@ class BattleStore:
             else:
                 self._connection.execute(
                     """
-                    INSERT INTO battle_events
+                    INSERT OR REPLACE INTO battle_events
                     (id, battle_id, sequence, event_type, status, created_at, data)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET status=excluded.status, data=excluded.data
                     """, values,
                 )
             self._connection.commit()
@@ -406,33 +402,6 @@ class BattleStore:
                 (battle_id,),
             ).fetchall()
         return [self._to_event(row) for row in rows]
-
-    def list_events_after(self, battle_id: str, after_sequence: int) -> list[dict[str, Any]]:
-        """Return only events newer than the caller's sequence cursor."""
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM battle_events WHERE battle_id = " + self._placeholder
-                + " AND sequence > " + self._placeholder + " ORDER BY sequence",
-                (battle_id, after_sequence),
-            ).fetchall()
-        return [self._to_event(row) for row in rows]
-
-    def list_events_for_battles(self, battle_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-        """Load event histories for a bounded set of battles in one query."""
-        if not battle_ids:
-            return {}
-        placeholders = ", ".join([self._placeholder] * len(battle_ids))
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT * FROM battle_events WHERE battle_id IN (" + placeholders
-                + ") ORDER BY battle_id, sequence",
-                battle_ids,
-            ).fetchall()
-        grouped: dict[str, list[dict[str, Any]]] = {battle_id: [] for battle_id in battle_ids}
-        for row in rows:
-            event = self._to_event(row)
-            grouped[event["battleId"]].append(event)
-        return grouped
 
     def delete(self, battle_id: str) -> None:
         """Delete a battle and its event history."""

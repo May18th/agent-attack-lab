@@ -460,28 +460,6 @@ def test_battle_store_persists_records(tmp_path) -> None:
     assert first_store._connection.execute("SELECT version FROM schema_migrations").fetchone()[0] == 1
 
 
-def test_battle_store_event_cursor_and_batch_reads(tmp_path) -> None:
-    store = BattleStore(str(tmp_path / "event-cursor.sqlite3"))
-    for battle_id, sequence in (("battle-a", 1), ("battle-a", 2), ("battle-b", 1)):
-        store.save_event({
-            "id": f"event-{battle_id}-{sequence}",
-            "battleId": battle_id,
-            "sequence": sequence,
-            "type": "battle.completed" if sequence == 2 else "battle.created",
-            "status": "completed",
-            "createdAt": "2026-10-13T00:00:00+00:00",
-            "data": {"sequence": sequence},
-        })
-
-    assert [event["sequence"] for event in store.list_events_after("battle-a", 1)] == [2]
-    grouped = store.list_events_for_battles(["battle-a", "battle-b", "missing"])
-    assert {key: [event["sequence"] for event in events] for key, events in grouped.items()} == {
-        "battle-a": [1, 2],
-        "battle-b": [1],
-        "missing": [],
-    }
-
-
 def test_battle_store_dashboard_summary_aggregates_saved_outputs(tmp_path) -> None:
     store = BattleStore(str(tmp_path / "dashboard-summary.sqlite3"))
     store.save({
