@@ -8,7 +8,8 @@
 
 - PR #4、#5、#6 已进入 `main`；PR #6 合并提交 `b00ca4b`，当前远端 `main` 已包含内部评分 v2。
 - 评分 v2 隔离 Preview 的 API 验收通过；检查发现同一代码分支的 Pages Preview bundle 曾指向生产 API。未对该 Pages Preview 发起写请求，也未修改 Cloudflare Pages 账户配置。
-- 已新增 Pages 构建分支隔离修复：Pages `main` 构建固定使用生产 API，非 `main` Pages 构建固定使用 `preview-api.yuanyiagentzhandui.cn`，缺少分支信息则 fail closed。前端测试 19 passed、构建环境测试 4 passed、lint/build 通过；本地分别验证 main 与 Preview 构建产物的 API 地址。修复待单独 PR 审核及 Cloudflare Preview 复验。
+- Pages 构建分支隔离修复已提交 `b606a7b` 并建立 PR #7，后端、前端、Cloudflare Pages、Workers Builds 检查均通过、merge state `CLEAN`。Pages `main` 构建固定使用生产 API，非 `main` Pages 构建固定使用隔离 Preview API，缺少分支信息则 fail closed。
+- PR #7 Pages 分支 Preview `https://codex-preview-pages-api-isol.agent-attack-lab.pages.dev` 与 Workers Preview 的 bundle 均实测只含隔离 API，不含生产 API/localhost；尚待队友审核合并。没有对旧生产 API 指向的 Pages Preview 执行写请求。
 - 评分实现提交 `158d820`、Preview 验收文档提交 `ac05961`；详情见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md)。
 - 评分 v2 已部署到隔离 Preview 的独立源码目录并通过 low/mid/high API 验收，分数为攻击 65/100、防守 100/100；测试战局已清理。详细状态码、request ID、服务隔离和浏览器验收边界见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md)。
 - 本轮没有改生产 API 代码或重启生产 API；生产 `/health=200`。Preview systemd drop-in 仅作用于 `agent-attack-lab-preview.service`。
