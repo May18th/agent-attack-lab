@@ -347,6 +347,104 @@ def test_external_case_route_is_read_only_and_keeps_provenance(tmp_path, monkeyp
     assert "/external-cases" in client.get("/openapi.json").json()["paths"]
 
 
+def test_external_case_sources_route_exposes_manifest_only(tmp_path, monkeypatch) -> None:
+    import json
+    from scripts.import_external_cases import import_catalog
+
+    catalog = {
+        "catalogVersion": "source-1",
+        "dateReleased": "2026-10-13",
+        "vulnerabilities": [{
+            "cveID": "CVE-2099-0001",
+            "vendorProject": "Example",
+            "product": "Widget",
+            "vulnerabilityName": "Example issue",
+            "dateAdded": "2026-10-13",
+            "shortDescription": "A verified record",
+            "requiredAction": "Patch",
+        }],
+    }
+    database = tmp_path / "external.sqlite3"
+    import_catalog(database, payload=json.dumps(catalog).encode(), catalog=catalog, source_url="https://example.invalid/catalog.json")
+    monkeypatch.setattr(service, "_external_cases_database", database)
+    response = client.get("/external-cases/sources")
+    assert response.status_code == 200
+    source = response.json()["items"][0]
+    assert source["publisher"] == "CISA"
+    assert source["importedCount"] == 1
+    assert "rawJson" not in source
+
+
+def test_rules_catalog_versions_and_rollback(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(service, "_rules_database", tmp_path / "rules.sqlite3")
+    created = client.post("/rules", json={"name": "隔离规则", "payload": {"pattern": "safe"}})
+    assert created.status_code == 201
+    rule_id = created.json()["id"]
+    updated = client.patch(f"/rules/{rule_id}", json={"payload": {"pattern": "new"}})
+    assert updated.status_code == 200
+    assert updated.json()["currentVersion"] == 2
+    versions = client.get(f"/rules/{rule_id}/versions")
+    assert versions.status_code == 200
+    assert [item["version"] for item in versions.json()["items"]] == [2, 1]
+    rollback = client.post(f"/rules/{rule_id}/rollback?version=1")
+    assert rollback.status_code == 200
+    assert rollback.json()["currentVersion"] == 3
+    assert rollback.json()["payload"] == {"pattern": "safe"}
+    rejected = client.post("/rules", json={"name": "不安全", "payload": {"python": "print(1)"}})
+    assert rejected.status_code == 422
+
+
+def test_acp_call_audit_returns_sanitized_correlation_events() -> None:
+    battle_id = "battle-audit-correlation"
+    correlation_id = "corr-audit-1"
+    service._battle_store.save({
+        "id": battle_id, "difficulty": "low", "topic": "审计", "status": "completed",
+        "createdAt": "2026-10-13T00:00:00+00:00", "attackerOut": {"samples": []}, "defenderOut": [],
+    })
+    for sequence, event_type, data in (
+        (1, "agent.call.started", {"correlationId": correlation_id, "sample": {"secret": "x"}}),
+        (2, "agent.call.completed", {"correlationId": correlation_id, "durationMs": 10, "response": {"secret": "x"}}),
+    ):
+        service._battle_store.save_event(service._event(battle_id, sequence, event_type, "completed", data))
+    response = client.get(f"/acp/calls/{correlation_id}/audit")
+    assert response.status_code == 200
+    assert len(response.json()["events"]) == 2
+    assert "sample" not in response.json()["events"][0]["data"]
+    assert "response" not in response.json()["events"][1]["data"]
+
+
+def test_cancel_background_battle_emits_terminal_event() -> None:
+    battle_id = "battle-cancel-test"
+    service._battle_store.save({
+        "id": battle_id,
+        "difficulty": "low",
+        "topic": "取消",
+        "status": "pending",
+        "createdAt": "2026-10-13T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    })
+    service._battle_store.save_event(service._event(battle_id, 1, "battle.created", "pending", {}))
+
+    async def run_and_cancel() -> None:
+        task = asyncio.create_task(service._run_battle_async(battle_id, service.BattleRequest(topic="取消")))
+        with service._battle_tasks_lock:
+            service._battle_tasks[battle_id] = task
+        await asyncio.sleep(0.01)
+        scope = {
+            "type": "http", "method": "POST", "path": f"/battles/{battle_id}/cancel",
+            "headers": [], "query_string": b"", "client": ("127.0.0.1", 1),
+            "server": ("127.0.0.1", 8787), "scheme": "http", "http_version": "1.1",
+        }
+        result = await service.cancel_battle(battle_id, service.Request(scope))
+        assert result.status in {"pending", "running", "cancelled"}
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run_and_cancel())
+    assert service._battle_store.get(battle_id)["status"] == "cancelled"
+    assert service._battle_store.list_events(battle_id)[-1]["type"] == "battle.cancelled"
+
+
 def test_battle_list_limit_is_validated() -> None:
     assert client.get("/battles?limit=0").status_code == 422
     assert client.get("/battles?limit=201").status_code == 422

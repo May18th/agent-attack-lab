@@ -434,6 +434,22 @@ class BattleStore:
             grouped[event["battleId"]].append(event)
         return grouped
 
+    def list_agent_call_events(self, correlation_id: str) -> list[dict[str, Any]]:
+        """Return the bounded, structured audit trail for one Agent call."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM battle_events WHERE event_type IN ("
+                + ", ".join([self._placeholder] * 3)
+                + ") ORDER BY created_at, sequence",
+                ("agent.call.started", "agent.call.completed", "agent.call.failed"),
+            ).fetchall()
+        matches: list[dict[str, Any]] = []
+        for row in rows:
+            event = self._to_event(row)
+            if event.get("data", {}).get("correlationId") == correlation_id:
+                matches.append(event)
+        return matches
+
     def delete(self, battle_id: str) -> None:
         """Delete a battle and its event history."""
         with self._lock:
