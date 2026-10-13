@@ -634,10 +634,10 @@ async def _tracked_agent_call(
 
 async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
     """Run a battle in stages so clients can observe its event stream."""
-    record = _battle_store.get(battle_id)
+    record = await asyncio.to_thread(_battle_store.get, battle_id)
     if record is None:
         return
-    events = _battle_store.list_events(battle_id)
+    events = await asyncio.to_thread(_battle_store.list_events, battle_id)
     sequence = max((event["sequence"] for event in events), default=0) + 1
 
     def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
@@ -649,7 +649,6 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
     try:
         record["status"] = "running"
         _battle_store.save(record)
-        _invalidate_leaderboard_cache()
         add_event(
             "attack.started",
             "running",
@@ -669,7 +668,6 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         )
         record["attackerOut"] = attack_result
         _battle_store.save(record)
-        _invalidate_leaderboard_cache()
         for index, sample in enumerate(attack_result["samples"], start=1):
             add_event(
                 "attack.sample.generated",
@@ -714,7 +712,6 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             defender_results.append(defense)
             record["defenderOut"] = defender_results
             _battle_store.save(record)
-            _invalidate_leaderboard_cache()
             add_event(
                 "round.completed",
                 "completed",
@@ -734,13 +731,13 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         add_event("defense.completed", "completed", {"roundCount": len(defender_results)})
         record["status"] = "completed"
         _battle_store.save(record)
-        _invalidate_leaderboard_cache()
+        await asyncio.to_thread(_invalidate_leaderboard_cache)
         add_event("battle.completed", "completed", {"status": record["status"]})
     except Exception as exc:
         logger.exception("Battle %s failed", battle_id)
         record["status"] = "failed"
         _battle_store.save(record)
-        _invalidate_leaderboard_cache()
+        await asyncio.to_thread(_invalidate_leaderboard_cache)
         message = (
             "ACP 独立 Agent 调用失败，请检查服务端日志和 URL/证书配置"
             if isinstance(exc, ACPAgentError)
@@ -2176,7 +2173,6 @@ async def create_battle(
             defenderOut=[],
         )
         _battle_store.save(record.model_dump())
-        _invalidate_leaderboard_cache()
         _battle_store.save_event(
             _event(
                 battle_id,
@@ -2271,7 +2267,7 @@ async def create_battle(
         _battle_store.save(failed_record.model_dump())
         for event in events:
             _battle_store.save_event(event)
-        _invalidate_leaderboard_cache()
+        await asyncio.to_thread(_invalidate_leaderboard_cache)
         if isinstance(exc, ACPAgentError):
             raise HTTPException(
                 status_code=502,
@@ -2309,7 +2305,7 @@ async def create_battle(
         defenderOut=defense_results,
     )
     _battle_store.save(record.model_dump())
-    _invalidate_leaderboard_cache()
+    await asyncio.to_thread(_invalidate_leaderboard_cache)
     add_event("battle.completed", "completed", {"status": record.status})
     for event in events:
         _battle_store.save_event(event)
@@ -2549,8 +2545,12 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
 )
 def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
     items = []
-    for record in _battle_store.list(limit=limit):
-        score = score_battle(record, _battle_store.list_events(record["id"]))
+    records = _battle_store.list(limit=limit)
+    events_by_battle = _battle_store.list_events_for_battles(
+        [record["id"] for record in records]
+    )
+    for record in records:
+        score = score_battle(record, events_by_battle.get(record["id"], []))
         items.append({
             "battleId": record["id"],
             "topic": record["topic"],
@@ -2619,22 +2619,26 @@ def leaderboard() -> dict[str, Any]:
 
 @app.get("/battles/{battle_id}/events/stream", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
 async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> StreamingResponse:
-    if _battle_store.get(battle_id) is None:
+    if await asyncio.to_thread(_battle_store.get, battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
 
     async def generate() -> Any:
-        sent = 0
+        after_sequence = 0
         attempts = 0
+        poll_interval = 0.1
         while attempts < (60 if follow else 1):
-            events = _battle_store.list_events(battle_id)
-            for event in events[sent:]:
+            events = await asyncio.to_thread(
+                _battle_store.list_events_after, battle_id, after_sequence
+            )
+            for event in events:
                 yield f"id: {event['id']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-                sent += 1
-            terminal = bool(events and events[-1]["type"] in {"battle.completed", "battle.failed"})
-            if not follow or terminal and sent >= len(events):
+                after_sequence = event["sequence"]
+            terminal = any(event["type"] in {"battle.completed", "battle.failed"} for event in events)
+            if not follow or terminal:
                 break
             attempts += 1
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(poll_interval)
+            poll_interval = min(poll_interval * 2, 0.5)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -2646,18 +2650,18 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
         if supplied_key != _api_key:
             await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
             return
-    if _battle_store.get(battle_id) is None:
+    if await asyncio.to_thread(_battle_store.get, battle_id) is None:
         await websocket.close(code=4404, reason="战局不存在")
         return
     await websocket.accept()
     sent = 0
     try:
         for _ in range(60):
-            events = _battle_store.list_events(battle_id)
-            for event in events[sent:]:
+            events = await asyncio.to_thread(_battle_store.list_events_after, battle_id, sent)
+            for event in events:
                 await websocket.send_json(event)
-                sent += 1
-            if events and events[-1]["type"] in {"battle.completed", "battle.failed"} and sent >= len(events):
+                sent = event["sequence"]
+            if any(event["type"] in {"battle.completed", "battle.failed"} for event in events):
                 await websocket.send_json({"type": "stream.completed", "battleId": battle_id})
                 break
             await asyncio.sleep(0.5)
