@@ -156,6 +156,9 @@ class BattleStore:
             "CREATE INDEX IF NOT EXISTS idx_battle_events_battle ON battle_events (battle_id, sequence)"
         )
         self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_battle_events_type ON battle_events (event_type)"
+        )
+        self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_battles_created ON battles (created_at DESC)"
         )
         self._connection.execute(
@@ -202,6 +205,9 @@ class BattleStore:
         )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_battle_events_battle ON battle_events (battle_id, sequence)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_battle_events_type ON battle_events (event_type)"
         )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_battles_created ON battles (created_at DESC)"
@@ -255,6 +261,10 @@ class BattleStore:
         if "idx_battle_events_battle" not in indexes:
             self._connection.execute(
                 "CREATE INDEX idx_battle_events_battle ON battle_events (battle_id, sequence)"
+            )
+        if "idx_battle_events_type" not in indexes:
+            self._connection.execute(
+                "CREATE INDEX idx_battle_events_type ON battle_events (event_type)"
             )
         for name, columns in (
             ("idx_battles_created", "created_at DESC"),
@@ -443,6 +453,12 @@ class BattleStore:
             rows = self._connection.execute(
                 "SELECT status, difficulty, attacker_out, defender_out FROM battles"
             ).fetchall()
+            call_events = self._connection.execute(
+                "SELECT event_type, status, data FROM battle_events WHERE event_type IN ("
+                + ", ".join([self._placeholder] * 2)
+                + ")",
+                ("agent.call.completed", "agent.call.failed"),
+            ).fetchall()
 
         summary = {
             "totalBattles": len(rows),
@@ -455,7 +471,46 @@ class BattleStore:
             "recommendationCount": 0,
             "simulationSampleCount": 0,
             "acpCallBattles": 0,
+            "agentExecutionCount": 0,
+            "acpRequestCount": 0,
+            "acpSuccessCount": 0,
+            "acpFailureCount": 0,
+            "acpRuleFallbackCount": 0,
+            "localRuleExecutionCount": 0,
+            "reportedLlmResultCount": 0,
+            "averageAgentCallLatencyMs": 0,
+            "attackerCallCount": 0,
+            "defenderCallCount": 0,
         }
+        call_latencies: list[int] = []
+        for event in call_events:
+            data = json.loads(event["data"])
+            dispatch_mode = data.get("dispatchMode")
+            source = data.get("resultSource")
+            summary["agentExecutionCount"] += 1
+            role_key = {
+                "attacker": "attackerCallCount",
+                "defender": "defenderCallCount",
+            }.get(data.get("agentRole"))
+            if role_key:
+                summary[role_key] += 1
+            if dispatch_mode == "acp":
+                summary["acpRequestCount"] += 1
+                if event["event_type"] == "agent.call.completed":
+                    summary["acpSuccessCount"] += 1
+                elif event["event_type"] == "agent.call.failed":
+                    summary["acpFailureCount"] += 1
+                if source == "acp-rule-fallback":
+                    summary["acpRuleFallbackCount"] += 1
+                if source == "acp-llm":
+                    summary["reportedLlmResultCount"] += 1
+            elif dispatch_mode == "local" and event["event_type"] == "agent.call.completed":
+                summary["localRuleExecutionCount"] += 1
+            latency = data.get("durationMs")
+            if isinstance(latency, int) and latency >= 0:
+                call_latencies.append(latency)
+        if call_latencies:
+            summary["averageAgentCallLatencyMs"] = round(sum(call_latencies) / len(call_latencies))
         for row in rows:
             if row["status"] == "completed":
                 summary["completedBattles"] += 1

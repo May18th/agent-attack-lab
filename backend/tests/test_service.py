@@ -61,6 +61,9 @@ def test_dashboard_is_chinese_html() -> None:
     assert 'column.className = "dialog-side " + side' in response.text
     assert 'data-battle-id=' in response.text
     assert "function renderDashboardSummary(summary)" in response.text
+    assert "function renderInternalScore(battleId, panel)" in response.text
+    assert '"攻击 Agent"' in response.text
+    assert '"防守 Agent"' in response.text
     assert 'fetch("/dashboard/summary"' in response.text
     assert "new URLSearchParams(window.location.search)" in response.text
     assert "acp-llm" in response.text
@@ -68,7 +71,13 @@ def test_dashboard_is_chinese_html() -> None:
     assert '"local-rule": "主服务 · 本地规则"' in response.text
     assert '"未识别来源 · " + value' in response.text
     assert 'escapeHtml(isSimulation ? "本地模拟" : attackerSource)' in response.text
-    assert "全部已保存战局" in response.text
+    assert "统计来自当前已保存战局" in response.text
+    assert 'id="acp-request-count"' in response.text
+    assert 'id="acp-outcome"' in response.text
+    assert 'id="acp-fallback-count"' in response.text
+    assert 'id="local-call-count"' in response.text
+    assert 'id="llm-result-count"' in response.text
+    assert 'if (event.type.indexOf("agent.call.") === 0) return;' in response.text
     assert "不含准确率推断" in response.text
     assert "独立 ACP Agent" in response.text
     assert "function appendAttackerMessage(event)" in response.text
@@ -200,10 +209,12 @@ def test_battle_records_independent_agent_sources(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
     monkeypatch.delenv("AGENT_DEFENDER_RPC_URL", raising=False)
 
-    async def remote_attack(_payload):
+    async def remote_attack(_payload, *, correlation_id):
+        assert correlation_id.startswith("call-")
         return {"samples": [{"type": "defect", "content": "remote sample"}], "agentMode": "llm"}
 
-    async def local_defend(_payload):
+    async def local_defend(_payload, *, correlation_id):
+        assert correlation_id.startswith("call-")
         return None
 
     monkeypatch.setattr(service, "call_attacker", remote_attack)
@@ -218,8 +229,44 @@ def test_battle_records_independent_agent_sources(monkeypatch) -> None:
     events = client.get(f"/battles/{battle['id']}/events").json()
     attack_completed = next(item for item in events if item["type"] == "attack.completed")
     defense_round = next(item for item in events if item["type"] == "round.completed")
+    call_events = [item for item in events if item["type"].startswith("agent.call.")]
     assert attack_completed["data"]["attackerSource"] == "acp-llm"
     assert defense_round["data"]["defenderSource"] == "local-rule"
+    assert [item["type"] for item in call_events] == [
+        "agent.call.started",
+        "agent.call.completed",
+        "agent.call.started",
+        "agent.call.completed",
+    ]
+    terminal_calls = [item for item in call_events if item["type"].endswith(("completed", "failed"))]
+    assert len({item["data"]["correlationId"] for item in terminal_calls}) == 2
+    assert terminal_calls[0]["data"]["dispatchMode"] == "acp"
+    assert terminal_calls[0]["data"]["resultSource"] == "acp-llm"
+    assert terminal_calls[1]["data"]["dispatchMode"] == "local"
+    assert all(item["data"]["durationMs"] >= 0 for item in terminal_calls)
+    assert attack_completed["data"]["correlationId"] == terminal_calls[0]["data"]["correlationId"]
+    assert defense_round["data"]["correlationId"] == terminal_calls[1]["data"]["correlationId"]
+
+
+def test_sync_acp_failure_is_persisted_and_returns_battle_id(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
+
+    async def failed_attack(_payload, *, correlation_id):
+        assert correlation_id.startswith("call-")
+        raise service.ACPAgentError("remote detail must not be exposed")
+
+    monkeypatch.setattr(service, "call_attacker", failed_attack)
+    response = client.post("/battles", json={"difficulty": "low", "topic": "trace failure"})
+
+    assert response.status_code == 502
+    battle_id = response.headers["X-Battle-ID"]
+    battle = client.get(f"/battles/{battle_id}").json()
+    events = client.get(f"/battles/{battle_id}/events").json()
+    assert battle["status"] == "failed"
+    failure = next(item for item in events if item["type"] == "agent.call.failed")
+    assert failure["data"]["dispatchMode"] == "acp"
+    assert failure["data"]["errorType"] == "ACPAgentError"
+    assert "remote detail" not in response.text
 
 
 def test_background_battle_persists_staged_events() -> None:
@@ -233,10 +280,11 @@ def test_background_battle_persists_staged_events() -> None:
     assert detail["status"] == "completed"
     events = client.get(f"/battles/{battle_id}/events").json()
     expected_types = ["battle.created", "attack.started"]
+    expected_types.extend(["agent.call.started", "agent.call.completed"])
     expected_types.extend(["attack.sample.generated"] * len(detail["attackerOut"]["samples"]))
     expected_types.append("attack.completed")
     for _ in detail["attackerOut"]["samples"]:
-        expected_types.extend(["round.started", "round.completed"])
+        expected_types.extend(["round.started", "agent.call.started", "agent.call.completed", "round.completed"])
     expected_types.extend(["defense.completed", "battle.completed"])
     assert [event["type"] for event in events] == expected_types
     generated = [event for event in events if event["type"] == "attack.sample.generated"]
@@ -374,9 +422,21 @@ def test_battle_events_report_filters_and_leaderboard() -> None:
     report = client.get(f"/reports/{battle_id}")
     assert report.status_code == 200
     assert report.json()["scores"]["defender"] > 0
+    assert report.json()["internalScore"]["attacker"]["status"] == "scored"
+    assert report.json()["internalScore"]["defender"]["status"] == "scored"
+    assert report.json()["internalScore"]["attacker"]["maxScore"] == 100
+    score = client.get(f"/battles/{battle_id}/score")
+    assert score.status_code == 200
+    assert score.json()["attacker"]["score"] == report.json()["internalScore"]["attacker"]["score"]
+    assert score.json()["defender"]["score"] == report.json()["internalScore"]["defender"]["score"]
+    scores = client.get("/internal-scores?limit=10")
+    assert scores.status_code == 200
+    assert scores.json()["attacker"]["scoredBattleCount"] >= 1
+    assert scores.json()["defender"]["scoredBattleCount"] >= 1
     markdown = client.get(f"/reports/{battle_id}?format=markdown")
     assert markdown.status_code == 200
     assert "# 智能体攻防战报" in markdown.text
+    assert "内部运行质量评分" in markdown.text
     assert client.get(f"/battles?difficulty=high&q=事件测试").json()[0]["id"] == battle_id
     assert client.get("/leaderboard").json()["items"][0]["rounds"] >= 3
     assert client.get("/metrics").json()["events"] >= len(events.json())
@@ -429,7 +489,62 @@ def test_battle_store_dashboard_summary_aggregates_saved_outputs(tmp_path) -> No
         "recommendationCount": 1,
         "simulationSampleCount": 1,
         "acpCallBattles": 1,
+        "agentExecutionCount": 0,
+        "acpRequestCount": 0,
+        "acpSuccessCount": 0,
+        "acpFailureCount": 0,
+        "acpRuleFallbackCount": 0,
+        "localRuleExecutionCount": 0,
+        "reportedLlmResultCount": 0,
+        "averageAgentCallLatencyMs": 0,
+        "attackerCallCount": 0,
+        "defenderCallCount": 0,
     }
+
+
+def test_battle_store_dashboard_summary_counts_agent_calls_not_battles(tmp_path) -> None:
+    store = BattleStore(str(tmp_path / "agent-call-summary.sqlite3"))
+    store.save({
+        "id": "battle-call-summary",
+        "difficulty": "low",
+        "topic": "调用统计",
+        "status": "completed",
+        "createdAt": "2026-10-13T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    })
+    calls = [
+        ("agent.call.completed", "attacker", "acp", "acp-rule-fallback", 20),
+        ("agent.call.failed", "defender", "acp", None, 40),
+        ("agent.call.completed", "defender", "local", "local-rule", 10),
+        ("agent.call.completed", "attacker", "acp", "acp-llm", 30),
+    ]
+    for sequence, (event_type, role, dispatch_mode, source, duration) in enumerate(calls, start=1):
+        data = {"agentRole": role, "dispatchMode": dispatch_mode, "durationMs": duration}
+        if source is not None:
+            data["resultSource"] = source
+        store.save_event({
+            "id": f"event-call-{sequence}",
+            "battleId": "battle-call-summary",
+            "sequence": sequence,
+            "type": event_type,
+            "status": "failed" if event_type.endswith("failed") else "completed",
+            "createdAt": "2026-10-13T00:00:01+00:00",
+            "data": data,
+        })
+
+    summary = store.dashboard_summary()
+    assert summary["totalBattles"] == 1
+    assert summary["agentExecutionCount"] == 4
+    assert summary["acpRequestCount"] == 3
+    assert summary["acpSuccessCount"] == 2
+    assert summary["acpFailureCount"] == 1
+    assert summary["acpRuleFallbackCount"] == 1
+    assert summary["localRuleExecutionCount"] == 1
+    assert summary["reportedLlmResultCount"] == 1
+    assert summary["averageAgentCallLatencyMs"] == 25
+    assert summary["attackerCallCount"] == 2
+    assert summary["defenderCallCount"] == 2
 
 
 def test_dashboard_summary_uses_saved_battle_data(tmp_path, monkeypatch) -> None:
@@ -456,6 +571,16 @@ def test_dashboard_summary_uses_saved_battle_data(tmp_path, monkeypatch) -> None
         "recommendationCount": 0,
         "simulationSampleCount": 1,
         "acpCallBattles": 1,
+        "agentExecutionCount": 0,
+        "acpRequestCount": 0,
+        "acpSuccessCount": 0,
+        "acpFailureCount": 0,
+        "acpRuleFallbackCount": 0,
+        "localRuleExecutionCount": 0,
+        "reportedLlmResultCount": 0,
+        "averageAgentCallLatencyMs": 0,
+        "attackerCallCount": 0,
+        "defenderCallCount": 0,
         "ruleLibraryCaseCount": 3,
         "owaspLlmRuleCount": 10,
     }
@@ -575,6 +700,8 @@ def test_read_routes_can_be_protected_together(monkeypatch) -> None:
         f"/battles/{battle_id}/replay",
         f"/battles/{battle_id}/audit",
         f"/reports/{battle_id}",
+        f"/battles/{battle_id}/score",
+        "/internal-scores",
         "/leaderboard",
         "/dashboard",
     ):
@@ -947,6 +1074,10 @@ def test_cors_preflight_allows_api_key_header() -> None:
 
     page = client.get("/battles?limit=1", headers={"Origin": "http://localhost:5173"})
     assert "X-Total-Count" in page.headers["Access-Control-Expose-Headers"]
+    assert "X-Battle-ID" in page.headers["Access-Control-Expose-Headers"]
+    assert "X-Request-ID" in page.headers["Access-Control-Expose-Headers"]
+    assert "X-Battle-ID" in page.headers["Access-Control-Expose-Headers"]
+    assert "X-Request-ID" in page.headers["Access-Control-Expose-Headers"]
 
     logout = client.options(
         "/auth/session",
