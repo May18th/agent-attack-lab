@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/build.mjs",
     "deploy": "npx wrangler deploy",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/build-environment.node-test.mjs",
     "build:preview": "node scripts/check-preview-env.mjs && npm run build"
   },
   "dependencies": {

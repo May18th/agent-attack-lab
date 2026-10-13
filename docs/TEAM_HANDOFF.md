@@ -4,6 +4,15 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-13 PR #6 合并与 Pages Preview API 隔离排查
+
+- GitHub PR #6 已于 2026-10-13 合并到 `main`，merge commit `b00ca4b15f159793dc969a48a3dbbc3abe733529`；后端测试、前端构建与检查、Cloudflare Pages、Workers Builds 均通过。评分 v2 已进入 Git `main`，但尚未部署到生产 API。
+- 合并后的 Workers 分支 Preview `https://codex-internal-scoring-v2-agent-attack-lab.3498414260.workers.dev`、Pages 分支 Preview `https://codex-internal-scoring-v2.agent-attack-lab.pages.dev` 和隔离 API `/health` 当前均返回 HTTP 200。Workers Preview bundle 指向 `https://preview-api.yuanyiagentzhandui.cn`，不包含生产 API 或 localhost；该来源的 API CORS 预检返回 200。
+- 发现 Pages 分支 Preview 的 bundle `index-DgvuxXLN.js` 指向正式 API `https://api.yuanyiagentzhandui.cn`。仅对页面和静态 bundle 做 GET 检查，未对 Pages Preview 执行创建战局等写请求；没有泄露认证信息。Cloudflare Pages 配置由账户 `434bfd2a8e4ae5b35caf32b2f2993147` 持有，本地 Cloudflare 会话只有账户 `5ae15bce614603a1748af32e96515395`，因此未直接修改 Pages 项目环境变量。
+- 本地在独立分支 `codex/preview-pages-api-isolation` 新增 Pages 构建分支保护：`CF_PAGES_BRANCH=main` 固定生产 API，其他 Pages 分支固定隔离 Preview API，缺少分支 metadata 时构建失败；普通本地构建不改写 API 环境变量。Vitest `19 passed`，构建环境 Node tests `4 passed`，lint/build 通过；已分别构建并检查 main 与 Preview bundle 的 API 地址。
+- 当前 Edge 没有 CDP 调试端口或 Codex 可附着浏览器句柄，启动隔离 Headless Edge 的尝试被执行策略拒绝；因此本轮仍未完成真实桌面/移动渲染、控制台和点击交互验收。HTTP 与静态资源检查不能视为浏览器验收。
+- 后续：为 `codex/preview-pages-api-isolation` 建立独立 PR，检查 CI/Pages Preview bundle 必须指向 Preview API；合并后复验 Pages Preview，再评估生产部署。不得通过旧 Preview 页面创建/删除战局；不覆盖 VPS 主工作树或改生产服务。
+
 ## 2026-10-13 比赛评分细则适配（本地待验收）
 
 - 新增 [`SCORING_ALIGNMENT.md`](SCORING_ALIGNMENT.md)，仅按比赛对项目作品的评审项整理参赛证据，不是攻防实验室内部评分规则；标出需平台侧或人工补齐的材料。

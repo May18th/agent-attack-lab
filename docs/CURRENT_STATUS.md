@@ -6,8 +6,10 @@
 
 ## 最新状态（2026-10-13）
 
-- PR #4（Preview 隔离）和 PR #5（清理过期前端待办）已进入 `main`；当前 `origin/main` 为 `e0eaa14`。
-- 内部评分 v2 位于 `codex/internal-scoring-v2`，评分代码提交 `158d820`，Preview 验收文档提交 `ac05961`；PR #6 已创建，后端、前端、Cloudflare Pages、Workers Builds 检查均通过，等待队友审核。
+- PR #4、#5、#6 已进入 `main`；PR #6 合并提交 `b00ca4b`，当前远端 `main` 已包含内部评分 v2。
+- 评分 v2 隔离 Preview 的 API 验收通过；检查发现同一代码分支的 Pages Preview bundle 曾指向生产 API。未对该 Pages Preview 发起写请求，也未修改 Cloudflare Pages 账户配置。
+- 已新增 Pages 构建分支隔离修复：Pages `main` 构建固定使用生产 API，非 `main` Pages 构建固定使用 `preview-api.yuanyiagentzhandui.cn`，缺少分支信息则 fail closed。前端测试 19 passed、构建环境测试 4 passed、lint/build 通过；本地分别验证 main 与 Preview 构建产物的 API 地址。修复待单独 PR 审核及 Cloudflare Preview 复验。
+- 评分实现提交 `158d820`、Preview 验收文档提交 `ac05961`；详情见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md)。
 - 评分 v2 已部署到隔离 Preview 的独立源码目录并通过 low/mid/high API 验收，分数为攻击 65/100、防守 100/100；测试战局已清理。详细状态码、request ID、服务隔离和浏览器验收边界见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md)。
 - 本轮没有改生产 API 代码或重启生产 API；生产 `/health=200`。Preview systemd drop-in 仅作用于 `agent-attack-lab-preview.service`。
 - Preview 后台 HTML 已包含评分渲染器，但尚未完成人工/真实浏览器的渲染、控制台和 low/mid/high 点击验收；不得把 HTTP 检查表述为浏览器验收。
@@ -27,7 +29,7 @@
 - 没有逐 Agent 调用事件的历史战局会标为 `insufficient_evidence`；不将缺少证据记成零分。当前评分不代表攻击成功率、漏洞检出准确率、真实模型调用或目标修复效果。
 - 评分优化：LLM 攻击样本补齐 `testVariation`；调用来源按成功调用的完整留痕比例计分；按通常四舍五入；规则版本为 `internal-agent-v2`，旧战局按当前版本实时重算。
 - 当前完整后端测试：`113 passed, 4 skipped`；跳过项因 Windows 环境缺少 Bash，保留一条既存 Starlette/httpx 弃用警告。敏感文件扫描通过。
-- 评分代码与页面改动已提交并推送到 `codex/internal-scoring-v2`，且已部署到隔离 Preview；PR #6 检查通过、等待审核，尚未部署生产。
+- 评分代码与页面改动已由 PR #6 合并到 `main`（`b00ca4b`），且已部署到隔离 API Preview；生产 API 尚未部署该评分版本。
 
 ## 2026-10-12 Redis 缓存生产部署（22:32-22:36 +08:00）
 
