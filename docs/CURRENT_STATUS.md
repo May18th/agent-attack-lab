@@ -4,6 +4,14 @@
 
 本文只记录当前状态；历史执行证据见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) 与 Git 历史。
 
+## 最新状态（2026-10-13）
+
+- PR #4（Preview 隔离）和 PR #5（清理过期前端待办）已进入 `main`；当前 `origin/main` 为 `e0eaa14`。
+- 内部评分 v2 位于已推送分支 `codex/internal-scoring-v2`，提交 `158d820`；全量后端测试 `113 passed, 4 skipped`。该分支尚无 PR，需创建后交队友审核。
+- 评分 v2 已部署到隔离 Preview 的独立源码目录并通过 low/mid/high API 验收，分数为攻击 65/100、防守 100/100；测试战局已清理。详细状态码、request ID、服务隔离和浏览器验收边界见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md)。
+- 本轮没有改生产 API 代码或重启生产 API；生产 `/health=200`。Preview systemd drop-in 仅作用于 `agent-attack-lab-preview.service`。
+- Preview 后台 HTML 已包含评分渲染器，但尚未完成人工/真实浏览器的渲染、控制台和 low/mid/high 点击验收；不得把 HTTP 检查表述为浏览器验收。
+
 ## 2026-10-13 比赛评分细则适配（本地工作区）
 
 - 按项目作品比赛评审细则新增 [`SCORING_ALIGNMENT.md`](SCORING_ALIGNMENT.md)，仅用于参赛材料/证据准备；攻防实验室内部规则与比赛分值分离，见 [`INTERNAL_SCORING.md`](INTERNAL_SCORING.md)。
@@ -19,7 +27,7 @@
 - 没有逐 Agent 调用事件的历史战局会标为 `insufficient_evidence`；不将缺少证据记成零分。当前评分不代表攻击成功率、漏洞检出准确率、真实模型调用或目标修复效果。
 - 评分优化：LLM 攻击样本补齐 `testVariation`；调用来源按成功调用的完整留痕比例计分；按通常四舍五入；规则版本为 `internal-agent-v2`，旧战局按当前版本实时重算。
 - 当前完整后端测试：`113 passed, 4 skipped`；跳过项因 Windows 环境缺少 Bash，保留一条既存 Starlette/httpx 弃用警告。敏感文件扫描通过。
-- 评分代码与页面改动仅在本地，尚未提交或部署；公网后台没有因此更新。
+- 评分代码与页面改动已提交并推送到 `codex/internal-scoring-v2`，且已部署到隔离 Preview；尚未创建 PR，也未部署生产。
 
 ## 2026-10-12 Redis 缓存生产部署（22:32-22:36 +08:00）
 
