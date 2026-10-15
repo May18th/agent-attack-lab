@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -168,7 +169,20 @@ class BattleStore:
             "CREATE INDEX IF NOT EXISTS idx_battles_status_created ON battles (status, created_at DESC)"
         )
         self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS battle_scores (
+                battle_id TEXT PRIMARY KEY,
+                scoring_version TEXT NOT NULL,
+                score_json TEXT NOT NULL,
+                computed_at TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (version) VALUES (1)"
+        )
+        self._connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (version) VALUES (2)"
         )
         self._connection.commit()
 
@@ -219,7 +233,20 @@ class BattleStore:
             "CREATE INDEX IF NOT EXISTS idx_battles_status_created ON battles (status, created_at DESC)"
         )
         self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS battle_scores (
+                battle_id TEXT PRIMARY KEY,
+                scoring_version TEXT NOT NULL,
+                score_json TEXT NOT NULL,
+                computed_at TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.execute(
             "INSERT INTO schema_migrations (version) VALUES (1) ON CONFLICT (version) DO NOTHING"
+        )
+        self._connection.execute(
+            "INSERT INTO schema_migrations (version) VALUES (2) ON CONFLICT (version) DO NOTHING"
         )
         self._connection.commit()
 
@@ -277,7 +304,18 @@ class BattleStore:
             }
             if name not in indexes:
                 self._connection.execute(f"CREATE INDEX {name} ON battles ({columns})")
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS battle_scores (
+                battle_id VARCHAR(191) PRIMARY KEY,
+                scoring_version VARCHAR(64) NOT NULL,
+                score_json LONGTEXT NOT NULL,
+                computed_at VARCHAR(40) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
         self._connection.execute("INSERT IGNORE INTO schema_migrations (version) VALUES (1)")
+        self._connection.execute("INSERT IGNORE INTO schema_migrations (version) VALUES (2)")
         self._connection.commit()
 
     def save(self, record: dict[str, Any]) -> None:
@@ -356,6 +394,90 @@ class BattleStore:
                     ON CONFLICT(id) DO UPDATE SET status=excluded.status, data=excluded.data
                     """, values,
                 )
+            self._connection.commit()
+
+    def save_score(self, battle_id: str, score: dict[str, Any]) -> None:
+        """Persist the evidence-derived score snapshot for a terminal battle."""
+        values = (
+            battle_id,
+            str(score.get("version") or "unknown"),
+            json.dumps(score, ensure_ascii=False),
+            datetime.now(timezone.utc).isoformat(),
+        )
+        with self._lock:
+            if self._is_postgres:
+                self._connection.execute(
+                    """
+                    INSERT INTO battle_scores (battle_id, scoring_version, score_json, computed_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (battle_id) DO UPDATE SET
+                        scoring_version=EXCLUDED.scoring_version,
+                        score_json=EXCLUDED.score_json,
+                        computed_at=EXCLUDED.computed_at
+                    """, values,
+                )
+            elif self._is_mysql:
+                self._connection.execute(
+                    """
+                    INSERT INTO battle_scores (battle_id, scoring_version, score_json, computed_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE scoring_version=VALUES(scoring_version),
+                        score_json=VALUES(score_json), computed_at=VALUES(computed_at)
+                    """, values,
+                )
+            else:
+                self._connection.execute(
+                    """
+                    INSERT INTO battle_scores (battle_id, scoring_version, score_json, computed_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(battle_id) DO UPDATE SET
+                        scoring_version=excluded.scoring_version,
+                        score_json=excluded.score_json,
+                        computed_at=excluded.computed_at
+                    """, values,
+                )
+            self._connection.commit()
+
+    def get_score(self, battle_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT score_json FROM battle_scores WHERE battle_id = " + self._placeholder,
+                (battle_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            score = json.loads(row["score_json"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return score if isinstance(score, dict) else None
+
+    def list_scores(self, battle_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not battle_ids:
+            return {}
+        placeholders = ", ".join([self._placeholder] * len(battle_ids))
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT battle_id, score_json FROM battle_scores WHERE battle_id IN ("
+                + placeholders + ")",
+                battle_ids,
+            ).fetchall()
+        scores: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            try:
+                score = json.loads(row["score_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(score, dict):
+                scores[str(row["battle_id"])] = score
+        return scores
+
+    def delete_score(self, battle_id: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                "DELETE FROM battle_scores WHERE battle_id = " + self._placeholder,
+                (battle_id,),
+            )
             self._connection.commit()
 
     def get(self, battle_id: str) -> dict[str, Any] | None:
@@ -443,6 +565,10 @@ class BattleStore:
             )
             self._connection.execute(
                 "DELETE FROM battles WHERE id = " + self._placeholder,
+                (battle_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM battle_scores WHERE battle_id = " + self._placeholder,
                 (battle_id,),
             )
             self._connection.commit()

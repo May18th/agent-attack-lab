@@ -863,3 +863,9 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - 本地修改新增 NVD API 2.0 有限时间窗导入、`Rejected` 跳过、CVE 跨来源去重（CISA 优先）及对应测试；外部案例继续标记为 `verified_primary` / `external_fact` / `synthetic=false`，不等同于实战样本或观察事件。
 - 当前网络到 NVD API 两次超时，未导入 NVD 数据；生产案例库未同步。SSH 恢复后如需上线，先备份生产案例库，再执行 7-30 天时间窗导入、校验、接口抽查和 Redis 外部案例缓存失效。
 - 本轮后端全量测试：`118 passed, 4 skipped`；跳过项为 Windows 缺 Bash 的既有测试。新增本地数据库备份文件位于 `backend/.data/`，被 Git 忽略，不得提交。
+
+### 评分快照落库（2026-10-15）
+
+- 本地修改新增 `battle_scores` 表及 Alembic 迁移 `20261015_0002`，覆盖 SQLite、PostgreSQL 和 MySQL。终态战局保存 `internal-agent-v2` 评分 JSON，`/battles/{id}/score`、战报和 `/internal-scores` 优先读取快照；旧数据无快照时实时回退。
+- 重试失败战局会清理旧评分，删除战局会同步清理评分；评分规则版本仍由 `scoring.py` 控制。不要把评分 JSON 当作漏洞准确率或真实修复结果。
+- 本地完整后端测试：`119 passed, 4 skipped`；生产尚未迁移或部署。SSH 恢复后先备份主库，运行 `uv run alembic upgrade head`，再以隔离战局验收评分接口和删除清理。

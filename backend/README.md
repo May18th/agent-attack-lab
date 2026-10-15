@@ -165,6 +165,8 @@ NVD 导入需要明确指定带时区的发布时间起止时间，单次窗口�
 
 SQLite 会记录 `schema_migrations` 基线版本并以幂等 DDL 自动补齐当前表和索引。Alembic 版本迁移位于 `backend/alembic/`，执行 `uv run alembic upgrade head`。PostgreSQL 使用 psycopg 连接池，MySQL 使用 SQLAlchemy/PyMySQL 连接池；最大连接数可通过 `AGENT_DB_POOL_MAX_SIZE` 调整。MySQL 连接配置和目标实例验收步骤见 `docs/DEPLOYMENT.md`。
 
+终态战局的内部运行质量评分会写入 `battle_scores` 快照表（评分规则版本、完整 JSON 和计算时间），评分接口优先读取快照；旧战局没有快照时仍按事件实时计算。部署数据库迁移后再启用该表，禁止手工删除评分记录。
+
 战局默认保存到 `.data/battles.sqlite3`，服务重启后仍保留。需要指定其他数据库路径时设置环境变量：
 
 ```powershell
