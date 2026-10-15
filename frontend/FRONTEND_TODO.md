@@ -1,6 +1,6 @@
 # 前端当前待办
 
-更新时间：2026-10-12
+更新时间：2026-10-15
 
 旧版 FE-01 至 FE-16、临时 Tunnel、Pages 域名绑定和早期公网故障步骤均已完成或
 失效，已从本文删除。当前状态以 [`../docs/CURRENT_STATUS.md`](../docs/CURRENT_STATUS.md)
@@ -8,21 +8,11 @@
 
 ## 待完成
 
-- [ ] **PR #4 隔离 Preview 浏览器验收**
-  - 打开 `https://codex-preview-isolation-agent-attack-lab.3498414260.workers.dev`。
-  - 检查页面渲染、桌面/移动布局、浏览器控制台和网络请求。
-  - 分别创建 `low`、`mid`、`high` 战局。
-  - 确认写请求只到 `https://preview-api.yuanyiagentzhandui.cn`，不访问生产 API
-    或 `127.0.0.1`。
-
 - [ ] **处理重复的 Workers Builds 集成**
   - 账户 `434bfd...` 下的重复构建仍失败，由该 Cloudflare 账户维护者确认归属。
   - 若保留，根目录应为 `frontend/frontend-ui`，并在该目录执行构建和 Preview 命令。
   - 若已弃用，断开重复集成；不要修改已经正常工作的 Workers Preview 配置。
-
-- [ ] **审核并合并 PR #4**
-  - 浏览器验收完成且相关检查全部通过后再批准。
-  - 不绕过失败检查，不直接将 Preview 写请求接入生产数据。
+  - 本机无该账户控制台权限时，需账户维护者在 Cloudflare 后台操作。
 
 ## 已完成
 
@@ -35,6 +25,11 @@
 - [x] 正式根域名、`www` 和正式 API HTTPS 可访问。
 - [x] Preview 使用独立 HTTPS API 和独立数据库，构建时拒绝正式 API、localhost
   和缺失配置。
+- [x] PR #4–#8 已合并；Preview Worker bundle 指向 `preview-api`，生产 bundle 指向
+  正式 API；Preview API 上 low/mid/high 创建 201 并完成删除清理。
+- [x] 详情页内部评分展示、失败重试、删除已结束战局、pending/running 轮询。
+- [x] 本地评分请求增加战局选择态校验，避免切换战局后迟到的旧响应覆盖当前内容；Vitest 23 项、构建环境测试 4 项、Lint、Build 通过。
+- [ ] 上述前端功能尚未部署；真实浏览器交互和生产发布尚未验收。
 
 ## 配置边界
 

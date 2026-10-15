@@ -429,6 +429,7 @@ def test_battle_events_report_filters_and_leaderboard() -> None:
     assert score.status_code == 200
     assert score.json()["attacker"]["score"] == report.json()["internalScore"]["attacker"]["score"]
     assert score.json()["defender"]["score"] == report.json()["internalScore"]["defender"]["score"]
+    assert service._battle_store.get_score(battle_id) == score.json()
     scores = client.get("/internal-scores?limit=10")
     assert scores.status_code == 200
     assert scores.json()["attacker"]["scoredBattleCount"] >= 1
@@ -458,6 +459,30 @@ def test_battle_store_persists_records(tmp_path) -> None:
     second_store = BattleStore(str(database))
     assert second_store.get("battle-persisted") == record
     assert first_store._connection.execute("SELECT version FROM schema_migrations").fetchone()[0] == 1
+
+
+def test_battle_store_persists_and_clears_score_snapshots(tmp_path) -> None:
+    store = BattleStore(str(tmp_path / "battle-scores.sqlite3"))
+    score = {
+        "version": "internal-agent-v2",
+        "status": "scored",
+        "attacker": {"score": 90},
+        "defender": {"score": 80},
+    }
+    store.save({
+        "id": "battle-score",
+        "difficulty": "low",
+        "topic": "评分快照",
+        "status": "completed",
+        "createdAt": "2026-10-15T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    })
+    store.save_score("battle-score", score)
+    assert store.get_score("battle-score") == score
+    assert store.list_scores(["battle-score", "missing"]) == {"battle-score": score}
+    store.delete("battle-score")
+    assert store.get_score("battle-score") is None
 
 
 def test_battle_store_event_cursor_and_batch_reads(tmp_path) -> None:
@@ -649,7 +674,10 @@ def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(tmp_path, m
     import sqlite3
 
     connection = sqlite3.connect(database)
-    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261007_0001"
+    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261015_0002"
+    assert connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'battle_scores'"
+    ).fetchone()[0] == "battle_scores"
     assert connection.execute("SELECT COUNT(*) FROM battles").fetchone()[0] == 0
 
 
