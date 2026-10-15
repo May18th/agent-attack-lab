@@ -82,6 +82,30 @@ export type ExternalCaseResponse = {
   sourceCount: number
 }
 
+export type ScoreCategory = {
+  id?: string
+  label: string
+  score: number
+  maxScore: number
+  basis?: string
+}
+
+export type RoleScore = {
+  status: string
+  score: number | null
+  maxScore: number
+  message?: string
+  categories: ScoreCategory[]
+}
+
+export type BattleScore = {
+  version: string
+  status: string
+  message?: string
+  attacker: RoleScore
+  defender: RoleScore
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly requestId?: string
@@ -167,9 +191,27 @@ export async function getExternalCases(query = ''): Promise<ExternalCaseResponse
   return api<ExternalCaseResponse>(`/external-cases${suffix}`)
 }
 
+export async function getBattle(battleId: string): Promise<Battle> {
+  return api<Battle>(`/battles/${encodeURIComponent(battleId)}`)
+}
+
+export async function getBattleScore(battleId: string): Promise<BattleScore> {
+  return api<BattleScore>(`/battles/${encodeURIComponent(battleId)}/score`)
+}
+
+export async function deleteBattle(battleId: string): Promise<void> {
+  await request(`/battles/${encodeURIComponent(battleId)}`, { method: 'DELETE' })
+}
+
+export async function retryBattle(battleId: string): Promise<Battle> {
+  return api<Battle>(`/battles/${encodeURIComponent(battleId)}/retry`, { method: 'POST' })
+}
+
 export function errorMessage(status: number, detail?: string): string {
   if (status === 400 || status === 422) return detail ? `输入不符合要求：${detail}` : '输入不符合要求，请检查主题和难度'
+  if (status === 401 || status === 403) return detail || '需要登录后台或提供有效凭证后才能执行此操作'
   if (status === 404) return '战局不存在或已被删除'
+  if (status === 409) return detail || '当前战局状态不允许此操作'
   if (status >= 500) return '服务暂时不可用，请稍后重试'
   return detail || `请求失败（HTTP ${status}）`
 }

@@ -83,7 +83,25 @@ function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource =
       }))
     }
     if (url.pathname.includes('/battles/')) {
-      const id = decodeURIComponent(url.pathname.split('/').at(-1) ?? '')
+      const parts = url.pathname.split('/').filter(Boolean)
+      const battlesIndex = parts.indexOf('battles')
+      const id = decodeURIComponent(parts[battlesIndex + 1] ?? '')
+      const action = parts[battlesIndex + 2]
+      if (action === 'score') {
+        return Promise.resolve(new Response(JSON.stringify({
+          version: 'internal-agent-v2',
+          status: 'scored',
+          message: '分别衡量攻击/防守输出完整度与可审计性',
+          attacker: { status: 'scored', score: 65, maxScore: 100, categories: [{ label: '样本结构完整度', score: 20, maxScore: 35 }] },
+          defender: { status: 'scored', score: 80, maxScore: 100, categories: [{ label: '逐轮响应完整度', score: 25, maxScore: 25 }] },
+        }), { status: 200 }))
+      }
+      if (action === 'retry' && init?.method === 'POST') {
+        return Promise.resolve(new Response(JSON.stringify({ ...sourceBattle, id, status: 'pending', topic: '已重试战局' }), { status: 202 }))
+      }
+      if (init?.method === 'DELETE') {
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
       return Promise.resolve(new Response(JSON.stringify(id === battle.id ? sourceBattle : { ...sourceBattle, id, topic: '已恢复回放' }), { status: 200 }))
     }
     return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
@@ -225,5 +243,48 @@ describe('App', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '公开体验' } })
     fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
     expect(await screen.findByText('战局创建完成')).toBeInTheDocument()
+  })
+
+  it('loads internal scores and deletes a finished battle', async () => {
+    const fetchMock = installFetchMock()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles/battle-test/score'), expect.anything()))
+    expect(await screen.findByText(/攻击方：65 \/ 100/)).toBeInTheDocument()
+    expect(screen.getByText(/防守方：80 \/ 100/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '删除战局' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles/battle-test'), expect.objectContaining({ method: 'DELETE' })))
+    expect(await screen.findByText('战局已删除')).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  it('ignores a late score response after selecting another battle', async () => {
+    const fetchMock = installFetchMock()
+    const baseline = fetchMock.getMockImplementation()!
+    let resolveOldScore!: (response: Response) => void
+    const oldScore = new Promise<Response>((resolve) => { resolveOldScore = resolve })
+    fetchMock.mockImplementation((input, init) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/battle-test/score')) return oldScore
+      return baseline(input, init)
+    })
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /历史战局 2/ }))
+    expect(await screen.findByText(/攻击方：65 \/ 100/)).toBeInTheDocument()
+
+    resolveOldScore(new Response(JSON.stringify({
+      version: 'internal-agent-v2',
+      status: 'scored',
+      attacker: { status: 'scored', score: 99, maxScore: 100, categories: [] },
+      defender: { status: 'scored', score: 99, maxScore: 100, categories: [] },
+    }), { status: 200 }))
+
+    await waitFor(() => expect(screen.queryByText(/攻击方：99 \/ 100/)).not.toBeInTheDocument())
+    expect(screen.getByText(/攻击方：65 \/ 100/)).toBeInTheDocument()
   })
 })

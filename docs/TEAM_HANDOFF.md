@@ -4,6 +4,14 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-15 主线与生产差异、前端本地变更复核
+
+- 本机 `main` 与 `origin/main` 均为 `3d9109e`；PR #7 和 #8 已在主线。公网 API `/health=200`，但 `/openapi.json` 尚无 `/battles/{battle_id}/score` 与 `/internal-scores`，生产尚未对齐当前主线。
+- 本轮从本机连接 `deployer@47.108.92.113:22` 超时，TCP 22 检查失败。没有执行任何 VPS 命令；VPS 当前 HEAD、工作树状态、备份与回滚条件均无法确认，因此没有部署或重启服务。恢复 SSH 后，先检查远端工作树和备份，保留已有 `start-service.sh` 修改，再执行文件级发布。
+- 正式外部案例 API 本轮返回 `available=true`、1,739 条、来源数 1；样本为 CISA `external_fact`、`synthetic=false`。NVD 官方 CVE API 可读取权威 CVE 内容，但当前存储按来源快照记录，同一 CVE 可跨来源重复。没有导入第二来源；先完成去重和快照更新策略，再扩充数据库。
+- 前端 6 个本地改动文件已审阅；Vitest 23 项、构建环境测试 4 项、Lint、Build 全通过。另修复战局切换时旧评分响应覆盖当前评分的竞态。改动尚未部署，真实浏览器渲染、控制台和交互仍未验收。
+- 禁止据此宣称生产已更新；不要把 NVD/CISA 外部事实记作本项目真实战局，不要将长期记忆、`.env`、密钥、证书、数据库或私有发行物提交到 Git。
+
 ## 2026-10-13 PR #6 合并与 Pages Preview API 隔离排查
 
 - GitHub PR #6 已于 2026-10-13 合并到 `main`，merge commit `b00ca4b15f159793dc969a48a3dbbc3abe733529`；后端测试、前端构建与检查、Cloudflare Pages、Workers Builds 均通过。评分 v2 已进入 Git `main`，但尚未部署到生产 API。
