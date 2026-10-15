@@ -6,6 +6,7 @@
 
 ## 最新状态（2026-10-15）
 
+- 外部案例库本机已刷新 CISA KEV 官方目录：最新目录版本 `2026.10.14`，查询去重后 1,745 条；物理 SQLite 保留 3,484 条来源快照记录用于审计，校验 `valid=true`。NVD 导入代码、跨来源 CVE 去重和测试已补齐，但当前网络到 NVD API 两次超时，未导入 NVD 数据；生产案例库未同步。
 - 本机 `main` 与 `origin/main` 均为 `3d9109e`。PR #7 Pages Preview API 隔离修复及 PR #8 后端低风险性能优化均已进入主线；PR #8 合并提交为 `0b967d2`。
 - 公网只读复核：API `/health=200`；外部案例接口 `available=true`、1,739 条、来源数 1，样本记录为 CISA `external_fact` 且 `synthetic=false`。
 - 公网 `/openapi.json` 暂未包含 `/battles/{battle_id}/score` 与 `/internal-scores`；生产 API 与当前主线仍有版本差异。SSH `deployer@47.108.92.113:22` 本轮连接超时，无法查看 VPS HEAD、工作树、备份和回滚条件，因此没有部署或重启生产服务。

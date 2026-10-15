@@ -151,10 +151,12 @@ $env:no_proxy = "localhost,127.0.0.1,::1"
 
 ### 外部安全案例库
 
-外部案例库是只读的来源参考库，当前导入 CISA 官方 KEV JSON，并保留发布版本、抓取时间、来源 URL
-和内容 SHA-256。查询接口为 `GET /external-cases`，支持 `q`、`vendor`、`product`、`limit` 和 `offset`；
+外部案例库是只读的来源参考库，导入 CISA 官方 KEV JSON 和 NVD CVE API 2.0 数据，并保留快照版本、抓取时间、来源 URL
+和内容 SHA-256。查询按 CVE ID 去重，同一 CVE 优先展示 CISA KEV 记录。查询接口为 `GET /external-cases`，支持 `q`、`vendor`、`product`、`limit` 和 `offset`；
 返回结果会明确标注 `verified_primary`、`external_fact` 和来源元数据。外部案例不自动写入战局，也不代表
 项目已经观察到真实攻击事件。完整字段和校验命令见 [`docs/EXTERNAL_CASE_LIBRARY.md`](../docs/EXTERNAL_CASE_LIBRARY.md)。
+
+NVD 导入需要明确指定带时区的发布时间起止时间，单次窗口最长 120 天；默认按未认证 API 的请求频率分页，设置 `NVD_API_KEY` 可使用更高的官方速率限制。NVD rejected 记录会被跳过。
 
 外部目录版本差异可用 `uv run python scripts/compare_external_cases.py` 查看。提交前运行
 `uv run python scripts/check_sensitive_files.py --staged`；CI 会阻止证书、私钥、凭据、数据库、JSONL、私有 wheel 和本地配置进入仓库。
