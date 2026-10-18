@@ -765,15 +765,24 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
 async def _lifespan(_app: FastAPI):
     """Resume persisted pending/running battles after a process restart."""
     recovered_ids: set[str] = set()
+    recovered_records: list[dict[str, Any]] = []
+    page_size = 200
     for status in ("pending", "running"):
-        for record in _battle_store.list(limit=200, status=status):
-            if record["id"] in recovered_ids:
-                continue
-            recovered_ids.add(record["id"])
-            payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
-            task = asyncio.create_task(_run_battle_async(record["id"], payload))
-            _recovery_tasks.add(task)
-            task.add_done_callback(_recovery_tasks.discard)
+        offset = 0
+        while True:
+            records = _battle_store.list(limit=page_size, offset=offset, status=status)
+            recovered_records.extend(records)
+            offset += len(records)
+            if len(records) < page_size:
+                break
+    for record in recovered_records:
+        if record["id"] in recovered_ids:
+            continue
+        recovered_ids.add(record["id"])
+        payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
+        task = asyncio.create_task(_run_battle_async(record["id"], payload))
+        _recovery_tasks.add(task)
+        task.add_done_callback(_recovery_tasks.discard)
     try:
         yield
     finally:

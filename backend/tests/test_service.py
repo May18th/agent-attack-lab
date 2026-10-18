@@ -973,6 +973,48 @@ def test_lifespan_resumes_interrupted_battle() -> None:
     assert service._battle_store.get(battle_id)["status"] == "completed"
 
 
+def test_lifespan_resumes_all_interrupted_battles_beyond_first_page(monkeypatch) -> None:
+    records = [
+        {
+            "id": f"battle-recovery-page-{index}",
+            "difficulty": "low",
+            "topic": "分页恢复测试",
+            "status": "pending",
+            "createdAt": f"2026-10-07T00:{index // 60:02d}:{index % 60:02d}+00:00",
+            "attackerOut": {"samples": []},
+            "defenderOut": [],
+        }
+        for index in range(205)
+    ]
+    resumed: set[str] = set()
+
+    class RecoveryStore:
+        def list(self, limit=50, offset=0, status=None):
+            matching = [record for record in records if record["status"] == status]
+            return matching[offset : offset + limit]
+
+        def close(self) -> None:
+            pass
+
+    async def capture_recovery(battle_id, _payload) -> None:
+        resumed.add(battle_id)
+
+    monkeypatch.setattr(service, "_battle_store", RecoveryStore())
+    monkeypatch.setattr(service, "_run_battle_async", capture_recovery)
+    monkeypatch.setattr(service._redis_cache, "close", lambda: None)
+
+    async def recover() -> None:
+        async with service._lifespan(service.app):
+            for _ in range(5):
+                if len(resumed) == len(records):
+                    return
+                await asyncio.sleep(0)
+        assert len(resumed) == len(records)
+
+    asyncio.run(recover())
+    assert len(resumed) == 205
+
+
 def test_unknown_battle_returns_404() -> None:
     assert client.get("/battles/battle-does-not-exist").status_code == 404
 

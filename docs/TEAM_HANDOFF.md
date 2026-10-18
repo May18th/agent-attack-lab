@@ -869,3 +869,16 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - 本地修改新增 `battle_scores` 表及 Alembic 迁移 `20261015_0002`，覆盖 SQLite、PostgreSQL 和 MySQL。终态战局保存 `internal-agent-v2` 评分 JSON，`/battles/{id}/score`、战报和 `/internal-scores` 优先读取快照；旧数据无快照时实时回退。
 - 重试失败战局会清理旧评分，删除战局会同步清理评分；评分规则版本仍由 `scoring.py` 控制。不要把评分 JSON 当作漏洞准确率或真实修复结果。
 - 本地完整后端测试：`119 passed, 4 skipped`；生产尚未迁移或部署。SSH 恢复后先备份主库，运行 `uv run alembic upgrade head`，再以隔离战局验收评分接口和删除清理。
+
+### 后端启动恢复分页（2026-10-18）
+
+- 本地修改修复服务启动恢复只读取每种状态前 200 场的问题：现在分页读取全部 `pending` / `running` 记录，再启动恢复任务；新增 205 场恢复回归测试。
+- 后端全量测试：`120 passed, 4 skipped`；仅有一条既有 Starlette/httpx 弃用警告。
+- 改动尚未合入或部署，生产服务和业务数据未触碰。当前分支 `codex/production-alignment-review`，PR #9 开放；后端测试与前端检查通过，Cloudflare Workers Builds 失败，当前会话无权访问该检查所属账号。不要将 PR 描述成已合入或已发布。
+- 继续发布前需解决 Workers Builds 账号/配置阻塞并审核 PR；合入后仍须先只读检查 VPS checkout、工作树和回滚备份，再进行生产迁移与隔离数据验收。
+
+### NVD 有限窗口本机验收（2026-10-18）
+
+- 使用临时 SQLite 验证 NVD API 2.0 的 2026-10-10 至 2026-10-17 UTC 发布时间窗口：API 返回 5,487 条，29 条 `Rejected` 被排除，5,458 个唯一 CVE 入库；`validate_database` 返回 `valid=true`，全部为 `verified_primary / external_fact / synthetic=false`。
+- 临时验证库已删除；本轮没有修改现有 CISA 数据库、生产案例库或 Redis，也没有与 CISA 做实库合并。已有自动化测试覆盖跨来源同 CVE 优先展示 CISA 的行为。
+- PR #9 未合入；生产导入必须等 PR 审核合入后，先备份生产案例库，再做有限窗口导入、验证接口去重结果、抽查来源及缓存失效。不要把 NVD 外部资料表述为本项目实战或观测事件。

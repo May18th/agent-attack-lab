@@ -1,10 +1,16 @@
 # 当前项目状态
 
-更新时间：2026-10-15
+更新时间：2026-10-18
 
 本文只记录当前状态；历史执行证据见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) 与 Git 历史。
 
-## 最新状态（2026-10-15）
+## 最新状态（2026-10-18）
+
+- 后端启动恢复已改为分页收齐所有 `pending` / `running` 战局，不再受每种状态 200 条上限影响；新增 205 条恢复回归测试。后端全量测试 `120 passed, 4 skipped`，有一条既有 Starlette/httpx 弃用警告。
+- NVD API 7 天窗口（2026-10-10 至 2026-10-17 UTC）本机临时库验收通过：收到 5,487 条，排除 29 条 Rejected，导入 5,458 个唯一 CVE；`validate_database` 返回 `valid=true`，记录均为 `verified_primary / external_fact / synthetic=false`。临时数据库已删除，未与 CISA 数据合并、未同步生产。
+- 上述修改尚未合入或部署；PR #9 仍开放，Workers Builds 检查失败，Cloudflare 账号检查权限不在当前会话范围内。未操作生产服务器。
+
+## 本地状态（2026-10-15，历史）
 
 - 外部案例库本机已刷新 CISA KEV 官方目录：最新目录版本 `2026.10.14`，查询去重后 1,745 条；物理 SQLite 保留 3,484 条来源快照记录用于审计，校验 `valid=true`。NVD 导入代码、跨来源 CVE 去重和测试已补齐，但当前网络到 NVD API 两次超时，未导入 NVD 数据；生产案例库未同步。
 - 本地新增 `battle_scores` 评分快照表（SQLite/PostgreSQL/MySQL 及 Alembic `20261015_0002`）：终态战局保存 `internal-agent-v2` 评分，评分接口优先读快照，历史战局无快照时实时回退；重试和删除会清理旧评分。尚未部署生产。
