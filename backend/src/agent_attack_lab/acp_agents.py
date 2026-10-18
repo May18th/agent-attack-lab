@@ -94,6 +94,25 @@ def _supported_options(callable_obj: Any, options: dict[str, Any]) -> dict[str, 
     return {key: value for key, value in options.items() if key in parameters}
 
 
+def _construct_aip_client(options: dict[str, Any]) -> AipRpcClient:
+    """Construct the SDK client without letting malformed Windows proxy env leak in."""
+    proxy_vars = ("NO_PROXY", "no_proxy")
+    saved = {name: os.environ.get(name) for name in proxy_vars}
+    sanitize = any(value and ";" in value for value in saved.values())
+    if sanitize:
+        for name in proxy_vars:
+            os.environ.pop(name, None)
+    try:
+        return AipRpcClient(**options)
+    finally:
+        if sanitize:
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
 def _task_data(task: TaskResult) -> dict[str, Any]:
     state = _state_name(task)
     if state in {"failed", "rejected", "canceled"}:
@@ -172,9 +191,7 @@ async def _invoke(
             **_identity_binding_options(role, ssl_context),
         }
         client_parameters = inspect.signature(AipRpcClient).parameters
-        client = AipRpcClient(
-            **_supported_options(AipRpcClient, client_options),
-        )
+        client = _construct_aip_client(_supported_options(AipRpcClient, client_options))
         if (
             "transport" not in client_parameters
             and not any(
