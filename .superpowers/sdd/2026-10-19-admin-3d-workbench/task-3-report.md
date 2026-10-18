@@ -59,3 +59,13 @@
 - `npm run lint`、`npx tsc -b`：通过。
 - `npm run build`：通过；主 bundle 约 260 KB，Three.js 动态 chunk 约 557 KB，仍有 Vite 的 500 KB chunk 提示。
 - Vitest 的 jsdom 仍打印 `HTMLCanvasElement.getContext()` 未实现提示；测试通过。
+
+## Review 修复（2026-10-19，round 3）
+
+- 修复提交：`7f2b36b` (`fix: sync timeline model before passive effects`)
+- 二次复审指出 round 2 的 `sceneModelRef` 实际在 passive `useEffect` 更新，renderer promise 若在该 effect 前完成仍可能读取旧模型；round 2 的集成测试经 RTL `act()` 冲刷 effects，未覆盖该时序窗口。
+- 修复：新增 `useCommittedRef`，通过 `useLayoutEffect` 在 commit 阶段同步 scene model；renderer import 的 effect 读取该 ref，已提交的 model 更新也在 layout effect 中同步传给已挂载的 scene。layout effects 在同一 commit 的 passive effects 前运行，避免该 stale-ref 窗口；未在 render 阶段写 ref。
+- 确定性 seam 测试验证后续 layout effect 观察到新值。负向验证时临时将 hook 改为 `useEffect`，测试按预期失败（期望 `committed`，实际仍是 `initial`）；恢复 `useLayoutEffect` 后通过。
+- 聚焦 6 个测试文件：32 项通过；全量 `npm test`：9 个 Vitest 文件 68 项通过，build-environment Node 测试 4 项通过。
+- `npm run lint`、`npx tsc -b`：通过，无 lint 告警。
+- `npm run build`：通过；Three.js 动态 chunk 约 557 KB，仍有超过 500 KB 阈值提示。
