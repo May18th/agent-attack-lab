@@ -1,17 +1,23 @@
 # 当前未完成事项
 
-更新时间：2026-10-12
+更新时间：2026-10-18
 
 历史待办已经完成或失效，不再保留旧的未勾选清单。项目实时状态以
 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 和当前 GitHub Pull Request 检查结果为准。
 
 ## 当前有效事项
 
-1. 在桌面浏览器验收 PR #4 的隔离 Preview：页面正常渲染、控制台无阻塞错误，
-   `low`、`mid`、`high` 请求只发送到 `https://preview-api.yuanyiagentzhandui.cn`。
-2. 由 Cloudflare 账户维护者修复或移除账户 `434bfd...` 下重复的 Workers Builds
+1. 由 Cloudflare 账户维护者确认或修复账户 `434bfd...` 下重复的 Workers Builds
    集成。不得修改另一个已经通过检查的 Workers Preview 配置。
-3. 上述两项完成且 PR 检查全部通过后，按正常审核流程批准并合并 PR #4。
+
+该事项是外部账户配置核对项；当前仓库代码、PR 检查和生产部署均不因此阻塞。
+
+## 近期已核实完成
+
+- PR #4 已于 2026-10-12 合并，隔离 Preview 的前端构建、后端测试、Pages 和
+  Workers Builds 检查均成功；不再重复验收或保留为合并前置条件。
+- PR #31 的本地隔离业务验收记录已于 2026-10-18 合并到 `main`（合并提交
+  `18a7544`）。
 
 ## 已完成且不再列为待办
 
