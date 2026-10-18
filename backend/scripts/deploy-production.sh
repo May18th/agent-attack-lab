@@ -149,13 +149,28 @@ for service in "${services[@]}"; do
   systemctl --user is-active --quiet "$service" || fail "$service is not active after restart"
 done
 
+wait_for_health() {
+  local endpoint=$1
+  local attempt
+  for attempt in {1..30}; do
+    if curl --fail --silent --show-error --max-time 15 --output /dev/null "$endpoint"; then
+      return 0
+    fi
+    sleep 1
+  done
+  for service in "${services[@]}"; do
+    systemctl --user status "$service" --no-pager >&2 || true
+    journalctl --user -u "$service" -n 30 --no-pager >&2 || true
+  done
+  fail "health check failed after 30 seconds: $endpoint"
+}
+
 for endpoint in \
   http://127.0.0.1:8787/health \
   http://127.0.0.1:8788/health \
   http://127.0.0.1:8789/health \
   "$public_health_url"; do
-  curl --fail --silent --show-error --max-time 15 --output /dev/null "$endpoint" \
-    || fail "health check failed: $endpoint"
+  wait_for_health "$endpoint"
 done
 
 trap - EXIT
