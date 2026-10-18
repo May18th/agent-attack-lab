@@ -20,7 +20,10 @@ fail() {
 [[ "$repo_dir" == "/opt/agent-attack-lab" ]] || fail "refusing unexpected repository path: $repo_dir"
 [[ -d "$repo_dir/.git" ]] || fail "production checkout not found: $repo_dir"
 command -v git >/dev/null 2>&1 || fail "git is not installed"
-command -v uv >/dev/null 2>&1 || fail "uv is not installed"
+if ! command -v uv >/dev/null 2>&1 && [[ -x /home/deployer/.local/bin/uv ]]; then
+  export PATH="/home/deployer/.local/bin:$PATH"
+fi
+command -v uv >/dev/null 2>&1 || fail "uv is not installed (checked PATH and /home/deployer/.local/bin/uv)"
 command -v curl >/dev/null 2>&1 || fail "curl is not installed"
 
 cd "$repo_dir"
