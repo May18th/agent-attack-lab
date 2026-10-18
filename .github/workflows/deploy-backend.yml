@@ -33,26 +33,49 @@ jobs:
           runner_user=$(id -un)
           printf 'runner_user=%s\n' "$runner_user"
           [[ "$runner_user" == deployer ]] || { echo 'Runner must run as deployer' >&2; exit 1; }
-          for command_name in git systemctl curl; do
+          for command_name in git systemctl curl tar python3; do
             command_path=$(command -v "$command_name" || true)
             [[ -n "$command_path" ]] || { echo "Missing command: $command_name" >&2; exit 1; }
             printf '%s=%s\n' "$command_name" "$command_path"
           done
 
-      - name: Checkout 部署提交
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.deploy_ref || github.ref_name }}
-          fetch-depth: 1
+      - name: 下载部署源码
+        shell: bash
+        env:
+          DEPLOY_REF_INPUT: ${{ inputs.deploy_ref || github.sha }}
+        run: |
+          set -euo pipefail
+          requested_ref="$DEPLOY_REF_INPUT"
+          if [[ "$requested_ref" =~ ^[0-9a-f]{40}$ ]]; then
+            deploy_sha="$requested_ref"
+          else
+            deploy_sha=$(curl --fail --silent --show-error --retry 3 --connect-timeout 10 --max-time 30 \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${requested_ref}" \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin)["sha"])')
+          fi
+          [[ "$deploy_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Could not resolve a full deployment SHA' >&2; exit 1; }
+
+          source_dir="$RUNNER_TEMP/agent-attack-lab-source"
+          archive_path="$RUNNER_TEMP/agent-attack-lab-source.tar.gz"
+          rm -rf "$source_dir" "$archive_path"
+          mkdir -p "$source_dir"
+          curl --fail --silent --show-error --location --retry 3 --connect-timeout 10 --max-time 120 \
+            "https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${deploy_sha}" \
+            --output "$archive_path"
+          tar -xzf "$archive_path" --strip-components=1 --directory "$source_dir"
+          [[ -f "$source_dir/backend/scripts/deploy-production.sh" ]] || { echo 'Downloaded source is missing deploy script' >&2; exit 1; }
+
+          printf 'DEPLOY_REF=%s\n' "$requested_ref" >> "$GITHUB_ENV"
+          printf 'DEPLOY_SHA=%s\n' "$deploy_sha" >> "$GITHUB_ENV"
+          printf 'DEPLOY_SOURCE_DIR=%s\n' "$source_dir" >> "$GITHUB_ENV"
 
       - name: 固定部署提交
         shell: bash
-        run: echo "DEPLOY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        run: printf 'Using deployment SHA: %s\n' "$DEPLOY_SHA"
 
       - name: 部署、迁移并验收
         shell: bash
         env:
           DEPLOY_REPO_DIR: /opt/agent-attack-lab
-          DEPLOY_REF: ${{ inputs.deploy_ref || github.ref_name }}
           PUBLIC_HEALTH_URL: https://api.yuanyiagentzhandui.cn/health
-        run: bash backend/scripts/deploy-production.sh
+        run: bash "$DEPLOY_SOURCE_DIR/backend/scripts/deploy-production.sh"

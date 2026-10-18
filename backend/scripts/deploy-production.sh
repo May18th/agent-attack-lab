@@ -5,6 +5,7 @@ repo_dir=${DEPLOY_REPO_DIR:-/opt/agent-attack-lab}
 release_root=${DEPLOY_RELEASE_ROOT:-/home/deployer/agent-attack-lab-releases}
 deploy_ref=${DEPLOY_REF:-main}
 deploy_sha=${DEPLOY_SHA:?DEPLOY_SHA must be set}
+source_dir=${DEPLOY_SOURCE_DIR:-}
 public_health_url=${PUBLIC_HEALTH_URL:-https://api.yuanyiagentzhandui.cn/health}
 runtime_backend="$repo_dir/backend"
 release_dir="$release_root/$deploy_sha"
@@ -22,30 +23,48 @@ fail() {
 }
 
 [[ "$repo_dir" == "/opt/agent-attack-lab" ]] || fail "refusing unexpected repository path: $repo_dir"
-[[ -d "$repo_dir/.git" ]] || fail "production checkout not found: $repo_dir"
-command -v git >/dev/null 2>&1 || fail "git is not installed"
 command -v curl >/dev/null 2>&1 || fail "curl is not installed"
+if [[ -n "$source_dir" ]]; then
+  [[ -d "$source_dir/backend" ]] || fail "deployment source directory is invalid: $source_dir"
+  [[ "$deploy_sha" =~ ^[0-9a-f]{40}$ ]] || fail "archive deployment requires a full commit SHA"
+else
+  [[ -d "$repo_dir/.git" ]] || fail "production checkout not found: $repo_dir"
+  command -v git >/dev/null 2>&1 || fail "git is not installed"
+fi
 python_bin="$runtime_backend/.venv/bin/python"
 [[ -x "$python_bin" ]] || fail "production Python virtualenv not found: $python_bin"
 
-cd "$repo_dir"
+target_sha="$deploy_sha"
+if [[ -z "$source_dir" ]]; then
+  cd "$repo_dir"
 
-status=$(git status --porcelain --untracked-files=all)
-if [[ -n "$status" ]]; then
-  printf 'INFO: preserving local production checkout changes:\n%s\n' "$status" >&2
+  status=$(git status --porcelain --untracked-files=all)
+  if [[ -n "$status" ]]; then
+    printf 'INFO: preserving local production checkout changes:\n%s\n' "$status" >&2
+  fi
+
+  git fetch --no-tags origin "$deploy_ref"
+  target_sha=$(git rev-parse "origin/$deploy_ref")
+  [[ "$target_sha" == "$deploy_sha" ]] || fail "target ref moved: expected $deploy_sha, got $target_sha"
 fi
-
-git fetch --no-tags origin "$deploy_ref"
-target_sha=$(git rev-parse "origin/$deploy_ref")
-[[ "$target_sha" == "$deploy_sha" ]] || fail "target ref moved: expected $deploy_sha, got $target_sha"
 
 mkdir -p "$release_root"
 if [[ -e "$release_dir" ]]; then
   [[ -d "$release_dir" ]] || fail "release path is not a directory: $release_dir"
-  release_current_sha=$(git -C "$release_dir" rev-parse HEAD 2>/dev/null || true)
-  [[ "$release_current_sha" == "$target_sha" ]] || fail "existing release has an unexpected commit: $release_dir"
+  if [[ -n "$source_dir" && -f "$release_dir/.deploy-sha" ]]; then
+    release_current_sha=$(<"$release_dir/.deploy-sha")
+  else
+    release_current_sha=$(git -C "$release_dir" rev-parse HEAD 2>/dev/null || true)
+  fi
+  [[ "$release_current_sha" == "$target_sha" ]] || fail "source release has an unexpected commit: $release_dir"
 else
-  git -C "$repo_dir" worktree add --detach "$release_dir" "$target_sha"
+  if [[ -n "$source_dir" ]]; then
+    mkdir -p "$release_dir"
+    cp -a "$source_dir"/. "$release_dir"/
+    printf '%s\n' "$target_sha" > "$release_dir/.deploy-sha"
+  else
+    git -C "$repo_dir" worktree add --detach "$release_dir" "$target_sha"
+  fi
 fi
 
 link_runtime_entry() {
