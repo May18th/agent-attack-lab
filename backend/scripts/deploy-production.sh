@@ -86,7 +86,9 @@ load_agent_env
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
 
-user_unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+unit_fragment_path=$(systemctl --user show "${services[0]}" -p FragmentPath --value)
+[[ -n "$unit_fragment_path" ]] || fail "could not locate ${services[0]} unit"
+user_unit_dir=$(dirname "$unit_fragment_path")
 snapshot_dir=$(mktemp -d)
 dropins_changed=0
 
