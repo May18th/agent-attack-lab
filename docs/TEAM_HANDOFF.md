@@ -932,3 +932,9 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - 空白 topic 返回 HTTP 422；low、mid、high 均创建 HTTP 201，最终状态为 `completed`，事件数分别为 10、13、16。
 - 三场删除均返回 HTTP 204；随后战局详情和事件查询均返回 HTTP 404；临时隔离库最终剩余 0 条记录。
 - 该结果只证明本地隔离业务契约和清理路径，不替代公网生产写验收或真实浏览器交互验收。
+
+### BattleStore 资源释放与合并后部署（2026-10-18）
+
+- PR #33 已合并，合并提交 `978c6c08da1b6c52935bd68999a674ba245b6e6a`。本地修改使 `BattleStore.close()` 显式释放 SQLite 连接，并对 PostgreSQL 连接池、MySQL 引擎保持幂等关闭；生命周期恢复测试改用临时 store，避免关闭全局测试 store 后污染后续测试。
+- GitHub Actions 项目检查和生产部署均成功；后端全量测试为 `127 passed, 5 skipped, 1 warning`。生产部署 Workflow `39133908690`、Job `117694445345` 使用固定提交 codeload 发布，未上传证书、私钥、Token、数据库或 Redis 数据。
+- 部署脚本最终输出 `DEPLOY OK`。过程中出现一次本机 `127.0.0.1:8787` 短暂连接失败，脚本重试后完成；公网只读复验 `/health`、`/openapi.json`、`/auth/session` 均 HTTP 200，未执行生产业务写请求。

@@ -4,13 +4,13 @@
 
 本文只记录当前状态；历史执行证据见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) 与 Git 历史。
 
-## 最新状态（2026-10-18 21:31 +08:00）
+## 最新状态（2026-10-18 22:00 +08:00）
 
-- 生产部署已通过 GitHub Actions Workflow `39130920889`，Job `117685723339`，部署提交为 `8fb4a056599b52d33a3c1f6d97ef4ba5e4dcf46b`；`origin/main` 与该提交一致。VPS 使用固定提交 codeload 发布路径，未上传证书、私钥、Token、数据库或 Redis 数据。
+- 生产部署已通过 GitHub Actions Workflow `39133908690`，Job `117694445345`，部署提交为 `978c6c08da1b6c52935bd68999a674ba245b6e6a`；`origin/main` 与该提交一致。VPS 使用固定提交 codeload 发布路径，未上传证书、私钥、Token、数据库或 Redis 数据。
 - 部署脚本的服务 active、release 工作目录、release `PYTHONPATH`、本地健康接口和公网健康接口检查均通过。公网只读复验 `/health`、`/openapi.json`、`/auth/session` 均为 HTTP 200；无密钥 `/metrics` 为 401，`/rpc` GET 为 405，CORS 预检为 200，公开前端来源为 `https://yuanyiagentzhandui.cn` 并允许凭据。
 - Partner mTLS 只读复验（2026-10-18 21:29 左右）：attack、defense `/health` 均 HTTP 200；真实未加载客户端证书的 `/rpc` 均 HTTP 403。加载 Leader clientAuth 证书和梧桐 trust bundle 后，两个 Partner 的 AIP Start 均返回 `awaiting-completion`，Complete 均返回 `completed`，结果结构分别包含攻击 `samples` 和防守 `caught/risks/fixed`。本轮未创建生产战局。
 - Discovery 只读复验（2026-10-18 21:30-21:31）：Leader、attack、defense 三个当前 AIC 均返回 `active=true`，endpoint 分别为 `https://api.yuanyiagentzhandui.cn/rpc`、`https://attack.yuanyiagentzhandui.cn/rpc`、`https://defense.yuanyiagentzhandui.cn/rpc`，传输均为 JSONRPC，安全方案均为 mTLS。Discovery 查询偶发读超时，重试后按技能查询均得到对应记录；该偶发超时不作为当前服务不可用结论。
-- 当前不接入外部 LLM/API；攻击、防守仍使用规则兜底。后端全量测试（`backend` 目录）刚刚执行为 `126 passed, 5 skipped, 1 warning`，警告为既有 Starlette/httpx 弃用提示。
+- 当前不接入外部 LLM/API；攻击、防守仍使用规则兜底。后端全量测试（`backend` 目录）刚刚执行为 `127 passed, 5 skipped, 1 warning`，警告为既有 Starlette/httpx 弃用提示。
 - 本地隔离业务验收已完成：空白 topic=422；low/mid/high 均创建=201、最终状态 `completed`，事件数分别为 10/13/16；删除均=204，删除后战局详情及事件查询均=404，临时隔离库剩余 0 条。未访问生产写接口。
 
 ## 本地状态（2026-10-15，历史）
