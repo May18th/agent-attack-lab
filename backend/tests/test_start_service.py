@@ -9,12 +9,21 @@ import pytest
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "start-service.sh"
+DEPLOY_SCRIPT = Path(__file__).parents[1] / "scripts" / "deploy-production.sh"
 
 
 def test_start_service_adds_release_src_to_pythonpath() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
 
     assert 'export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"' in source
+
+
+def test_deploy_script_verifies_running_release_context() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'systemctl --user show "$service" -p MainPID --value' in source
+    assert 'readlink -f "/proc/$pid/cwd"' in source
+    assert 'expected_pythonpath="$release_backend/src"' in source
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")

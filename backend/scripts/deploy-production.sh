@@ -149,6 +149,22 @@ for service in "${services[@]}"; do
   systemctl --user is-active --quiet "$service" || fail "$service is not active after restart"
 done
 
+verify_runtime_context() {
+  local service=$1
+  local pid actual_cwd pythonpath expected_pythonpath
+  pid=$(systemctl --user show "$service" -p MainPID --value)
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || fail "$service has no running MainPID"
+  actual_cwd=$(readlink -f "/proc/$pid/cwd")
+  [[ "$actual_cwd" == "$release_backend" ]] || fail "$service has unexpected WorkingDirectory: $actual_cwd"
+  pythonpath=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^PYTHONPATH=//p')
+  expected_pythonpath="$release_backend/src"
+  [[ "$pythonpath" == "$expected_pythonpath"* ]] || fail "$service does not prioritize release PYTHONPATH"
+}
+
+for service in "${services[@]}"; do
+  verify_runtime_context "$service"
+done
+
 wait_for_health() {
   local endpoint=$1
   local attempt
