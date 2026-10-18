@@ -45,14 +45,13 @@ Runner 部署后端。`main` 的后端变更会触发部署，也可以在 GitHu
 已审核分支执行。部署脚本 `backend/scripts/deploy-production.sh` 会：
 
 1. 校验 Runner 用户、生产路径 `/opt/agent-attack-lab` 和目标提交；
-2. 拒绝覆盖生产工作树中的未提交修改；
-3. 执行 `uv sync --locked` 和 `uv run alembic upgrade head`；
-4. 重启 API、攻击、防守三个用户级 systemd 服务；
-5. 检查三个本地健康接口和公网 API 健康接口。
+2. 在 `/home/deployer/agent-attack-lab-releases/<commit>` 创建隔离 Git worktree，原生产工作树保持不动；
+3. 复用生产 `.env`、`.data`、`.venv` 和证书/平台材料目录，执行 Alembic 迁移；
+4. 用用户级 systemd drop-in 将 API、攻击、防守切换到新 release；
+5. 检查三个本地健康接口和公网 API 健康接口，失败时恢复旧 drop-in 和服务。
 
 脚本不会读取或上传 `.env`、数据库、证书、私钥、Token 或 Redis 数据。生产目录存在
-未提交修改时，Workflow 会失败并保留现场，需先人工检查、备份并清理后再重试；禁止用
-`git reset --hard` 绕过该保护。
+未提交修改时只记录并保留现场，不执行 `git reset --hard` 或覆盖原工作树。
 
 ## MySQL / PostgreSQL
 
