@@ -33,3 +33,17 @@
 - 构建成功，但 Vite 提示 Admin3DWorkspace 代码块压缩后约 565 KB，超过 500 KB 提示阈值；本任务没有调整 Task 2 的分块策略。
 - Vitest 的 jsdom 环境输出 `HTMLCanvasElement.getContext()` 未实现提示；现有 3D 场景在测试中回退为 WebGL 不可用占位状态，相关测试仍通过。
 - 页面展示的数据直接使用现有后端响应；敏感字段脱敏依赖现有后端返回内容，本任务未另行变换字段。
+
+## Review 修复（2026-10-19）
+
+- 修复提交：`d50d67a` (`fix: render selectable 3d battle timeline`)
+- 根因：初版时间线只渲染 HTML 列表，没有实际 Three.js 轨迹；所选事件的组件状态也没有随战局 ID 切换清空。
+- 新增 `buildBattleTimelineSceneModel`：按 sequence 排序事件节点，并以相邻事件边组成轨迹。该模型只接收当前 battle 和其 events，不包含 external-case 节点或案例连线。
+- `BattleTimeline3D` 复用 `ThreeScene` 的 InstancedMesh 与 Raycaster；点击 3D 事件节点会将源事件交给 `onSelectEvent`。有序 HTML 事件列表仍保留为键盘可操作的文本 companion/fallback。
+- renderer 通过动态导入加载，避免将 Three.js 静态并入首屏主包；切换战局时以 battle ID keyed 子组件重建，清空旧事件选择。
+- RED 证据：新增用例在实现前因 battle 切换后 `aria-pressed` 仍为 `true`、且事件 3D 模型构建器缺失而失败。
+- GREEN 验证：`BattleTimeline3D.test.tsx`、`AdminApp.test.tsx`、`sceneModel.test.ts`、`ThreeScene.test.ts`、`Admin3DWorkspace.test.tsx` 共 5 个文件、30 项通过。
+- 全量 `npm test`：8 个 Vitest 文件 66 项通过，build-environment Node 测试 4 项通过。
+- `npm run lint`、`npx tsc -b`：通过。
+- `npm run build`：通过；主 bundle 约 260 KB，Three.js renderer 留在约 557 KB 的动态 chunk，仍有 Vite 的 500 KB chunk 提示。
+- jsdom 继续输出不支持 `HTMLCanvasElement.getContext()` 的提示；Three.js 事件节点真实拾取由 rendererFactory 测试验证，组件在无 WebGL 环境仍提供可操作的 HTML companion。
