@@ -33,10 +33,7 @@ jobs:
           runner_user=$(id -un)
           printf 'runner_user=%s\n' "$runner_user"
           [[ "$runner_user" == deployer ]] || { echo 'Runner must run as deployer' >&2; exit 1; }
-          if ! command -v uv >/dev/null 2>&1 && [[ -x /home/deployer/.local/bin/uv ]]; then
-            export PATH="/home/deployer/.local/bin:$PATH"
-          fi
-          for command_name in git uv systemctl curl; do
+          for command_name in git systemctl curl; do
             command_path=$(command -v "$command_name" || true)
             [[ -n "$command_path" ]] || { echo "Missing command: $command_name" >&2; exit 1; }
             printf '%s=%s\n' "$command_name" "$command_path"
