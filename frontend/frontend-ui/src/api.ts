@@ -182,6 +182,26 @@ export async function apiPage<T>(path: string): Promise<{ items: T[]; total: num
   return { items, total: Number.isFinite(headerTotal) && headerTotal >= 0 ? headerTotal : items.length }
 }
 
+export async function apiCursorPage<T>(path: string): Promise<{
+  items: T[]
+  total: number
+  hasMore: boolean
+  nextSequence?: number
+}> {
+  const response = await request(path)
+  const items = await responseJson<T[]>(response)
+  const totalHeader = response.headers.get('X-Total-Count')
+  const nextHeader = response.headers.get('X-Next-Sequence')
+  const totalValue = totalHeader === null ? Number.NaN : Number(totalHeader)
+  const nextValue = nextHeader === null ? Number.NaN : Number(nextHeader)
+  return {
+    items,
+    total: Number.isFinite(totalValue) && totalValue >= 0 ? totalValue : items.length,
+    hasMore: response.headers.get('X-Has-More') === 'true',
+    nextSequence: Number.isFinite(nextValue) ? nextValue : undefined,
+  }
+}
+
 export async function getBrowserSession(): Promise<BrowserSession> {
   return api<BrowserSession>('/auth/session')
 }

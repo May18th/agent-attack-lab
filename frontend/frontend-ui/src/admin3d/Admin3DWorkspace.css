@@ -1,0 +1,167 @@
+.admin3d-workspace {
+  margin: 16px 0 22px;
+  padding: 18px;
+  color: #e8edf1;
+  background: #11191e;
+  border: 1px solid #34444a;
+  border-radius: 6px;
+}
+
+.admin3d-heading,
+.admin3d-heading-controls,
+.admin3d-transport,
+.admin3d-statusline,
+.admin3d-event-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin3d-heading { margin-bottom: 14px; }
+.admin3d-heading h2 { margin: 4px 0 0; font-size: 20px; }
+.admin3d-kicker { color: #8fc6ad; font-size: 12px; }
+.admin3d-heading-controls { justify-content: flex-end; }
+.admin3d-battle-select,
+.admin3d-speed { display: flex; align-items: center; gap: 8px; color: #aebdc2; font-size: 12px; }
+.admin3d-battle-select select,
+.admin3d-speed select,
+.admin3d-heading-controls button,
+.admin3d-transport button {
+  min-height: 38px;
+  padding: 0 12px;
+  color: #e6eeed;
+  background: #18242a;
+  border: 1px solid #3c5158;
+  border-radius: 4px;
+  font: inherit;
+}
+.admin3d-battle-select select { min-width: min(280px, 40vw); }
+.admin3d-heading-controls button,
+.admin3d-transport button { cursor: pointer; }
+.admin3d-heading-controls button:hover,
+.admin3d-transport button:hover:not(:disabled) { border-color: #75b79c; background: #1b2c30; }
+.admin3d-heading-controls button:focus-visible,
+.admin3d-transport button:focus-visible,
+.admin3d-battle-select select:focus-visible,
+.admin3d-speed select:focus-visible,
+.admin3d-progress input:focus-visible { outline: 2px solid #8fc6ad; outline-offset: 2px; }
+.admin3d-transport button:disabled { cursor: not-allowed; opacity: .5; }
+.admin3d-load-more { margin: 0 0 8px; padding: 7px 10px; color: #c9d9d4; background: #172422; border: 1px solid #426257; border-radius: 3px; cursor: pointer; }
+.admin3d-load-more:hover { border-color: #83b79f; }
+.admin3d-transport .admin3d-play { min-width: 112px; color: #081710; background: #8fc6ad; border-color: #8fc6ad; font-weight: 650; }
+
+.admin3d-replay-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(240px, .8fr);
+  gap: 12px;
+}
+.admin3d-scene-column { min-width: 0; }
+.admin3d-scene-frame {
+  position: relative;
+  height: clamp(320px, 45vh, 460px);
+  min-height: 300px;
+  overflow: hidden;
+  background: #0c1318;
+  border: 1px solid #2c3c43;
+  border-radius: 5px;
+}
+.admin3d-scene { position: absolute; inset: 0; }
+.admin3d-scene canvas { display: block; width: 100%; height: 100%; }
+.admin3d-label-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.admin3d-node-label { display: block; max-width: 190px; overflow: hidden; padding: 3px 7px; color: #e5eceb; background: rgb(10 17 21 / 88%); border: 1px solid var(--node-color, #52666b); border-radius: 3px; box-shadow: 0 2px 8px rgb(0 0 0 / 28%); font-size: 11px; line-height: 1.2; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.admin3d-node-label--attacker { --node-color: #63b4ff; }
+.admin3d-node-label--defender { --node-color: #57e8c7; }
+.admin3d-node-label--scheduler { --node-color: #b6a3d8; }
+.admin3d-node-label--attack-jump,
+.admin3d-node-label--defender-asset { max-width: 120px; padding: 2px 5px; font-size: 9px; }
+.admin3d-node-label--attack-jump { --node-color: #63b4ff; }
+.admin3d-node-label--defender-asset { --node-color: #57e8c7; }
+.admin3d-node-label--event { max-width: 240px; color: #fff2c3; border-color: #f2d477; }
+.admin3d-node-label--selected-device { display: grid; gap: 2px; max-width: 240px; text-align: left; white-space: normal; }
+.admin3d-node-label--selected-device span { color: #b8c9cd; font-weight: 400; }
+.admin3d-node-status { display: block; width: 9px; height: 9px; padding: 0; color: #cce7dc; background: transparent; border: 0; line-height: 0; }
+.admin3d-status-icon { display: block; width: 9px; height: 9px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+.admin3d-node-status.is-probing { color: #00dfdc; }
+.admin3d-node-status.is-attacked { color: #ff9b56; }
+.admin3d-node-status.is-compromised { color: #ff4e64; }
+.admin3d-node-status.is-controlled { color: #63b4ff; }
+.admin3d-event-cue { padding: 5px 9px; color: #effaff; background: rgb(3 16 26 / 91%); border: 1px solid var(--cue-color, #9bdcff); border-radius: 3px; box-shadow: 0 0 14px color-mix(in srgb, var(--cue-color, #9bdcff) 32%, transparent); font-size: 12px; font-weight: 650; line-height: 1.25; white-space: nowrap; transition: opacity 100ms linear; }
+.admin3d-event-cue[data-paused="true"] { opacity: 1 !important; }
+.admin3d-scene-error,
+.admin3d-empty-state { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; gap: 10px; padding: 24px; color: #d2dddf; text-align: center; }
+.admin3d-empty-state small { color: #9aabb0; }
+.admin3d-empty-mark { display: grid; width: 44px; aspect-ratio: 1; place-items: center; color: #8fc6ad; border: 1px solid #55766d; border-radius: 50%; font: 600 13px/1 ui-monospace, monospace; }
+.admin3d-legend { position: absolute; bottom: 10px; left: 10px; display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 10px; background: rgb(9 15 19 / 88%); border: 1px solid #34444a; border-radius: 4px; color: #c7d2d5; font-size: 11px; }
+.admin3d-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.admin3d-legend i { width: 8px; height: 8px; border-radius: 50%; background: #929fa6; }
+.admin3d-legend .is-running { background: #39b9ad; }
+.admin3d-legend .is-completed { background: #62b878; }
+.admin3d-legend .is-failed { background: #e66d59; }
+.admin3d-legend .is-active { background: #f2d477; box-shadow: 0 0 0 3px rgb(242 212 119 / 18%); }
+.admin3d-legend .is-attacker { background: #63b4ff; }
+.admin3d-legend .is-defender { background: #57e8c7; }
+.admin3d-legend .is-jump { background: #63b4ff; }
+.admin3d-legend .is-asset { background: #57e8c7; }
+.admin3d-legend .is-interaction { width: 18px; height: 3px; border-radius: 2px; background: #f2d477; }
+.admin3d-legend .legend-status svg { width: 14px; height: 14px; fill: none; stroke: #9bdcff; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+
+.admin3d-transport { justify-content: flex-start; min-height: 60px; padding: 8px 2px 0; }
+.admin3d-progress { position: relative; display: flex; flex: 1; align-items: stretch; flex-direction: column; justify-content: center; min-width: 80px; min-height: 42px; padding-bottom: 12px; }
+.admin3d-progress input { width: 100%; min-height: 20px; accent-color: #8fc6ad; cursor: pointer; }
+.admin3d-progress input:disabled { cursor: not-allowed; }
+.admin3d-progress-markers { position: absolute; inset: 0 7px; pointer-events: none; }
+.admin3d-progress-markers i { position: absolute; top: 7px; width: 2px; height: 8px; background: var(--marker-color); box-shadow: 0 0 5px color-mix(in srgb, var(--marker-color) 65%, transparent); }
+.admin3d-progress-marker-label { position: absolute; top: 19px; left: 50%; color: #aeb9bd; font-size: 9px; font-style: normal; line-height: 12px; white-space: nowrap; transform: translateX(-50%); }
+.admin3d-progress-count { min-width: 48px; color: #b3c0c3; font: 12px/1.3 ui-monospace, monospace; text-align: right; font-variant-numeric: tabular-nums; }
+
+.admin3d-event-panel { display: flex; min-width: 0; flex-direction: column; padding: 14px; background: #151f24; border-left: 2px solid #608976; }
+.admin3d-event-heading { justify-content: flex-start; color: #9daeb3; font-size: 12px; }
+.admin3d-event-heading strong { margin-left: auto; color: #b7c4c7; font-size: 11px; font-weight: 500; }
+.admin3d-event-heading .status-running { color: #55c6ba; }
+.admin3d-event-heading .status-completed { color: #7dc990; }
+.admin3d-event-heading .status-failed { color: #ef806d; }
+.admin3d-event-flow { display: flex; align-items: center; gap: 8px; margin: 14px 0 2px; padding: 9px 10px; border-left: 2px solid #84949a; background: #10191e; }
+.admin3d-event-flow span { flex: none; color: #aebdc2; font-size: 11px; }
+.admin3d-event-flow strong { min-width: 0; color: #e4ecec; font-size: 12px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.admin3d-event-flow.actor-attacker { border-left-color: #ed8b42; }
+.admin3d-event-flow.actor-attacker strong { color: #f2b37e; }
+.admin3d-event-flow.actor-defender { border-left-color: #55a7d1; }
+.admin3d-event-flow.actor-defender strong { color: #8bc6e1; }
+.admin3d-event-flow.actor-system { border-left-color: #b6a3d8; }
+.admin3d-event-flow.actor-unknown { border-left-color: #84949a; }
+.admin3d-battle-meta { margin: 14px 0 8px; color: #e0e8e8; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.admin3d-battle-meta small { color: #90a1a6; font: 11px/1.5 ui-monospace, monospace; }
+.admin3d-event-panel h3 { margin: 12px 0 5px; font-size: 17px; line-height: 1.35; overflow-wrap: anywhere; }
+.admin3d-event-meta { margin: 0 0 12px; color: #98a9ae; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.admin3d-round-marker { margin: -4px 0 10px; color: #87d9bd; font-size: 12px; font-weight: 600; }
+.admin3d-event-summary { margin: 0 0 12px; padding: 9px 10px; border-left: 2px solid #57e8c7; background: #10221f; color: #c4e8dc; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.admin3d-event-panel pre { max-height: 220px; margin: 0; overflow: auto; color: #c5d0d2; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 ui-monospace, Consolas, monospace; }
+.admin3d-muted { margin: 14px 0 0; color: #9aabb0; font-size: 13px; line-height: 1.5; }
+.admin3d-statusline { justify-content: flex-start; flex-wrap: wrap; min-height: 30px; padding: 8px 2px 0; color: #9fadb2; font-size: 12px; }
+.admin3d-statusline > span + span { margin-left: auto; }
+.admin3d-statusline .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #7e8e94; }
+.admin3d-statusline .status-dot.status-pending { background: #929fa6; }
+.admin3d-statusline .status-dot.status-running { background: #39b9ad; }
+.admin3d-statusline .status-dot.status-completed { background: #62b878; }
+.admin3d-statusline .status-dot.status-failed { background: #e66d59; }
+
+@media (max-width: 900px) {
+  .admin3d-replay-layout { grid-template-columns: minmax(0, 1fr) minmax(210px, .72fr); }
+  .admin3d-scene-frame { height: 360px; }
+}
+
+@media (max-width: 640px) {
+  .admin3d-workspace { padding: 12px; }
+  .admin3d-heading { align-items: flex-start; flex-direction: column; }
+  .admin3d-heading-controls { width: 100%; justify-content: space-between; }
+  .admin3d-battle-select { flex: 1; min-width: 0; }
+  .admin3d-battle-select select { flex: 1; min-width: 0; }
+  .admin3d-replay-layout { grid-template-columns: minmax(0, 1fr); }
+  .admin3d-scene-frame { height: 330px; min-height: 280px; }
+  .admin3d-event-panel { min-height: 160px; }
+  .admin3d-event-panel pre { max-height: 160px; }
+  .admin3d-transport { flex-wrap: wrap; }
+  .admin3d-progress { order: 3; flex-basis: 100%; }
+  .admin3d-statusline > span + span { margin-left: 0; }
+}
