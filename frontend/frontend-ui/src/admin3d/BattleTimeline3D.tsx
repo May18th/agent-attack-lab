@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AdminBattle, AdminBattleEvent } from '../adminApi'
 import type { ThreeScene } from './ThreeScene'
 import { buildBattleTimelineSceneModel } from './sceneModel'
+import { loadTimelineSceneRenderer } from './timelineSceneLoader'
 import './BattleTimeline3D.css'
 
 type BattleTimeline3DProps = {
@@ -23,8 +24,8 @@ function BattleTimeline3DView({ battle, events, audit, onSelectEvent }: BattleTi
   const [selectedEvent, setSelectedEvent] = useState<AdminBattleEvent | null>(null)
   const sceneContainerRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<ThreeScene | null>(null)
-  const initialModelRef = useRef(buildBattleTimelineSceneModel(battle, events))
   const sceneModel = useMemo(() => buildBattleTimelineSceneModel(battle, events), [battle, events])
+  const sceneModelRef = useRef(sceneModel)
   const orderedEvents = useMemo(() => events
     .map((event, index) => ({ event, index }))
     .sort((left, right) => (left.event.sequence ?? Number.MAX_SAFE_INTEGER) - (right.event.sequence ?? Number.MAX_SAFE_INTEGER) || left.index - right.index)
@@ -43,12 +44,12 @@ function BattleTimeline3DView({ battle, events, audit, onSelectEvent }: BattleTi
       fallback.textContent = error instanceof Error ? error.message : '3D 事件轨迹暂不可用'
       container.appendChild(fallback)
     }
-    void import('./ThreeScene').then(({ ThreeScene: SceneRenderer }) => {
+    void loadTimelineSceneRenderer().then(({ ThreeScene: SceneRenderer }) => {
       if (disposed) return
       scene = new SceneRenderer()
       sceneRef.current = scene
       try {
-        scene.mount(container, initialModelRef.current, {
+        scene.mount(container, sceneModelRef.current, {
           onSelectNode: (node) => {
             if (node.kind !== 'timeline-event' || !node.source || typeof node.source !== 'object') return
             const event = node.source as AdminBattleEvent
@@ -61,7 +62,10 @@ function BattleTimeline3DView({ battle, events, audit, onSelectEvent }: BattleTi
     return () => { disposed = true; scene?.dispose(); sceneRef.current = null }
   }, [onSelectEvent])
 
-  useEffect(() => { sceneRef.current?.update(sceneModel) }, [sceneModel])
+  useEffect(() => {
+    sceneModelRef.current = sceneModel
+    sceneRef.current?.update(sceneModel)
+  }, [sceneModel])
 
   const selectEvent = (event: AdminBattleEvent) => { setSelectedEvent(event); onSelectEvent(event) }
 

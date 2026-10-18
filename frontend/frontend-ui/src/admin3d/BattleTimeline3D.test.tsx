@@ -1,8 +1,11 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AdminBattle, AdminBattleEvent } from '../adminApi'
 import { BattleTimeline3D } from './BattleTimeline3D'
 import { buildBattleTimelineSceneModel } from './sceneModel'
+import { loadTimelineSceneRenderer } from './timelineSceneLoader'
+
+vi.mock('./timelineSceneLoader', () => ({ loadTimelineSceneRenderer: vi.fn(() => import('./ThreeScene')) }))
 
 const battle: AdminBattle = {
   id: 'battle-1',
@@ -79,5 +82,25 @@ describe('BattleTimeline3D', () => {
     expect(model.edges[0]).toMatchObject({ from: 'event:battle-1:1:0', to: 'event:battle-1:2:1' })
     expect(model.nodes.every((node) => node.position.some((coordinate) => coordinate !== 0))).toBe(true)
     expect(model.nodes.some((node) => node.kind === 'external-case')).toBe(false)
+  })
+
+  it('mounts the renderer with the latest model when its dynamic import resolves late', async () => {
+    let resolveRenderer!: (module: Awaited<ReturnType<typeof loadTimelineSceneRenderer>>) => void
+    const delayedImport = new Promise<Awaited<ReturnType<typeof loadTimelineSceneRenderer>>>((resolve) => { resolveRenderer = resolve })
+    vi.mocked(loadTimelineSceneRenderer).mockReturnValueOnce(delayedImport)
+    const onSelectEvent = vi.fn()
+    const initial = render(<BattleTimeline3D battle={battle} events={[]} audit={{}} onSelectEvent={onSelectEvent} />)
+    await vi.waitFor(() => expect(loadTimelineSceneRenderer).toHaveBeenCalledOnce())
+    const events: AdminBattleEvent[] = [{ sequence: 9, type: '导入期间到达' }]
+    initial.rerender(<BattleTimeline3D battle={battle} events={events} audit={{}} onSelectEvent={onSelectEvent} />)
+    const rendererModule = await import('./ThreeScene')
+    const mountSpy = vi.spyOn(rendererModule.ThreeScene.prototype, 'mount')
+
+    await act(async () => { resolveRenderer(rendererModule) })
+    await vi.waitFor(() => expect(mountSpy).toHaveBeenCalledOnce())
+
+    const mountedModel = mountSpy.mock.calls[0][1]
+    expect(mountedModel.nodes.map((node) => (node.source as AdminBattleEvent).sequence)).toEqual([9])
+    mountSpy.mockRestore()
   })
 })
