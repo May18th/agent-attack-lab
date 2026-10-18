@@ -1,0 +1,55 @@
+name: 生产后端部署
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+    inputs:
+      deploy_ref:
+        description: "要部署的已审核分支或提交所在分支"
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: 部署生产后端
+    runs-on: [self-hosted, linux, x64, production]
+    timeout-minutes: 30
+    steps:
+      - name: 检查部署 Runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -un)" = deployer
+          command -v git >/dev/null
+          command -v uv >/dev/null
+          command -v systemctl >/dev/null
+          command -v curl >/dev/null
+
+      - name: Checkout 部署提交
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy_ref || github.ref_name }}
+          fetch-depth: 1
+
+      - name: 固定部署提交
+        shell: bash
+        run: echo "DEPLOY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: 部署、迁移并验收
+        shell: bash
+        env:
+          DEPLOY_REPO_DIR: /opt/agent-attack-lab
+          DEPLOY_REF: ${{ inputs.deploy_ref || github.ref_name }}
+          PUBLIC_HEALTH_URL: https://api.yuanyiagentzhandui.cn/health
+        run: bash backend/scripts/deploy-production.sh
