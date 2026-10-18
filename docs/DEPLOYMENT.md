@@ -38,6 +38,22 @@ backend/scripts/verify-vps-runtime.sh
 接口及公网 API。脚本不会读取或输出 `.env`、API Key、浏览器密码、Tunnel Token、证书或
 私钥。VPS 重启后应再次执行；只有重启后的检查也全部通过，才能确认无人登录时可自动恢复。
 
+### GitHub Actions 生产部署
+
+仓库的 `.github/workflows/deploy-backend.yml` 使用 VPS 上的 `production` self-hosted
+Runner 部署后端。`main` 的后端变更会触发部署，也可以在 GitHub Actions 页面手动选择
+已审核分支执行。部署脚本 `backend/scripts/deploy-production.sh` 会：
+
+1. 校验 Runner 用户、生产路径 `/opt/agent-attack-lab` 和目标提交；
+2. 拒绝覆盖生产工作树中的未提交修改；
+3. 执行 `uv sync --locked` 和 `uv run alembic upgrade head`；
+4. 重启 API、攻击、防守三个用户级 systemd 服务；
+5. 检查三个本地健康接口和公网 API 健康接口。
+
+脚本不会读取或上传 `.env`、数据库、证书、私钥、Token 或 Redis 数据。生产目录存在
+未提交修改时，Workflow 会失败并保留现场，需先人工检查、备份并清理后再重试；禁止用
+`git reset --hard` 绕过该保护。
+
 ## MySQL / PostgreSQL
 
 SQLite 是默认开发数据库。生产环境设置 PostgreSQL 连接串：
