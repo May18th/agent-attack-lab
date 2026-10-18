@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict, deque
 import asyncio
+import sqlite3
 import time
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.storage import BattleStore
@@ -459,6 +460,20 @@ def test_battle_store_persists_records(tmp_path) -> None:
     second_store = BattleStore(str(database))
     assert second_store.get("battle-persisted") == record
     assert first_store._connection.execute("SELECT version FROM schema_migrations").fetchone()[0] == 1
+
+
+def test_battle_store_close_releases_sqlite_connection(tmp_path) -> None:
+    store = BattleStore(str(tmp_path / "battle-close.sqlite3"))
+
+    store.close()
+    store.close()
+
+    try:
+        store._connection.execute("SELECT 1")
+    except sqlite3.ProgrammingError:
+        pass
+    else:
+        raise AssertionError("BattleStore.close() must release the SQLite connection")
 
 
 def test_battle_store_persists_and_clears_score_snapshots(tmp_path) -> None:
@@ -948,9 +963,11 @@ def test_follow_sse_stream_emits_complete_event_history() -> None:
     assert "battle.completed" in stream.text
 
 
-def test_lifespan_resumes_interrupted_battle() -> None:
+def test_lifespan_resumes_interrupted_battle(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "battle-recovery.sqlite3"))
+    monkeypatch.setattr(service, "_battle_store", store)
     battle_id = "battle-recovery-test"
-    service._battle_store.save({
+    store.save({
         "id": battle_id,
         "difficulty": "low",
         "topic": "恢复测试",
@@ -967,10 +984,9 @@ def test_lifespan_resumes_interrupted_battle() -> None:
                 if record and record["status"] == "completed":
                     return
                 await asyncio.sleep(0.1)
-        raise AssertionError("interrupted battle was not resumed")
+            raise AssertionError("interrupted battle was not resumed")
 
     asyncio.run(recover())
-    assert service._battle_store.get(battle_id)["status"] == "completed"
 
 
 def test_lifespan_resumes_all_interrupted_battles_beyond_first_page(monkeypatch) -> None:
