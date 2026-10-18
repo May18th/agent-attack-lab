@@ -71,7 +71,8 @@ jobs:
 
       - name: 固定部署提交
         shell: bash
-        run: printf 'Using deployment SHA: %s\n' "$DEPLOY_SHA"
+        run: |
+          printf 'Using deployment SHA: %s\n' "$DEPLOY_SHA"
 
       - name: 部署、迁移并验收
         shell: bash
