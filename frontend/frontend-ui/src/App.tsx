@@ -299,8 +299,10 @@ function App() {
     setMessage('')
     try {
       const battle = await retryBattle(selected.id)
+      scoreRequestId.current += 1
       setSelected(battle)
       selectedIdRef.current = battle.id
+      setScoreLoading(false)
       setBattleScore(null)
       setScoreMessage('')
       await Promise.all([loadHistory(historyPage, false, search), loadSummary()])

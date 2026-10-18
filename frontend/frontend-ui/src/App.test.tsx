@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
@@ -286,5 +286,44 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.queryByText(/攻击方：99 \/ 100/)).not.toBeInTheDocument())
     expect(screen.getByText(/攻击方：65 \/ 100/)).toBeInTheDocument()
+  })
+
+  it('ignores a late score response from before retrying the same failed battle', async () => {
+    window.history.replaceState({}, '', '/?battle_id=battle-test')
+    const fetchMock = installFetchMock()
+    const baseline = fetchMock.getMockImplementation()!
+    let resolveOldScore!: (response: Response) => void
+    const oldScore = new Promise<Response>((resolve) => { resolveOldScore = resolve })
+    fetchMock.mockImplementation((input, init) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/battle-test/score')) return oldScore
+      if (url.pathname.endsWith('/battle-test/retry') && init?.method === 'POST') {
+        return Promise.resolve(new Response(JSON.stringify({ ...battle, status: 'pending' }), { status: 202 }))
+      }
+      if (url.pathname.endsWith('/battles/battle-test')) {
+        return Promise.resolve(new Response(JSON.stringify({ ...battle, status: 'failed' }), { status: 200 }))
+      }
+      return baseline(input, init)
+    })
+    render(<App />)
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles/battle-test/score'), expect.anything()))
+    fireEvent.click(await screen.findByRole('button', { name: '重试失败战局' }))
+    expect(await screen.findByText('失败战局已重新提交')).toBeInTheDocument()
+    expect(screen.getAllByText(/等待中（Pending）/).length).toBeGreaterThan(0)
+
+    await act(async () => {
+      resolveOldScore(new Response(JSON.stringify({
+        version: 'internal-agent-v2',
+        status: 'scored',
+        attacker: { status: 'scored', score: 99, maxScore: 100, categories: [] },
+        defender: { status: 'scored', score: 99, maxScore: 100, categories: [] },
+      }), { status: 200 }))
+      await oldScore
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    await waitFor(() => expect(screen.queryByText(/攻击方：99 \/ 100/)).not.toBeInTheDocument())
+    expect(screen.queryByText('正在计算攻击与防守评分…')).not.toBeInTheDocument()
   })
 })

@@ -88,7 +88,7 @@ def query_external_cases(
         parameters.append(f"%{product}%")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-    preferred_cases = """
+    preferred_cases = f"""
         WITH ranked AS (
             SELECT c.id, c.external_id, c.vendor_project, c.product, c.title,
                    c.date_added, c.due_date, c.description, c.required_action,
@@ -103,6 +103,10 @@ def query_external_cases(
                    ) AS source_rank
             FROM external_cases AS c
             JOIN external_sources AS s ON s.id = c.source_id
+        ), matched AS (
+            SELECT DISTINCT c.external_id
+            FROM external_cases AS c
+            {where}
         ), preferred AS (
             SELECT * FROM ranked WHERE source_rank = 1
         )
@@ -110,7 +114,9 @@ def query_external_cases(
     try:
         with _connect_read_only(database) as connection:
             total_row = connection.execute(
-                f"{preferred_cases} SELECT COUNT(*) FROM preferred AS c {where}", parameters
+                f"{preferred_cases} SELECT COUNT(*) FROM preferred AS c "
+                "JOIN matched AS m ON m.external_id = c.external_id",
+                parameters,
             ).fetchone()
             rows = connection.execute(
                 f"{preferred_cases} SELECT c.id, c.external_id, c.vendor_project, c.product, c.title, "
@@ -118,7 +124,8 @@ def query_external_cases(
                 "c.known_ransomware_use, c.forensic_triage, c.cwes_json, c.notes, c.source_url, "
                 "c.provenance_status, c.synthetic, c.record_kind, c.publisher, c.source_type, "
                 "c.catalog_version, c.released_at, c.retrieved_at, c.content_sha256 "
-                f"FROM preferred AS c {where} ORDER BY c.date_added DESC, c.external_id LIMIT ? OFFSET ?",
+                "FROM preferred AS c JOIN matched AS m ON m.external_id = c.external_id "
+                "ORDER BY c.date_added DESC, c.external_id LIMIT ? OFFSET ?",
                 [*parameters, limit, offset],
             ).fetchall()
             source_count = connection.execute(
