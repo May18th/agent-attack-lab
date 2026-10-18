@@ -4,14 +4,14 @@
 
 本文只记录当前状态；历史执行证据见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) 与 Git 历史。
 
-## 最新状态（2026-10-18 18:31 +08:00）
+## 最新状态（2026-10-18 18:55 +08:00）
 
 - PR #15 已合并到 `main`，合并提交为 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产后端部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（用户 `deployer`）上成功完成，部署脚本输出 `DEPLOY OK`；Alembic 迁移执行完成，release worktree 与原生产工作树隔离。
 - 部署脚本曾在服务重启后的首个 8787 探测出现一次瞬时连接失败，随后重试通过；该次失败不是最终部署失败。当前公网只读复验：`/health` HTTP 200，`/openapi.json` HTTP 200，`/dashboard/summary` HTTP 200。健康响应的 `requestId` 为 `req-2dfd86bc-49d9-4cd2-9978-9c1d8ee8894d`（2026-10-18 18:31 +08:00）。
 - 当前公网 OpenAPI 包含 `DELETE /battles/{battle_id}`，但仍不包含 `/battles/{battle_id}/score` 与 `/internal-scores`。因此评分 v2 尚未被公网 API 证明已上线；不得把主线代码或内部 Preview 验收当作生产评分接口。
-- 根因核查发现：release worktree 的 `start-service.sh` 原先未将 release 的 `src` 放到 `PYTHONPATH`，共享虚拟环境可能导入旧的已安装包，造成部署提交与运行代码不一致。PR #16 已将该路径修复部署到生产，但公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径，部署均按设计失败并自动恢复旧配置。当前分支 `codex/fix-systemd-dropin-path`（PR #19，提交 `abe25d8`）改为从 systemd 已加载 unit 的 `FragmentPath` 推导真实用户 unit 目录，尚未部署；PR #19 需先解决本文件与 `TEAM_HANDOFF.md` 的文档冲突并通过检查。
+- 根因核查发现：release worktree 的 `start-service.sh` 原先未将 release 的 `src` 放到 `PYTHONPATH`，共享虚拟环境可能导入旧的已安装包，造成部署提交与运行代码不一致。PR #16 已将该路径修复部署到生产，但公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径。PR #19 已合并，但 Workflow `39121146077` 仍因脚本把已带 `.service` 后缀的服务名拼成 `*.service.service.d` 而触发运行时路径护栏，部署已自动回滚；跟进分支 `codex/fix-systemd-dropin-suffix`（提交 `ef803fd`）已修正为 `$service.d` 并补充回归测试。
 - 当前不接入外部 LLM/API；攻击、防守继续使用现有规则兜底，除非负责人另行决定。
-- 本机后端全量测试从 `backend` 目录执行为 `122 passed, 5 skipped`，仅有既有 Starlette/httpx 弃用警告；从仓库根目录运行会触发 Alembic 相对路径错误，不作为有效测试结果。
+- 本机后端全量测试从 `backend` 目录执行为 `123 passed, 5 skipped`，仅有既有 Starlette/httpx 弃用警告；从仓库根目录运行会触发 Alembic 相对路径错误，不作为有效测试结果。
 
 ## 本地状态（2026-10-15，历史）
 

@@ -23,6 +23,8 @@ def test_deploy_script_verifies_running_release_context() -> None:
 
     assert 'unit_fragment_path=$(systemctl --user show "${services[0]}" -p FragmentPath --value)' in source
     assert 'user_unit_dir=$(dirname "$unit_fragment_path")' in source
+    assert 'path="$user_unit_dir/$service.d/production-release.conf"' in source
+    assert 'path="$user_unit_dir/$service.service.d/production-release.conf"' not in source
     assert 'systemctl --user show "$service" -p MainPID --value' in source
     assert 'systemctl --user show "$service" -p FragmentPath -p DropInPaths' in source
     assert 'systemctl --user cat "$service"' in source
