@@ -47,3 +47,15 @@
 - `npm run lint`、`npx tsc -b`：通过。
 - `npm run build`：通过；主 bundle 约 260 KB，Three.js renderer 留在约 557 KB 的动态 chunk，仍有 Vite 的 500 KB chunk 提示。
 - jsdom 继续输出不支持 `HTMLCanvasElement.getContext()` 的提示；Three.js 事件节点真实拾取由 rendererFactory 测试验证，组件在无 WebGL 环境仍提供可操作的 HTML companion。
+
+## Review 修复（2026-10-19，round 2）
+
+- 修复提交：`a81bb23` (`fix: mount 3d timeline with latest model`)
+- 根因：`ThreeScene` 动态导入尚未完成时，父组件可能已收到新事件并更新 scene model；旧实现只捕获初次渲染模型，renderer 迟到 mount 时仍使用空模型。
+- 修复：通过 `sceneModelRef` 在模型提交时同步最新模型，动态导入完成后读取该 ref；新增 `timelineSceneLoader.ts` 作为受控异步导入边界。
+- 回归测试覆盖“导入未完成期间事件更新，renderer mount 必须使用新事件模型”。测试首次执行时发现测试自身在 rerender 更换了 `onSelectEvent` identity，触发 effect cleanup 并取消 pending import；统一两次渲染的 callback 后测试通过。该测试 harness 问题不作为产品缺陷的 RED 证据。
+- `BattleTimeline3D.test.tsx`：6 项通过；相关 5 个测试文件（`BattleTimeline3D`、`AdminApp`、`sceneModel`、`ThreeScene`、`Admin3DWorkspace`）：31 项通过。
+- 全量 `npm test`：8 个 Vitest 文件、67 项通过；build-environment Node 测试 4 项通过。
+- `npm run lint`、`npx tsc -b`：通过。
+- `npm run build`：通过；主 bundle 约 260 KB，Three.js 动态 chunk 约 557 KB，仍有 Vite 的 500 KB chunk 提示。
+- Vitest 的 jsdom 仍打印 `HTMLCanvasElement.getContext()` 未实现提示；测试通过。
