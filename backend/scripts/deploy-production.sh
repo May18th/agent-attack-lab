@@ -152,13 +152,26 @@ done
 verify_runtime_context() {
   local service=$1
   local pid actual_cwd pythonpath expected_pythonpath
+  dump_service_context() {
+    systemctl --user show "$service" -p FragmentPath -p DropInPaths -p WorkingDirectory -p ExecStart -p MainPID >&2 || true
+    systemctl --user cat "$service" >&2 || true
+  }
   pid=$(systemctl --user show "$service" -p MainPID --value)
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || fail "$service has no running MainPID"
+  if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]]; then
+    dump_service_context
+    fail "$service has no running MainPID"
+  fi
   actual_cwd=$(readlink -f "/proc/$pid/cwd")
-  [[ "$actual_cwd" == "$release_backend" ]] || fail "$service has unexpected WorkingDirectory: $actual_cwd"
+  if [[ "$actual_cwd" != "$release_backend" ]]; then
+    dump_service_context
+    fail "$service has unexpected WorkingDirectory: $actual_cwd"
+  fi
   pythonpath=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^PYTHONPATH=//p')
   expected_pythonpath="$release_backend/src"
-  [[ "$pythonpath" == "$expected_pythonpath"* ]] || fail "$service does not prioritize release PYTHONPATH"
+  if [[ "$pythonpath" != "$expected_pythonpath"* ]]; then
+    dump_service_context
+    fail "$service does not prioritize release PYTHONPATH"
+  fi
 }
 
 for service in "${services[@]}"; do
