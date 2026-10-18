@@ -689,7 +689,7 @@ def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(tmp_path, m
     import sqlite3
 
     connection = sqlite3.connect(database)
-    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261015_0002"
+    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261018_0003"
     assert connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'battle_scores'"
     ).fetchone()[0] == "battle_scores"
@@ -807,6 +807,7 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
     assert "httponly" in login.headers["set-cookie"].lower()
     assert "server-only-secret" not in login.headers["set-cookie"]
     assert browser.get("/auth/session").json() == {"enabled": True, "authenticated": True}
+    assert browser.get("/metrics", headers={"Origin": origin}).status_code == 200
 
     created = browser.post(
         "/battles",
