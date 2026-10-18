@@ -9,7 +9,7 @@
 - PR #15 已合并，提交 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（`deployer`）上成功完成；部署脚本执行 Alembic 迁移，使用 `/home/deployer/agent-attack-lab-releases/<commit>` 隔离 release worktree，并保留 `/opt/agent-attack-lab` 既有未提交修改。
 - 首个本地 8787 健康探测在服务重启瞬间连接失败，后续重试通过，最终日志为 `DEPLOY OK: 10bb83e6703b244fcbdb5119c5c64f1e0f123cc8 (main)`。这只能证明健康探测最终通过，不能单独证明运行时导入的是目标 release 代码。
 - 2026-10-18 18:31（UTC+8）公网只读复验：`https://api.yuanyiagentzhandui.cn/health`、`/openapi.json`、`/dashboard/summary` 均 HTTP 200；健康响应 `requestId=req-2dfd86bc-49d9-4cd2-9978-9c1d8ee8894d`。OpenAPI 已包含 `DELETE /battles/{battle_id}`，但仍缺少 `/battles/{battle_id}/score` 和 `/internal-scores`。
-- 根因核查发现 release 的 `start-service.sh` 原先直接使用共享虚拟环境中的 `agent_attack_lab`，没有优先加入当前 release 的 `src`；因此可能出现部署提交已切换、运行时仍加载旧已安装包的情况。PR #16 已将 `PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"` 修复部署到生产，但公网评分路由仍返回 404，说明还需确认 systemd 实际进程上下文。`codex/verify-runtime-release` 新增 `MainPID`、`/proc/<pid>/cwd` 和 `PYTHONPATH` 部署护栏；若运行进程未使用目标 release，部署会失败并自动恢复旧配置。
+- 根因核查发现 release 的 `start-service.sh` 原先直接使用共享虚拟环境中的 `agent_attack_lab`，没有优先加入当前 release 的 `src`；因此可能出现部署提交已切换、运行时仍加载旧已安装包的情况。PR #16 已将 `PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"` 修复部署到生产，但公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径，部署均按设计失败并自动恢复旧配置。`codex/fix-systemd-dropin-path` 改为从 systemd 已加载 unit 的 `FragmentPath` 推导真实用户 unit 目录，尚未部署。
 - 本机从 `backend` 目录执行后端测试：`122 passed, 5 skipped`，仅保留既有 Starlette/httpx 弃用警告。外部 LLM/API 未接入，攻击与防守保持规则兜底。
 
 下一步：
