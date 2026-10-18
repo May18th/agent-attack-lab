@@ -143,12 +143,27 @@ write_dropin agent-attack-lab-attacker.service agent_attack_lab.agents.attacker:
 write_dropin agent-attack-lab-defender.service agent_attack_lab.agents.defender:app 8789
 systemctl --user daemon-reload
 
+wait_for_active() {
+  local service=$1 attempt
+  for attempt in {1..30}; do
+    if systemctl --user is-active --quiet "$service"; then
+      return 0
+    fi
+    sleep 1
+  done
+  systemctl --user status "$service" --no-pager >&2 || true
+  systemctl --user show "$service" -p FragmentPath -p DropInPaths -p WorkingDirectory -p ExecStart -p MainPID >&2 || true
+  systemctl --user cat "$service" >&2 || true
+  journalctl --user -u "$service" -n 50 --no-pager >&2 || true
+  fail "$service is not active after 30 seconds"
+}
+
 for service in "${services[@]}"; do
   systemctl --user restart "$service"
 done
 
 for service in "${services[@]}"; do
-  systemctl --user is-active --quiet "$service" || fail "$service is not active after restart"
+  wait_for_active "$service"
 done
 
 verify_runtime_context() {
