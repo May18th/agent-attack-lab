@@ -874,8 +874,8 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 - 本地修改修复服务启动恢复只读取每种状态前 200 场的问题：现在分页读取全部 `pending` / `running` 记录，再启动恢复任务；新增 205 场恢复回归测试。
 - 后端全量测试：`120 passed, 4 skipped`；仅有一条既有 Starlette/httpx 弃用警告。
-- 改动尚未合入或部署，生产服务和业务数据未触碰。当前分支 `codex/production-alignment-review`，PR #9 开放；后端测试与前端检查通过，Cloudflare Workers Builds 失败，当前会话无权访问该检查所属账号。不要将 PR 描述成已合入或已发布。
-- 继续发布前需解决 Workers Builds 账号/配置阻塞并审核 PR；合入后仍须先只读检查 VPS checkout、工作树和回滚备份，再进行生产迁移与隔离数据验收。
+- 改动已推送到 PR #9，提交 `e80554c`；后端测试、前端检查、Cloudflare Pages、Workers Builds 四项检查全部通过，PR 状态 `CLEAN`，目前尚无 review，仍未合入或部署。Workers Builds 只更新分支 Preview（`npx wrangler preview`），未部署生产。
+- 生产服务和业务数据未触碰。下一步等待 PR 审核；合入后仍须先只读检查 VPS checkout、工作树和回滚备份，再进行生产迁移与隔离数据验收。
 
 ### NVD 有限窗口本机验收（2026-10-18）
 

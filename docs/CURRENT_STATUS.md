@@ -8,7 +8,7 @@
 
 - 后端启动恢复已改为分页收齐所有 `pending` / `running` 战局，不再受每种状态 200 条上限影响；新增 205 条恢复回归测试。后端全量测试 `120 passed, 4 skipped`，有一条既有 Starlette/httpx 弃用警告。
 - NVD API 7 天窗口（2026-10-10 至 2026-10-17 UTC）本机临时库验收通过：收到 5,487 条，排除 29 条 Rejected，导入 5,458 个唯一 CVE；`validate_database` 返回 `valid=true`，记录均为 `verified_primary / external_fact / synthetic=false`。临时数据库已删除，未与 CISA 数据合并、未同步生产。
-- 上述修改尚未合入或部署；PR #9 仍开放，Workers Builds 检查失败，Cloudflare 账号检查权限不在当前会话范围内。未操作生产服务器。
+- 上述修改已推送到 PR #9（提交 `e80554c`），后端测试、前端检查、Cloudflare Pages 和 Workers Builds 四项检查全部通过，PR 状态 `CLEAN`；目前无人 review，仍未合入或部署。Workers Builds 只更新分支 Preview（`npx wrangler preview`），未部署生产。未操作生产服务器。
 
 ## 本地状态（2026-10-15，历史）
 
