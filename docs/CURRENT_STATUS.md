@@ -4,19 +4,13 @@
 
 本文只记录当前状态；历史执行证据见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) 与 Git 历史。
 
-## 最新状态（2026-10-18 20:27 +08:00）
+## 最新状态（2026-10-18 21:31 +08:00）
 
-- 生产部署 Workflow `39125655770` 针对主线提交 `49107974392b4712590d313638a92f11b2a87240` 的重跑已失败，未进入固定提交、部署迁移或服务验收步骤。失败发生在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps` 的 `actions/checkout@v4`：Runner 访问 `https://github.com/May18th/agent-attack-lab/` 时分别出现连接超时和 `GnuTLS recv error (-110)`；Job 用时约 6 分 55 秒后退出码 128。
-- 随后在 VPS 网络恢复后重跑同一 Workflow，Job `117673383376` 于 2026-10-18 20:19（UTC+8）成功完成。部署脚本输出 `DEPLOY OK: 49107974392b4712590d313638a92f11b2a87240 (main)`；脚本内置的服务 active、release 工作目录、release `PYTHONPATH`、三个本地健康接口和公网健康接口检查均通过。部署保留了 VPS 既有的本地生产修改和备份文件，未强制覆盖。
-- 当前公网只读复验：`/health` HTTP 200（`requestId=req-df129b9c-bcb7-43ff-bf15-ff764aa84fbd`），`/openapi.json` HTTP 200，`/dashboard/summary` HTTP 200；OpenAPI 已包含 `/battles/{battle_id}/score` 与 `/internal-scores`。本轮未执行生产业务写请求。
-- Partner TLS 差异复核：两个域名 DNS 均指向 `47.108.92.113`，TCP 443 可达。Windows Schannel `curl`（含 `-k`）对两个域名均出现连接重置；使用 Python 标准库 TLS 进行同等传输诊断时，两个 `/health` GET 均 HTTP 200，无客户端证书的 `/rpc` POST 均 HTTP 403。该结果说明服务端入口正常，差异来自 Windows TLS 客户端与梧桐私有 CA/握手的兼容性；本轮未持有本机 clientAuth 材料，因此没有宣称完成新的合法证书 AIP 调用。
-
-- PR #15 已合并到 `main`，合并提交为 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产后端部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（用户 `deployer`）上成功完成，部署脚本输出 `DEPLOY OK`；Alembic 迁移执行完成，release worktree 与原生产工作树隔离。
-- 部署脚本曾在服务重启后的首个 8787 探测出现一次瞬时连接失败，随后重试通过；该次失败不是最终部署失败。当前公网只读复验：`/health` HTTP 200，`/openapi.json` HTTP 200，`/dashboard/summary` HTTP 200。健康响应的 `requestId` 为 `req-2dfd86bc-49d9-4cd2-9978-9c1d8ee8894d`（2026-10-18 18:31 +08:00）。
-- 当前公网 OpenAPI 同时包含 `DELETE /battles/{battle_id}`、`/battles/{battle_id}/score` 与 `/internal-scores`；评分 v2 已完成生产路由层面的只读核验。业务写入验收仍需使用隔离数据源，不能直接对生产战局做破坏性测试。
-- 历史根因核查发现：release worktree 的 `start-service.sh` 原先未将 release 的 `src` 放到 `PYTHONPATH`，共享虚拟环境可能导入旧的已安装包，造成部署提交与运行代码不一致；PR #16 曾修复该路径，但此前公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径。PR #19 已合并，但 Workflow `39121146077` 仍因脚本把已带 `.service` 后缀的服务名拼成 `*.service.service.d` 而触发运行时路径护栏，部署已自动回滚；PR #20 已合并修正为 `$service.d`，但 Workflow `39121512220` 中 API 服务重启后未保持 active，诊断显示 release 的 `start-service.sh` Git 模式为 `100644`，systemd 报 `203/EXEC Permission denied`，部署再次自动回滚。PR #22 已将脚本模式修正为 `100755` 并补充回归测试，本次 Workflow 已通过 runtime context 校验。
-- 当前不接入外部 LLM/API；攻击、防守继续使用现有规则兜底，除非负责人另行决定。
-- 本机后端全量测试从 `backend` 目录执行为 `124 passed, 5 skipped`，仅有既有 Starlette/httpx 弃用警告；从仓库根目录运行会触发 Alembic 相对路径错误，不作为有效测试结果。
+- 生产部署已通过 GitHub Actions Workflow `39130920889`，Job `117685723339`，部署提交为 `8fb4a056599b52d33a3c1f6d97ef4ba5e4dcf46b`；`origin/main` 与该提交一致。VPS 使用固定提交 codeload 发布路径，未上传证书、私钥、Token、数据库或 Redis 数据。
+- 部署脚本的服务 active、release 工作目录、release `PYTHONPATH`、本地健康接口和公网健康接口检查均通过。公网只读复验 `/health`、`/openapi.json`、`/auth/session` 均为 HTTP 200；无密钥 `/metrics` 为 401，`/rpc` GET 为 405，CORS 预检为 200，公开前端来源为 `https://yuanyiagentzhandui.cn` 并允许凭据。
+- Partner mTLS 只读复验（2026-10-18 21:29 左右）：attack、defense `/health` 均 HTTP 200；真实未加载客户端证书的 `/rpc` 均 HTTP 403。加载 Leader clientAuth 证书和梧桐 trust bundle 后，两个 Partner 的 AIP Start 均返回 `awaiting-completion`，Complete 均返回 `completed`，结果结构分别包含攻击 `samples` 和防守 `caught/risks/fixed`。本轮未创建生产战局。
+- Discovery 只读复验（2026-10-18 21:30-21:31）：Leader、attack、defense 三个当前 AIC 均返回 `active=true`，endpoint 分别为 `https://api.yuanyiagentzhandui.cn/rpc`、`https://attack.yuanyiagentzhandui.cn/rpc`、`https://defense.yuanyiagentzhandui.cn/rpc`，传输均为 JSONRPC，安全方案均为 mTLS。Discovery 查询偶发读超时，重试后按技能查询均得到对应记录；该偶发超时不作为当前服务不可用结论。
+- 当前不接入外部 LLM/API；攻击、防守仍使用规则兜底。后端全量测试（`backend` 目录）刚刚执行为 `126 passed, 5 skipped, 1 warning`，警告为既有 Starlette/httpx 弃用提示。
 
 ## 本地状态（2026-10-15，历史）
 
