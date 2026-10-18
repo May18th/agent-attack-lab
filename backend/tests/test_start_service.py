@@ -28,6 +28,8 @@ def test_deploy_script_verifies_running_release_context() -> None:
     assert 'systemctl --user show "$service" -p MainPID --value' in source
     assert 'systemctl --user show "$service" -p FragmentPath -p DropInPaths' in source
     assert 'systemctl --user cat "$service"' in source
+    assert 'wait_for_active() {' in source
+    assert 'journalctl --user -u "$service" -n 50 --no-pager' in source
     assert 'readlink -f "/proc/$pid/cwd"' in source
     assert 'expected_pythonpath="$release_backend/src"' in source
 
