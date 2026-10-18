@@ -925,3 +925,10 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - Partner mTLS 复验：attack、defense `/health` 均 200；未加载客户端证书的 `/rpc` 均 403；加载 Leader clientAuth 证书和梧桐 trust bundle 后，两个 AIP Start 均返回 `awaiting-completion`，Complete 均返回 `completed`，攻击结果含 `samples`，防守结果含 `caught/risks/fixed`。本轮只产生 Partner 内存任务，未创建生产战局。
 - Discovery 复验：当前 Leader AIC `1.2.156.3088.1.BUPT.RX2TMW.34O5X3.KXMH76.09CQ`、攻击 AIC `1.2.156.3088.1.BUPT.RX2TMW.LMB4VK.NJ99P0.08RN`、防守 AIC `1.2.156.3088.1.BUPT.RX2TMW.KYUDTI.BI8UKQ.09SG` 均为 `active=true`，正式 endpoint 分别为 `https://api.yuanyiagentzhandui.cn/rpc`、`https://attack.yuanyiagentzhandui.cn/rpc`、`https://defense.yuanyiagentzhandui.cn/rpc`，传输 JSONRPC，安全方案 mTLS。查询服务存在偶发读超时，重试后按技能查询成功；不把偶发超时描述为持续不可用。
 - 本地后端全量测试：`126 passed, 5 skipped, 1 warning`。当前不接入外部 LLM/API，Partner 结果继续按规则兜底。后续若做完整业务验收，应使用隔离数据源执行 low/mid/high，并保留创建、终态、删除和事件清理的请求证据；不要直接对生产战局做破坏性写操作。
+
+### 本地隔离三档业务验收（2026-10-18）
+
+- 使用临时 SQLite 数据库复验空白 topic 和三档难度，未连接生产数据库或公网写接口。
+- 空白 topic 返回 HTTP 422；low、mid、high 均创建 HTTP 201，最终状态为 `completed`，事件数分别为 10、13、16。
+- 三场删除均返回 HTTP 204；随后战局详情和事件查询均返回 HTTP 404；临时隔离库最终剩余 0 条记录。
+- 该结果只证明本地隔离业务契约和清理路径，不替代公网生产写验收或真实浏览器交互验收。

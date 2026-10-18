@@ -11,6 +11,7 @@
 - Partner mTLS 只读复验（2026-10-18 21:29 左右）：attack、defense `/health` 均 HTTP 200；真实未加载客户端证书的 `/rpc` 均 HTTP 403。加载 Leader clientAuth 证书和梧桐 trust bundle 后，两个 Partner 的 AIP Start 均返回 `awaiting-completion`，Complete 均返回 `completed`，结果结构分别包含攻击 `samples` 和防守 `caught/risks/fixed`。本轮未创建生产战局。
 - Discovery 只读复验（2026-10-18 21:30-21:31）：Leader、attack、defense 三个当前 AIC 均返回 `active=true`，endpoint 分别为 `https://api.yuanyiagentzhandui.cn/rpc`、`https://attack.yuanyiagentzhandui.cn/rpc`、`https://defense.yuanyiagentzhandui.cn/rpc`，传输均为 JSONRPC，安全方案均为 mTLS。Discovery 查询偶发读超时，重试后按技能查询均得到对应记录；该偶发超时不作为当前服务不可用结论。
 - 当前不接入外部 LLM/API；攻击、防守仍使用规则兜底。后端全量测试（`backend` 目录）刚刚执行为 `126 passed, 5 skipped, 1 warning`，警告为既有 Starlette/httpx 弃用提示。
+- 本地隔离业务验收已完成：空白 topic=422；low/mid/high 均创建=201、最终状态 `completed`，事件数分别为 10/13/16；删除均=204，删除后战局详情及事件查询均=404，临时隔离库剩余 0 条。未访问生产写接口。
 
 ## 本地状态（2026-10-15，历史）
 
