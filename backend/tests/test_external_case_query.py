@@ -103,6 +103,33 @@ def test_query_deduplicates_cisa_and_nvd_by_cve_and_prefers_cisa(tmp_path: Path)
     assert duplicate["items"][0]["source"]["publisher"] == "CISA"
 
 
+def test_query_matches_all_sources_before_returning_preferred_record(tmp_path: Path) -> None:
+    database = tmp_path / "external.sqlite3"
+    cisa = _catalog()
+    import_catalog(
+        database,
+        payload=json.dumps(cisa, sort_keys=True).encode(),
+        catalog=cisa,
+        source_url="https://example.invalid/cisa.json",
+    )
+    nvd = {
+        "catalogVersion": "NVD snapshot",
+        "vulnerabilities": [{"cve": {
+            "id": "CVE-2099-0099",
+            "published": "2026-10-12T00:00:00.000Z",
+            "descriptions": [{"lang": "en", "value": "NVD-only searchable phrase."}],
+        }}],
+    }
+    payload = json.dumps(nvd, sort_keys=True).encode()
+    import_nvd_catalog(database, payload=payload, catalog=nvd)
+
+    result = query_external_cases(database, query="NVD-only searchable phrase")
+
+    assert result["total"] == 1
+    assert result["items"][0]["externalId"] == "CVE-2099-0099"
+    assert result["items"][0]["source"]["publisher"] == "CISA"
+
+
 def test_missing_database_is_reported_without_creating_file(tmp_path: Path) -> None:
     database = tmp_path / "missing.sqlite3"
 
