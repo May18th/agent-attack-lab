@@ -3,6 +3,10 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# Prefer the source tree selected by the deployment release over any older
+# editable package that may already exist in the shared virtual environment.
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
 if [[ $# -ne 2 ]]; then
   echo "Usage: $0 <app> <port>" >&2
   exit 2
