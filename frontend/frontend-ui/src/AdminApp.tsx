@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './AdminApp.css'
 import {
   apiErrorMessage, cancelAdminBattle, deleteAdminBattle, getAdminBattleAudit, getAdminBattleDetail,
@@ -7,6 +7,8 @@ import {
   type AdminBattle, type AdminBattleListFilters, type AdminExternalCases,
 } from './adminApi'
 import { ApiError } from './api'
+
+const Admin3DWorkspace = lazy(() => import('./admin3d/Admin3DWorkspace').then((module) => ({ default: module.Admin3DWorkspace })))
 
 const PAGE_SIZE = 10
 const statusLabels: Record<string, string> = { pending: '等待中', running: '进行中', completed: '已完成', failed: '失败' }
@@ -118,9 +120,14 @@ export default function AdminApp() {
   return <main className="admin-shell">
     <header className="admin-header"><div><span className="admin-kicker">AGENT ATTACK LAB / OPERATIONS</span><h1>管理员后台</h1></div><button onClick={() => void handleLogout()}>退出会话</button></header>
     {error && <div className="admin-error" role="alert">{error}</div>}
+    <Suspense fallback={<section className="admin3d-workspace" aria-live="polite">正在加载 3D 工作台…</section>}>
+      <Admin3DWorkspace metrics={metrics ?? {}} battles={battles} cases={cases} selectedBattle={selected} detailData={detailData} onSelectBattle={selectBattle} />
+    </Suspense>
+    <div id="admin-2d-workspace" className="admin-2d-workspace">
     <section className="admin-module metrics"><h2>运行指标</h2><div className="metric-grid">{overviewItems.length ? overviewItems.map(([key, value]) => <div className="metric" key={key}><span>{key}</span><strong>{String(value)}</strong></div>) : <div className="empty">暂无指标</div>}</div><pre className="data-preview" aria-label="态势数据">{jsonPreview(metrics)}</pre></section>
     <section className="admin-module"><div className="module-head"><h2>战局列表</h2><span>{total} 场</span></div><div className="filters"><input aria-label="搜索战局" placeholder="搜索主题或编号" value={query} onChange={(e) => { const value = e.target.value; setQuery(value); setPage(0); void loadList({ offset: 0, q: value }) }} onKeyDown={(e) => { if (e.key === 'Enter') void loadList({ offset: 0, q: query }) }} /><select aria-label="状态筛选" value={status} onChange={(e) => { const value = e.target.value; setStatus(value); setPage(0); void loadList({ offset: 0, status: value }) }}><option value="">全部状态</option>{Object.entries(statusLabels).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select><button onClick={() => void loadList({ offset: 0 })}>查询</button></div>{loading ? <p>正在加载战局…</p> : <div className="battle-table">{battles.length ? battles.map((battle) => <button className="battle-row" key={battle.id} aria-label={`查看${battle.topic}`} onClick={() => void selectBattle(battle)}><span>{battle.topic || '未命名战局'}</span><span>{label(battle.status)} · {label(battle.difficulty, difficultyLabels)}</span><span>{battle.id}</span></button>) : <p className="empty">暂无战局</p>}</div>}<div className="pagination"><button disabled={page <= 0} onClick={() => { setPage(page - 1); void loadList({ offset: (page - 1) * PAGE_SIZE }) }}>上一页</button><span>第 {page + 1} / {pages} 页</span><button disabled={page + 1 >= pages} onClick={() => { setPage(page + 1); void loadList({ offset: (page + 1) * PAGE_SIZE }) }}>下一页</button></div></section>
     <section className="admin-module"><div className="module-head"><h2>战局详情</h2>{selected && <span>{selected.id}</span>}</div>{selected ? <><div className="detail-summary"><strong>{selected.topic || '未命名战局'}</strong><span>{label(selected.status)} · {label(selected.difficulty, difficultyLabels)}</span><div className="actions">{selected.status === 'failed' && <button disabled={busy} onClick={() => void runAction('retry')}>重试战局</button>}{(selected.status === 'pending' || selected.status === 'running') && <button disabled={busy} onClick={() => void runAction('cancel')}>取消战局</button>}{(selected.status === 'completed' || selected.status === 'failed') && <button className="danger" disabled={busy} onClick={() => void runAction('delete')}>删除战局</button>}</div></div><div className="detail-grid">{Object.entries(detailData).map(([key, value]) => <details open key={key}><summary>{key}</summary><pre className="data-preview">{jsonPreview(value)}</pre></details>)}</div></> : <p className="empty">选择战局查看详情、评分、事件、审计和报告。</p>}</section>
     <section className="admin-module"><div className="module-head"><h2>外部案例</h2><span>只读</span></div><div className="filters"><input aria-label="搜索外部案例" placeholder="搜索 CVE、厂商或产品" value={caseQuery} onChange={(e) => setCaseQuery(e.target.value)} /><button onClick={() => void loadCases()}>查询</button></div>{cases?.available === false ? <p className="empty">{cases.reason || '外部案例不可用'}</p> : cases?.items?.length ? <div className="case-list">{cases.items.map((item) => <article key={item.externalId}><strong>{item.externalId} · {item.title}</strong><p>{item.vendorProject} · {item.product} · {item.provenanceStatus}</p><a href={item.sourceUrl} target="_blank" rel="noreferrer">来源</a></article>)}</div> : <p className="empty">暂无匹配案例</p>}</section>
+    </div>
   </main>
 }
