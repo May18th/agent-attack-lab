@@ -9,12 +9,12 @@
 - PR #15 已合并，提交 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（`deployer`）上成功完成；部署脚本执行 Alembic 迁移，使用 `/home/deployer/agent-attack-lab-releases/<commit>` 隔离 release worktree，并保留 `/opt/agent-attack-lab` 既有未提交修改。
 - 首个本地 8787 健康探测在服务重启瞬间连接失败，后续重试通过，最终日志为 `DEPLOY OK: 10bb83e6703b244fcbdb5119c5c64f1e0f123cc8 (main)`。这只能证明健康探测最终通过，不能单独证明运行时导入的是目标 release 代码。
 - 2026-10-18 18:31（UTC+8）公网只读复验：`https://api.yuanyiagentzhandui.cn/health`、`/openapi.json`、`/dashboard/summary` 均 HTTP 200；健康响应 `requestId=req-2dfd86bc-49d9-4cd2-9978-9c1d8ee8894d`。OpenAPI 已包含 `DELETE /battles/{battle_id}`，但仍缺少 `/battles/{battle_id}/score` 和 `/internal-scores`。
-- 根因核查发现 release 的 `start-service.sh` 原先直接使用共享虚拟环境中的 `agent_attack_lab`，没有优先加入当前 release 的 `src`；因此可能出现部署提交已切换、运行时仍加载旧已安装包的情况。PR #16 已将 `PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"` 修复部署到生产，但公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径。PR #19 已合并，但 Workflow `39121146077` 仍因脚本把已带 `.service` 后缀的服务名拼成 `*.service.service.d` 而触发运行时路径护栏，部署已自动回滚；PR #20 已合并修正为 `$service.d`，但 Workflow `39121512220` 中 API 服务重启后未保持 active，部署再次自动回滚。跟进分支 `codex/diagnose-service-startup` 已加入 active 等待和失败时的 systemd/journal 诊断。
-- 本机从 `backend` 目录执行后端测试：`123 passed, 5 skipped`，仅保留既有 Starlette/httpx 弃用警告。外部 LLM/API 未接入，攻击与防守保持规则兜底。
+- 根因核查发现 release 的 `start-service.sh` 原先直接使用共享虚拟环境中的 `agent_attack_lab`，没有优先加入当前 release 的 `src`；因此可能出现部署提交已切换、运行时仍加载旧已安装包的情况。PR #16 已将 `PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"` 修复部署到生产，但公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径。PR #19 已合并，但 Workflow `39121146077` 仍因脚本把已带 `.service` 后缀的服务名拼成 `*.service.service.d` 而触发运行时路径护栏，部署已自动回滚；PR #20 已合并修正为 `$service.d`，但 Workflow `39121512220` 中 API 服务重启后未保持 active，诊断显示 release 的 `start-service.sh` Git 模式为 `100644`，systemd 报 `203/EXEC Permission denied`，部署再次自动回滚。跟进分支 `codex/fix-start-service-mode` 已将脚本模式修正为 `100755` 并补充回归测试。
+- 本机从 `backend` 目录执行后端测试：`124 passed, 5 skipped`，仅保留既有 Starlette/httpx 弃用警告。外部 LLM/API 未接入，攻击与防守保持规则兜底。
 
 下一步：
 
-1. 审核并合入跟进分支 `codex/diagnose-service-startup`；不要将 `.env`、证书/私钥、Token、数据库、Redis 数据、日志或长期记忆带入提交。
+1. 审核并合入跟进分支 `codex/fix-start-service-mode`；不要将 `.env`、证书/私钥、Token、数据库、Redis 数据、日志或长期记忆带入提交。
 2. 合入后观察新的生产部署 Workflow，确认三项本地健康检查、公网 `/health`、systemd 服务和 release 路径均通过。
 3. 重新读取公网 `/openapi.json`，确认是否出现评分路由；若仍缺失，继续核查服务进程的实际 `PYTHONPATH` 和 `WorkingDirectory`，不要直接修改生产数据库或覆盖原工作树。
 4. 评分接口确认上线后，再用隔离数据源验收空主题 422、合法创建 201、完成删除 204、运行中删除 409；当前没有隔离数据源时，不对生产业务数据做破坏性写测试。
