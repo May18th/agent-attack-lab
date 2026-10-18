@@ -632,6 +632,19 @@ async def _tracked_agent_call(
     return result, source, correlation_id
 
 
+def _persist_internal_score(record: dict[str, Any]) -> None:
+    """Cache a terminal battle's evidence-derived score; reads support legacy fallback."""
+    try:
+        score = score_battle(record, _battle_store.list_events(record["id"]))
+        _battle_store.save_score(record["id"], score)
+    except Exception as exc:  # pragma: no cover - database-specific failure path
+        logger.warning(
+            "Battle %s score snapshot unavailable; live score fallback remains active (%s)",
+            record.get("id"),
+            type(exc).__name__,
+        )
+
+
 async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
     """Run a battle in stages so clients can observe its event stream."""
     record = await asyncio.to_thread(_battle_store.get, battle_id)
@@ -733,6 +746,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         _battle_store.save(record)
         await asyncio.to_thread(_invalidate_leaderboard_cache)
         add_event("battle.completed", "completed", {"status": record["status"]})
+        await asyncio.to_thread(_persist_internal_score, record)
     except Exception as exc:
         logger.exception("Battle %s failed", battle_id)
         record["status"] = "failed"
@@ -744,21 +758,31 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             else "战局执行失败，请检查服务端日志"
         )
         add_event("battle.failed", "failed", {"error": message})
+        await asyncio.to_thread(_persist_internal_score, record)
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """Resume persisted pending/running battles after a process restart."""
     recovered_ids: set[str] = set()
+    recovered_records: list[dict[str, Any]] = []
+    page_size = 200
     for status in ("pending", "running"):
-        for record in _battle_store.list(limit=200, status=status):
-            if record["id"] in recovered_ids:
-                continue
-            recovered_ids.add(record["id"])
-            payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
-            task = asyncio.create_task(_run_battle_async(record["id"], payload))
-            _recovery_tasks.add(task)
-            task.add_done_callback(_recovery_tasks.discard)
+        offset = 0
+        while True:
+            records = _battle_store.list(limit=page_size, offset=offset, status=status)
+            recovered_records.extend(records)
+            offset += len(records)
+            if len(records) < page_size:
+                break
+    for record in recovered_records:
+        if record["id"] in recovered_ids:
+            continue
+        recovered_ids.add(record["id"])
+        payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
+        task = asyncio.create_task(_run_battle_async(record["id"], payload))
+        _recovery_tasks.add(task)
+        task.add_done_callback(_recovery_tasks.discard)
     try:
         yield
     finally:
@@ -2267,6 +2291,7 @@ async def create_battle(
         _battle_store.save(failed_record.model_dump())
         for event in events:
             _battle_store.save_event(event)
+        _persist_internal_score(failed_record.model_dump())
         await asyncio.to_thread(_invalidate_leaderboard_cache)
         if isinstance(exc, ACPAgentError):
             raise HTTPException(
@@ -2309,6 +2334,7 @@ async def create_battle(
     add_event("battle.completed", "completed", {"status": record.status})
     for event in events:
         _battle_store.save_event(event)
+    _persist_internal_score(record.model_dump())
     return record
 
 
@@ -2335,6 +2361,7 @@ def retry_battle(
     record["attackerOut"] = {"samples": []}
     record["defenderOut"] = []
     _battle_store.save(record)
+    _battle_store.delete_score(battle_id)
     _invalidate_leaderboard_cache()
     events = _battle_store.list_events(battle_id)
     _battle_store.save_event(
@@ -2518,7 +2545,7 @@ def battle_report(
         "battle": record,
         "events": events,
         "scores": {"attacker": attacker_score, "defender": defender_score},
-        "internalScore": score_battle(record, events),
+        "internalScore": _battle_store.get_score(battle_id) or score_battle(record, events),
     }
 
 
@@ -2533,7 +2560,7 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
     record = _battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    return score_battle(record, _battle_store.list_events(battle_id))
+    return _battle_store.get_score(battle_id) or score_battle(record, _battle_store.list_events(battle_id))
 
 
 @app.get(
@@ -2549,8 +2576,9 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
     events_by_battle = _battle_store.list_events_for_battles(
         [record["id"] for record in records]
     )
+    stored_scores = _battle_store.list_scores([record["id"] for record in records])
     for record in records:
-        score = score_battle(record, events_by_battle.get(record["id"], []))
+        score = stored_scores.get(record["id"]) or score_battle(record, events_by_battle.get(record["id"], []))
         items.append({
             "battleId": record["id"],
             "topic": record["topic"],

@@ -1,8 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
-import { api, apiErrorMessage, apiPage, getExternalCases } from './api'
-import type { AgentSource, Battle, DashboardSummary, Difficulty, ExternalCase } from './api'
+import {
+  api,
+  apiErrorMessage,
+  apiPage,
+  deleteBattle,
+  getBattle,
+  getBattleScore,
+  getExternalCases,
+  retryBattle,
+  ApiError,
+} from './api'
+import type { AgentSource, Battle, BattleScore, DashboardSummary, Difficulty, ExternalCase } from './api'
 const PAGE_SIZE = 10
 const DEFAULT_TOPIC = '提示注入与输入校验'
 const difficultyLabel: Record<Difficulty, string> = { low: '低（Low）', mid: '中（Medium）', high: '高（High）' }
@@ -67,16 +77,57 @@ function App() {
   const [externalCaseSearch, setExternalCaseSearch] = useState('')
   const [externalCaseLoading, setExternalCaseLoading] = useState(false)
   const [externalCaseMessage, setExternalCaseMessage] = useState('')
+  const [battleScore, setBattleScore] = useState<BattleScore | null>(null)
+  const [scoreMessage, setScoreMessage] = useState('')
+  const [scoreLoading, setScoreLoading] = useState(false)
+  const [actionBusy, setActionBusy] = useState(false)
   const historyRequestId = useRef(0)
+  const selectedIdRef = useRef<string | null>(null)
+  const scoreRequestId = useRef(0)
 
-  const loadBattleDetail = useCallback(async (battleId: string) => {
+  const loadBattleScore = useCallback(async (battleId: string) => {
+    const requestId = ++scoreRequestId.current
+    setScoreLoading(true)
+    setBattleScore(null)
+    setScoreMessage('')
     try {
-      const detail = await api<Battle>(`/battles/${encodeURIComponent(battleId)}`)
-      setSelected(detail)
+      const score = await getBattleScore(battleId)
+      if (requestId !== scoreRequestId.current || selectedIdRef.current !== battleId) return
+      setBattleScore(score)
     } catch (error) {
-      setMessage('战局详情加载失败：' + apiErrorMessage(error))
+      if (requestId !== scoreRequestId.current || selectedIdRef.current !== battleId) return
+      setBattleScore(null)
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        setScoreMessage('评分接口需要后台鉴权，公开页暂不可查看')
+      } else if (error instanceof ApiError && error.status === 404) {
+        setScoreMessage('暂无评分数据')
+      } else {
+        setScoreMessage('评分加载失败：' + apiErrorMessage(error))
+      }
+    } finally {
+      if (requestId === scoreRequestId.current) setScoreLoading(false)
     }
   }, [])
+
+  const loadBattleDetail = useCallback(async (battleId: string) => {
+    selectedIdRef.current = battleId
+    scoreRequestId.current += 1
+    setBattleScore(null)
+    setScoreMessage('')
+    try {
+      const detail = await getBattle(battleId)
+      if (selectedIdRef.current !== battleId) return
+      setSelected(detail)
+      if (detail.status === 'completed' || detail.status === 'failed') {
+        void loadBattleScore(detail.id)
+      } else {
+        setScoreLoading(false)
+      }
+    } catch (error) {
+      if (selectedIdRef.current !== battleId) return
+      setMessage('战局详情加载失败：' + apiErrorMessage(error))
+    }
+  }, [loadBattleScore])
 
   const loadHistory = useCallback(async (page: number, restoreFirst = false, queryValue = '') => {
     const requestId = ++historyRequestId.current
@@ -161,11 +212,41 @@ function App() {
     const restoreRoute = () => {
       const replayBattleId = readReplayBattleId()
       if (replayBattleId) void loadBattleDetail(replayBattleId)
-      else setSelected(null)
+      else {
+        setSelected(null)
+        selectedIdRef.current = null
+        scoreRequestId.current += 1
+        setScoreLoading(false)
+        setBattleScore(null)
+        setScoreMessage('')
+      }
     }
     window.addEventListener('popstate', restoreRoute)
     return () => window.removeEventListener('popstate', restoreRoute)
   }, [loadBattleDetail])
+
+  useEffect(() => {
+    if (!selected || (selected.status !== 'pending' && selected.status !== 'running')) return
+    const battleId = selected.id
+    const timer = window.setInterval(() => {
+      if (selectedIdRef.current !== battleId) return
+      void (async () => {
+        try {
+          const detail = await getBattle(battleId)
+          if (selectedIdRef.current !== battleId) return
+          setSelected(detail)
+          if (detail.status === 'completed' || detail.status === 'failed') {
+            void loadBattleScore(detail.id)
+            void loadHistory(historyPage, false, search)
+            void loadSummary()
+          }
+        } catch {
+          // Keep polling until the battle settles or the user leaves.
+        }
+      })()
+    }, 2500)
+    return () => window.clearInterval(timer)
+  }, [selected, historyPage, search, loadBattleScore, loadHistory, loadSummary])
 
   const count = (battle: Battle | null, key: 'caught' | 'risks' | 'fixed') => battle?.defenderOut.reduce((total, result) => total + (result[key]?.length ?? 0), 0) ?? 0
   const totalPages = Math.max(1, Math.ceil(historyTotal / PAGE_SIZE))
@@ -176,6 +257,59 @@ function App() {
     url.searchParams.set('battle_id', battleId)
     window.history.pushState({ battleId }, '', url.pathname + url.search)
     void loadBattleDetail(battleId)
+  }
+
+  const clearReplayUrl = () => {
+    const url = new URL(window.location.href)
+    url.pathname = appBasePath()
+    url.searchParams.delete('battle_id')
+    window.history.replaceState({}, '', url.pathname + url.search)
+  }
+
+  const handleDeleteBattle = async () => {
+    if (!selected || actionBusy) return
+    if (selected.status === 'pending' || selected.status === 'running') {
+      setMessage('运行中的战局不能删除')
+      return
+    }
+    if (!window.confirm(`确认删除战局「${selected.topic}」？删除后不可恢复。`)) return
+    setActionBusy(true)
+    setMessage('')
+    try {
+      await deleteBattle(selected.id)
+      setSelected(null)
+      selectedIdRef.current = null
+      scoreRequestId.current += 1
+      setScoreLoading(false)
+      setBattleScore(null)
+      setScoreMessage('')
+      clearReplayUrl()
+      await Promise.all([loadHistory(historyPage, false, search), loadSummary()])
+      setMessage('战局已删除')
+    } catch (error) {
+      setMessage('删除失败：' + apiErrorMessage(error))
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const handleRetryBattle = async () => {
+    if (!selected || selected.status !== 'failed' || actionBusy) return
+    setActionBusy(true)
+    setMessage('')
+    try {
+      const battle = await retryBattle(selected.id)
+      setSelected(battle)
+      selectedIdRef.current = battle.id
+      setBattleScore(null)
+      setScoreMessage('')
+      await Promise.all([loadHistory(historyPage, false, search), loadSummary()])
+      setMessage('失败战局已重新提交')
+    } catch (error) {
+      setMessage('重试失败：' + apiErrorMessage(error))
+    } finally {
+      setActionBusy(false)
+    }
   }
 
   const validateTopic = (value: string): string => {
@@ -194,10 +328,13 @@ function App() {
     try {
       const battle = await api<Battle>('/battles', { method: 'POST', body: JSON.stringify({ topic: topic.trim(), difficulty }) })
       setSelected(battle)
-      const url = new URL(window.location.href)
-      url.pathname = appBasePath()
-      url.searchParams.delete('battle_id')
-      window.history.replaceState({}, '', url.pathname + url.search)
+      selectedIdRef.current = battle.id
+      if (battle.status === 'completed' || battle.status === 'failed') void loadBattleScore(battle.id)
+      else {
+        setBattleScore(null)
+        setScoreMessage('')
+      }
+      clearReplayUrl()
       await Promise.all([loadHistory(0, false, search), loadSummary()])
       setMessage('战局创建完成')
     } catch (error) {
@@ -232,12 +369,17 @@ function App() {
       <section className="glass card"><div className="card-head"><div><div className="en">开始新战局（NEW BATTLE）</div><h2>开始新战局（New battle）</h2></div></div><form onSubmit={createBattle} noValidate><label htmlFor="topic">测试主题（Test topic）<input id="topic" className="input" value={topic} maxLength={200} aria-invalid={Boolean(topicError)} aria-describedby={topicError ? 'topic-error' : 'topic-count'} onChange={(event) => { const value = event.target.value; setTopic(value); if (topicError) setTopicError(validateTopic(value)) }} />{topicError ? <span className="field-error" id="topic-error" role="alert">{topicError}</span> : <span className="field-hint" id="topic-count">{topic.length}/200</span>}</label><label>对抗难度（Difficulty）<div className="diff-grid">{(['low', 'mid', 'high'] as Difficulty[]).map((item) => <label key={item}><input type="radio" name="difficulty" checked={difficulty === item} onChange={() => setDifficulty(item)} /><span className="diff-item"><b>{difficultyLabel[item]}</b><small>{item === 'low' ? '基础缺陷（Basic defect）' : item === 'mid' ? '规则违规（Rule violation）' : '复合漏洞（Compound vulnerability）'}</small></span></label>)}</div></label><button className="btn-primary" type="submit" disabled={busy}>{busy ? '攻防进行中（Battle running）...' : '开始攻防（Start battle）'}</button></form></section>
     <section className="glass card history"><div className="card-head"><div><div className="en">历史战局（BATTLE LOG）</div><h2>历史战局（Battle history）</h2></div><span className="en">{historyTotal} 场</span></div><input className="input" placeholder="搜索主题或编号（Search topic or ID）" value={search} onChange={(event) => { const value = event.target.value; setSearch(value); void loadHistory(0, false, value) }} />{historyLoading ? <div className="empty" role="status">正在加载历史战局（Loading battle history）...</div> : <div className="battle-list">{battles.length ? battles.map((battle) => <button className={'battle-item ' + (selected?.id === battle.id ? 'active' : '')} key={battle.id} onClick={() => openReplay(battle.id)}><span className={'battle-badge ' + battle.difficulty}>{difficultyLabel[battle.difficulty]}</span><span className="bi-main"><b>{battle.topic}</b><small>{new Date(battle.createdAt).toLocaleString('zh-CN')} · {displayLabel(battle.status)}</small></span><span className="arrow">›</span></button>) : <div className="empty">暂无匹配记录（No matching battles）</div>}</div>}<div className="pagination"><button type="button" className="btn-ghost" disabled={historyLoading || historyPage === 0} onClick={() => void loadHistory(historyPage - 1, false, search)}>上一页</button><span>第 {historyPage + 1} / {totalPages} 页 · 每页 {PAGE_SIZE} 场</span><button type="button" className="btn-ghost" disabled={historyLoading || historyPage + 1 >= totalPages} onClick={() => void loadHistory(historyPage + 1, false, search)}>下一页</button></div></section>
     </div>
-    <section className="glass card detail">{selected ? <><div className="detail-head"><div><h2>{selected.topic}</h2><div className="detail-meta">{selected.id} · {difficultyLabel[selected.difficulty]}难度（Difficulty） · {displayLabel(selected.status)} · {new Date(selected.createdAt).toLocaleString('zh-CN')}</div><div className="source-meta"><span>攻击来源：{sourceLabel(selected.attackerOut.agentSource)}</span><span>防守来源：{sourceLabel(selected.defenderOut[0]?.agentSource)}</span></div></div><button className="btn-ghost" onClick={exportMarkdown}>导出 Markdown（Export Markdown）</button></div><div className="steps">{[['战局创建（Create battle）', '已完成（Completed）'], ['攻击生成（Generate attacks）', selected.attackerOut.samples.length + ' 个样本（samples）'], ['防守检测（Detect）', count(selected, 'caught') + ' 项发现（findings）'], ['修复建议（Remediate）', count(selected, 'fixed') + ' 项动作（actions）']].map(([title, sub], index) => <div className="step" key={title}><div className="n">{index + 1}</div><b>{title}</b><small>{sub}</small></div>)}</div><div className="rounds-head"><h3>逐轮对抗（Rounds） <small>ROUNDS</small></h3><span className="total">{selected.attackerOut.samples.length} rounds</span></div><div className="rounds-scroll">{selected.attackerOut.samples.map((sample, index) => { const defense = selected.defenderOut[index] ?? {}; return <article className="round-card" key={selected.id + '-' + index}><div className="round-head"><b>第 {index + 1} 轮（Round {index + 1}）</b><span className="pill">{sampleTypeLabel[sample.type] ?? sample.type} · {difficultyLabel[sample.severity as Difficulty] ?? sample.severity}</span><span className="state">已完成（Completed）</span></div><div className="round-body"><div className="side atk"><h4>攻击方 · 样本生成（Attacker · Sample generation）</h4><span className="code-chip">来源（Source）：{sourceLabel(selected.attackerOut.agentSource)}</span><span className="code-chip">主题（Topic）：{sample.topic ?? selected.topic}</span><div className="sample"><span className="sample-label">原始样本（Raw sample）</span>{sample.content}</div></div><div className="side def"><h4>防守方 · 检测与修复（Defender · Detection & remediation）</h4><span className="code-chip">来源（Source）：{sourceLabel(defense.agentSource)}</span><Finding label="发现问题（Findings）" items={defense.caught?.map((item) => displayLabel(item.reason ?? item.type)) ?? []} empty="未发现问题（No findings）" /><Finding label="风险评估（Risk assessment）" items={defense.risks?.map((item) => displayLabel(item.reason ?? item.level)) ?? []} empty="无额外风险（No additional risks）" /><Finding label="修复动作（Remediation）" items={defense.fixed?.map((item) => displayLabel(item.action ?? item.status)) ?? []} empty="无需修复（No remediation needed）" />{defense.scopeNotice && <div className="finding"><span className="k">范围说明（Scope）</span><span className="v">{defense.scopeNotice}</span></div>}</div></div></article> })}</div></> : <div className="empty detail-empty">提交主题后开始一轮攻防（Submit a topic to start），或选择历史战局查看详情（Select a battle to view details）。</div>}</section></main>{message && <div className="toast show">{message}</div>}
+    <section className="glass card detail">{selected ? <><div className="detail-head"><div><h2>{selected.topic}</h2><div className="detail-meta">{selected.id} · {difficultyLabel[selected.difficulty]}难度（Difficulty） · {displayLabel(selected.status)} · {new Date(selected.createdAt).toLocaleString('zh-CN')}</div><div className="source-meta"><span>攻击来源：{sourceLabel(selected.attackerOut.agentSource)}</span><span>防守来源：{sourceLabel(selected.defenderOut[0]?.agentSource)}</span></div></div><div className="detail-actions"><button className="btn-ghost" type="button" onClick={exportMarkdown}>导出 Markdown</button>{selected.status === 'failed' && <button className="btn-ghost" type="button" disabled={actionBusy} onClick={() => void handleRetryBattle()}>重试失败战局</button>}{(selected.status === 'completed' || selected.status === 'failed') && <button className="btn-danger" type="button" disabled={actionBusy} onClick={() => void handleDeleteBattle()}>删除战局</button>}</div></div><div className="steps">{[['战局创建（Create battle）', displayLabel(selected.status)], ['攻击生成（Generate attacks）', selected.attackerOut.samples.length + ' 个样本（samples）'], ['防守检测（Detect）', count(selected, 'caught') + ' 项发现（findings）'], ['修复建议（Remediate）', count(selected, 'fixed') + ' 项动作（actions）']].map(([title, sub], index) => <div className="step" key={title}><div className="n">{index + 1}</div><b>{title}</b><small>{sub}</small></div>)}</div><section className="score-panel" aria-label="内部运行质量评分">{scoreLoading ? <div className="empty" role="status">正在计算攻击与防守评分…</div> : battleScore ? <><div className="score-head"><h3>内部运行质量评分</h3><span className="en">{battleScore.version}</span></div><p className="score-note">{battleScore.message || '分别衡量攻击/防守输出完整度与可审计性；不代表漏洞检出准确率或真实目标修复效果。'}</p><div className="score-grid"><ScoreRole title="攻击方" role={battleScore.attacker} /><ScoreRole title="防守方" role={battleScore.defender} /></div></> : scoreMessage ? <div className="empty">{scoreMessage}</div> : null}</section><div className="rounds-head"><h3>逐轮对抗（Rounds） <small>ROUNDS</small></h3><span className="total">{selected.attackerOut.samples.length} rounds</span></div><div className="rounds-scroll">{selected.attackerOut.samples.length ? selected.attackerOut.samples.map((sample, index) => { const defense = selected.defenderOut[index] ?? {}; return <article className="round-card" key={selected.id + '-' + index}><div className="round-head"><b>第 {index + 1} 轮（Round {index + 1}）</b><span className="pill">{sampleTypeLabel[sample.type] ?? sample.type} · {difficultyLabel[sample.severity as Difficulty] ?? sample.severity}</span><span className="state">{displayLabel(selected.status)}</span></div><div className="round-body"><div className="side atk"><h4>攻击方 · 样本生成（Attacker · Sample generation）</h4><span className="code-chip">来源（Source）：{sourceLabel(selected.attackerOut.agentSource)}</span><span className="code-chip">主题（Topic）：{sample.topic ?? selected.topic}</span><div className="sample"><span className="sample-label">原始样本（Raw sample）</span>{sample.content}</div></div><div className="side def"><h4>防守方 · 检测与修复（Defender · Detection & remediation）</h4><span className="code-chip">来源（Source）：{sourceLabel(defense.agentSource)}</span><Finding label="发现问题（Findings）" items={defense.caught?.map((item) => displayLabel(item.reason ?? item.type)) ?? []} empty="未发现问题（No findings）" /><Finding label="风险评估（Risk assessment）" items={defense.risks?.map((item) => displayLabel(item.reason ?? item.level)) ?? []} empty="无额外风险（No additional risks）" /><Finding label="修复动作（Remediation）" items={defense.fixed?.map((item) => displayLabel(item.action ?? item.status)) ?? []} empty="无需修复（No remediation needed）" />{defense.scopeNotice && <div className="finding"><span className="k">范围说明（Scope）</span><span className="v">{defense.scopeNotice}</span></div>}</div></div></article> }) : <div className="empty">{selected.status === 'pending' || selected.status === 'running' ? '攻防进行中，正在等待样本与检测结果…' : '本场暂无对抗轮次'}</div>}</div></> : <div className="empty detail-empty">提交主题后开始一轮攻防（Submit a topic to start），或选择历史战局查看详情（Select a battle to view details）。</div>}</section></main>{message && <div className="toast show">{message}</div>}
   </div>
 }
 
 function Finding({ label, items, empty }: { label: string; items: Array<string | undefined>; empty: string }) {
   return <div className="finding"><span className="k">{label}</span><span className="v">{items.filter(Boolean).join('；') || empty}</span></div>
+}
+
+function ScoreRole({ title, role }: { title: string; role: BattleScore['attacker'] }) {
+  const scoreText = role.score === null || role.score === undefined ? '证据不足' : `${role.score} / ${role.maxScore}`
+  return <div className="score-role"><strong>{title}：{scoreText}</strong>{role.message && <p className="score-note">{role.message}</p>}<ul>{(role.categories ?? []).map((item) => <li key={item.id ?? item.label}>{item.label} {item.score}/{item.maxScore}{item.basis ? `（${item.basis}）` : ''}</li>)}</ul></div>
 }
 
 export default App

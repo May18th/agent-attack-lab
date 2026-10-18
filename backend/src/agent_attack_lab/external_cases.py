@@ -88,26 +88,42 @@ def query_external_cases(
         parameters.append(f"%{product}%")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-    select = """
-        SELECT c.id, c.external_id, c.vendor_project, c.product, c.title,
-               c.date_added, c.due_date, c.description, c.required_action,
-               c.known_ransomware_use, c.forensic_triage, c.cwes_json, c.notes, c.source_url,
-               c.provenance_status, c.synthetic, c.record_kind,
-               s.publisher, s.source_type, s.catalog_version, s.released_at,
-               s.retrieved_at, s.content_sha256
-        FROM external_cases AS c
-        JOIN external_sources AS s ON s.id = c.source_id
+    preferred_cases = """
+        WITH ranked AS (
+            SELECT c.id, c.external_id, c.vendor_project, c.product, c.title,
+                   c.date_added, c.due_date, c.description, c.required_action,
+                   c.known_ransomware_use, c.forensic_triage, c.cwes_json, c.notes, c.source_url,
+                   c.provenance_status, c.synthetic, c.record_kind,
+                   s.publisher, s.source_type, s.catalog_version, s.released_at,
+                   s.retrieved_at, s.content_sha256,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY c.external_id
+                       ORDER BY CASE s.publisher WHEN 'CISA' THEN 0 WHEN 'NVD' THEN 1 ELSE 2 END,
+                                s.retrieved_at DESC, c.id DESC
+                   ) AS source_rank
+            FROM external_cases AS c
+            JOIN external_sources AS s ON s.id = c.source_id
+        ), preferred AS (
+            SELECT * FROM ranked WHERE source_rank = 1
+        )
     """
     try:
         with _connect_read_only(database) as connection:
             total_row = connection.execute(
-                f"SELECT COUNT(*) FROM external_cases AS c {where}", parameters
+                f"{preferred_cases} SELECT COUNT(*) FROM preferred AS c {where}", parameters
             ).fetchone()
             rows = connection.execute(
-                f"{select} {where} ORDER BY c.date_added DESC, c.external_id LIMIT ? OFFSET ?",
+                f"{preferred_cases} SELECT c.id, c.external_id, c.vendor_project, c.product, c.title, "
+                "c.date_added, c.due_date, c.description, c.required_action, "
+                "c.known_ransomware_use, c.forensic_triage, c.cwes_json, c.notes, c.source_url, "
+                "c.provenance_status, c.synthetic, c.record_kind, c.publisher, c.source_type, "
+                "c.catalog_version, c.released_at, c.retrieved_at, c.content_sha256 "
+                f"FROM preferred AS c {where} ORDER BY c.date_added DESC, c.external_id LIMIT ? OFFSET ?",
                 [*parameters, limit, offset],
             ).fetchall()
-            source_count = connection.execute("SELECT COUNT(*) FROM external_sources").fetchone()[0]
+            source_count = connection.execute(
+                "SELECT COUNT(DISTINCT publisher) FROM external_sources"
+            ).fetchone()[0]
     except sqlite3.DatabaseError:
         return {
             "available": False,

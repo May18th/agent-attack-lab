@@ -16,7 +16,9 @@ describe('api error handling', () => {
   })
 
   it.each([
+    [401, '需要登录后台或提供有效凭证后才能执行此操作'],
     [404, '战局不存在或已被删除'],
+    [409, '当前战局状态不允许此操作'],
     [429, '请求失败（HTTP 429）'],
     [500, '服务暂时不可用，请稍后重试'],
   ])('maps HTTP %s to a user-facing message', (status, message) => {

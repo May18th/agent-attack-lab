@@ -4,6 +4,14 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-15 主线与生产差异、前端本地变更复核
+
+- 本机 `main` 与 `origin/main` 均为 `3d9109e`；PR #7 和 #8 已在主线。公网 API `/health=200`，但 `/openapi.json` 尚无 `/battles/{battle_id}/score` 与 `/internal-scores`，生产尚未对齐当前主线。
+- 本轮从本机连接 `deployer@47.108.92.113:22` 超时，TCP 22 检查失败。没有执行任何 VPS 命令；VPS 当前 HEAD、工作树状态、备份与回滚条件均无法确认，因此没有部署或重启服务。恢复 SSH 后，先检查远端工作树和备份，保留已有 `start-service.sh` 修改，再执行文件级发布。
+- 正式外部案例 API 本轮返回 `available=true`、1,739 条、来源数 1；样本为 CISA `external_fact`、`synthetic=false`。NVD 官方 CVE API 可读取权威 CVE 内容，但当前存储按来源快照记录，同一 CVE 可跨来源重复。没有导入第二来源；先完成去重和快照更新策略，再扩充数据库。
+- 前端 6 个本地改动文件已审阅；Vitest 23 项、构建环境测试 4 项、Lint、Build 全通过。另修复战局切换时旧评分响应覆盖当前评分的竞态。改动尚未部署，真实浏览器渲染、控制台和交互仍未验收。
+- 禁止据此宣称生产已更新；不要把 NVD/CISA 外部事实记作本项目真实战局，不要将长期记忆、`.env`、密钥、证书、数据库或私有发行物提交到 Git。
+
 ## 2026-10-13 PR #6 合并与 Pages Preview API 隔离排查
 
 - GitHub PR #6 已于 2026-10-13 合并到 `main`，merge commit `b00ca4b15f159793dc969a48a3dbbc3abe733529`；后端测试、前端构建与检查、Cloudflare Pages、Workers Builds 均通过。评分 v2 已进入 Git `main`，但尚未部署到生产 API。
@@ -848,3 +856,29 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - 当前协作分支仍为 `codex/team-domain-handoff`，HEAD `47d5916`；本机未跟踪队友材料及 WIT wheel 保持原样，不纳入本次同步。长期记忆、凭据、证书/私钥、数据库、日志、JSONL 和私有发行物禁止提交。
 
 下一步：由负责人安排隔离测试数据源，验证空白 topic 返回 422、合法创建返回 201、已完成战局删除返回 204 且关联事件清理、运行中战局删除返回 409；避免对生产业务数据做破坏性验收。若尚无隔离环境，先由队友确认测试环境/数据库，不创建或删除生产战局。
+
+### 外部案例库刷新与 NVD 接入（2026-10-15）
+
+- 本机外部案例 SQLite 已刷新 CISA KEV 官方目录至版本 `2026.10.14`：最新查询快照 1,745 条；历史来源快照物理记录 3,484 条，`--validate` 返回 `valid=true`。查询层按 CVE 去重，不将来源快照重复展示。
+- 本地修改新增 NVD API 2.0 有限时间窗导入、`Rejected` 跳过、CVE 跨来源去重（CISA 优先）及对应测试；外部案例继续标记为 `verified_primary` / `external_fact` / `synthetic=false`，不等同于实战样本或观察事件。
+- 当前网络到 NVD API 两次超时，未导入 NVD 数据；生产案例库未同步。SSH 恢复后如需上线，先备份生产案例库，再执行 7-30 天时间窗导入、校验、接口抽查和 Redis 外部案例缓存失效。
+- 本轮后端全量测试：`118 passed, 4 skipped`；跳过项为 Windows 缺 Bash 的既有测试。新增本地数据库备份文件位于 `backend/.data/`，被 Git 忽略，不得提交。
+
+### 评分快照落库（2026-10-15）
+
+- 本地修改新增 `battle_scores` 表及 Alembic 迁移 `20261015_0002`，覆盖 SQLite、PostgreSQL 和 MySQL。终态战局保存 `internal-agent-v2` 评分 JSON，`/battles/{id}/score`、战报和 `/internal-scores` 优先读取快照；旧数据无快照时实时回退。
+- 重试失败战局会清理旧评分，删除战局会同步清理评分；评分规则版本仍由 `scoring.py` 控制。不要把评分 JSON 当作漏洞准确率或真实修复结果。
+- 本地完整后端测试：`119 passed, 4 skipped`；生产尚未迁移或部署。SSH 恢复后先备份主库，运行 `uv run alembic upgrade head`，再以隔离战局验收评分接口和删除清理。
+
+### 后端启动恢复分页（2026-10-18）
+
+- 本地修改修复服务启动恢复只读取每种状态前 200 场的问题：现在分页读取全部 `pending` / `running` 记录，再启动恢复任务；新增 205 场恢复回归测试。
+- 后端全量测试：`120 passed, 4 skipped`；仅有一条既有 Starlette/httpx 弃用警告。
+- 改动已推送到 PR #9，提交 `e80554c`；后端测试、前端检查、Cloudflare Pages、Workers Builds 四项检查全部通过，PR 状态 `CLEAN`，目前尚无 review，仍未合入或部署。Workers Builds 只更新分支 Preview（`npx wrangler preview`），未部署生产。
+- 生产服务和业务数据未触碰。下一步等待 PR 审核；合入后仍须先只读检查 VPS checkout、工作树和回滚备份，再进行生产迁移与隔离数据验收。
+
+### NVD 有限窗口本机验收（2026-10-18）
+
+- 使用临时 SQLite 验证 NVD API 2.0 的 2026-10-10 至 2026-10-17 UTC 发布时间窗口：API 返回 5,487 条，29 条 `Rejected` 被排除，5,458 个唯一 CVE 入库；`validate_database` 返回 `valid=true`，全部为 `verified_primary / external_fact / synthetic=false`。
+- 临时验证库已删除；本轮没有修改现有 CISA 数据库、生产案例库或 Redis，也没有与 CISA 做实库合并。已有自动化测试覆盖跨来源同 CVE 优先展示 CISA 的行为。
+- PR #9 未合入；生产导入必须等 PR 审核合入后，先备份生产案例库，再做有限窗口导入、验证接口去重结果、抽查来源及缓存失效。不要把 NVD 外部资料表述为本项目实战或观测事件。

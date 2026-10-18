@@ -24,3 +24,15 @@
 .external-cases{margin-bottom:18px}.external-toolbar{display:flex;align-items:center;gap:10px}.external-toolbar .input{margin:0;flex:1}.external-toolbar .btn-ghost{flex:none;min-width:76px}.external-case-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.external-case{padding:14px;border:1px solid var(--line);border-radius:10px;background:#060b1890}.external-case-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline}.external-case-head strong{font:600 13px var(--mono);color:var(--amber)}.external-case-head span,.external-case-meta,.external-case-source{color:var(--muted);font-size:11px}.external-case h3{margin:8px 0 5px;font-size:14px}.external-case p{margin:6px 0;color:var(--muted);font-size:12px;line-height:1.55}.external-case-source{overflow-wrap:anywhere}.external-case-source a{color:var(--blue)}
 @media(max-width:640px){.topbar-actions{width:100%;justify-content:flex-start}.auth-panel{margin:20px 0;padding:22px}}
 @media(max-width:760px){.external-case-list{grid-template-columns:1fr}.external-toolbar{align-items:stretch;flex-direction:column}.external-toolbar .btn-ghost{width:100%}}
+.detail-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;align-items:center}
+.btn-danger{cursor:pointer;border-radius:10px;padding:11px 15px;border:1px solid #ff5d6c66;background:#ff5d6c1a;color:#ff9ba5}
+.btn-danger:disabled{opacity:.45;cursor:not-allowed}
+.score-panel{margin:18px 0 8px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#0d172580}
+.score-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px}
+.score-head h3{margin:0;font-size:14px}
+.score-note{margin:0 0 10px;color:var(--muted);font-size:11px;line-height:1.55}
+.score-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.score-role{min-width:0;padding:10px 12px;border:1px solid #263950;border-radius:8px;background:#0a1322}
+.score-role strong{color:#80d9c7;font-size:13px}
+.score-role ul{margin:8px 0 0;padding-left:18px;color:var(--muted);font-size:11px;line-height:1.6}
+@media(max-width:640px){.score-grid{grid-template-columns:1fr}.detail-actions{width:100%;justify-content:flex-start}}
