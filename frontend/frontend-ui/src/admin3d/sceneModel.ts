@@ -10,7 +10,7 @@ export type AdminSceneNode = {
   status: AdminSceneStatus
   color: string
   position: [number, number, number]
-  updatedAt?: string
+  timestamp?: string
   source: AdminBattle | ExternalCase | AdminMetrics | null
 }
 export type AdminSceneEdge = { id: string; from: string; to: string; status: AdminSceneStatus; color: string }
@@ -58,15 +58,18 @@ export function buildAdminSceneModel(input: BuildAdminSceneModelInput): AdminSce
     return {
       id: `battle:${battle.id}`, kind: 'battle', label: battle.topic || battle.id, status,
       color: statusColors[status], position: [Math.cos(angle) * radius, 0, Math.sin(angle) * radius],
-      updatedAt: battle.createdAt, source: battle,
+      timestamp: battle.createdAt, source: battle,
     }
   })
   const caseCapacity = Math.max(0, capacity - Math.min(battleNodes.length, capacity))
-  const caseNodes: AdminSceneNode[] = input.externalCases.slice(0, caseCapacity).map((item, index) => ({
-    id: `case:${item.externalId}`, kind: 'external-case', label: item.externalId, status: 'unknown', color: statusColors.unknown,
-    position: [Math.cos(index * 2.4) * (4.2 + index * 0.05), 0, Math.sin(index * 2.4) * (4.2 + index * 0.05)],
-    updatedAt: item.dateAdded, source: item,
-  }))
+  const caseNodes: AdminSceneNode[] = [...input.externalCases]
+    .sort((a, b) => timestamp(b.dateAdded) - timestamp(a.dateAdded))
+    .slice(0, caseCapacity)
+    .map((item, index) => ({
+      id: `case:${item.externalId}`, kind: 'external-case', label: item.externalId, status: 'unknown', color: statusColors.unknown,
+      position: [Math.cos(index * 2.4) * (4.2 + index * 0.05), 0, Math.sin(index * 2.4) * (4.2 + index * 0.05)],
+      timestamp: item.dateAdded, source: item,
+    }))
   const nodes = [...roleNodes, ...battleNodes.slice(0, capacity), ...caseNodes].slice(0, MAX_NODES)
   const edges: AdminSceneEdge[] = []
   for (const node of nodes) {

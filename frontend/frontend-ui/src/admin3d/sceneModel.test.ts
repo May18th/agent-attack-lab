@@ -32,4 +32,20 @@ describe('buildAdminSceneModel', () => {
     expect(model.nodes.some(node => node.id === 'battle:active-old')).toBe(true)
     expect(model.nodes.some(node => node.id === 'battle:old-0')).toBe(false)
   })
+
+  it('keeps the newest external cases when shuffled input exceeds node capacity', () => {
+    const datedCases: ExternalCase[] = Array.from({ length: 70 }, (_, index) => ({
+      externalId: `CVE-${index}`, vendorProject: 'v', product: 'p', title: `case-${index}`,
+      dateAdded: new Date(Date.UTC(2026, 0, index + 1)).toISOString(), description: '', requiredAction: '',
+      cwes: [], sourceUrl: 'https://example.test', provenanceStatus: 'verified', synthetic: false, recordKind: 'catalog',
+      source: { publisher: 'p', sourceType: 'feed', catalogVersion: '1', retrievedAt: '2026-01-01', contentSha256: 'abcdef' },
+    }))
+    const cases = [...datedCases.filter((_, index) => index % 2 === 0), ...datedCases.filter((_, index) => index % 2 === 1)]
+    const model = buildAdminSceneModel({ battles: [], metrics: {}, externalCases: cases })
+    const caseIds = model.nodes.filter(node => node.kind === 'external-case').map(node => node.id)
+    expect(caseIds).toHaveLength(61)
+    expect(caseIds).toContain('case:CVE-69')
+    expect(caseIds).toContain('case:CVE-9')
+    expect(caseIds).not.toContain('case:CVE-8')
+  })
 })
