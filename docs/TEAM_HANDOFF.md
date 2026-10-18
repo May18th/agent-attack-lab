@@ -4,6 +4,13 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-18 PR #10 合并后的当前核验
+
+- GitHub PR #10 已合并到 `main`，合并提交 `e7abe1defa3b78750e8b0ca991d45662b601a911`；GitHub Actions 项目检查通过，当前无开放 PR。本机 `codex/fix-pr9-review-findings` 与 `origin/main` 内容无差异，尚未切换本地分支。
+- 公网只读复验：生产 API `/health`、`/openapi.json`、`/auth/session`、`/dashboard/summary` 均返回 200；正式前端根域返回 200；正式前端来源 CORS 预检返回 200。`/metrics` 无密钥返回 401，`/rpc` 的 GET 返回 405。
+- 生产 OpenAPI 仍缺少 `/battles/{battle_id}/score` 与 `/internal-scores`，说明生产代码尚未对齐当前主线评分版本。不得把主线合并或公网健康 200 表述为评分已部署。
+- SSH `deployer@47.108.92.113:22` 本轮仍超时，未执行任何 VPS 命令、部署、重启、迁移或生产写请求。恢复后先核对远端 HEAD、分支、工作树、systemd 的 `WorkingDirectory`/`ExecStart`、数据库备份和回滚目录，再决定是否发布 `e7abe1d`；不得强制覆盖远端已有修改。
+
 ## 2026-10-15 主线与生产差异、前端本地变更复核
 
 - 本机 `main` 与 `origin/main` 均为 `3d9109e`；PR #7 和 #8 已在主线。公网 API `/health=200`，但 `/openapi.json` 尚无 `/battles/{battle_id}/score` 与 `/internal-scores`，生产尚未对齐当前主线。

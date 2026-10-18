@@ -6,6 +6,11 @@
 
 ## 最新状态（2026-10-18）
 
+- GitHub PR #10 已合并到 `main`，合并提交为 `e7abe1defa3b78750e8b0ca991d45662b601a911`；GitHub Actions 项目检查已通过，当前无开放 PR。本机修复分支 `codex/fix-pr9-review-findings` 内容与 `origin/main` 无差异，但尚未切换到本地 `main`。
+- 本次公网只读复验：`https://api.yuanyiagentzhandui.cn/health` HTTP 200；`/openapi.json` HTTP 200；`/auth/session` HTTP 200 且未认证；`/dashboard/summary` HTTP 200；正式前端 `https://yuanyiagentzhandui.cn/` HTTP 200；正式前端来源 CORS 预检 HTTP 200。
+- 生产 API 的 `/openapi.json` 当前仍未包含 `/battles/{battle_id}/score` 与 `/internal-scores`，因此不能据此认定评分 v2 已上线。`/metrics` 未带密钥返回 401；`/rpc` 使用 GET 返回 405，均为当前鉴权/方法边界的只读结果。
+- SSH `deployer@47.108.92.113:22` 仍连接超时。本轮未执行远程命令、部署、重启、数据库迁移或生产写请求；VPS 当前 checkout、工作树、systemd 状态、备份和回滚点仍无法确认。恢复 SSH 后必须先只读预检，再评估发布 `e7abe1d`。
+
 - 后端启动恢复已改为分页收齐所有 `pending` / `running` 战局，不再受每种状态 200 条上限影响；新增 205 条恢复回归测试。后端全量测试 `120 passed, 4 skipped`，有一条既有 Starlette/httpx 弃用警告。
 - NVD API 7 天窗口（2026-10-10 至 2026-10-17 UTC）本机临时库验收通过：收到 5,487 条，排除 29 条 Rejected，导入 5,458 个唯一 CVE；`validate_database` 返回 `valid=true`，记录均为 `verified_primary / external_fact / synthetic=false`。临时数据库已删除，未与 CISA 数据合并、未同步生产。
 - 上述修改已推送到 PR #9（提交 `e80554c`），后端测试、前端检查、Cloudflare Pages 和 Workers Builds 四项检查全部通过，PR 状态 `CLEAN`；目前无人 review，仍未合入或部署。Workers Builds 只更新分支 Preview（`npx wrangler preview`），未部署生产。未操作生产服务器。
