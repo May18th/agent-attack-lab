@@ -4,6 +4,13 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-18 生产部署重跑与恢复
+
+- Workflow `39125655770` 针对主线提交 `49107974392b4712590d313638a92f11b2a87240` 的重跑已失败，失败步骤为 `Checkout 部署提交`，未执行部署脚本、Alembic、systemd 切换或公网验收。
+- Runner `yuanyi-agent-attack-lab-vps` 在线且已接收 Job，但 `actions/checkout@v4` 访问 GitHub 失败：连接 `github.com:443` 超时，并出现 `GnuTLS recv error (-110)`；Job 总耗时约 6 分 55 秒，进程退出码 128。
+- VPS 网络恢复后立即重跑同一 Workflow，Job `117673383376` 于 2026-10-18 20:19（UTC+8）成功；部署脚本输出 `DEPLOY OK: 49107974392b4712590d313638a92f11b2a87240 (main)`。脚本内置的三项服务 active、release `WorkingDirectory`/`PYTHONPATH`、三个本地健康接口和公网健康接口均通过；部署保留 VPS 既有本地生产修改与备份，没有强制覆盖。
+- 公网只读复验：`/health`、`/openapi.json`、`/dashboard/summary` 均 HTTP 200；OpenAPI 已出现 `/battles/{battle_id}/score` 与 `/internal-scores`。本机到 VPS `47.108.92.113:22` 仍未建立连接，因此没有通过 SSH 追加远程命令。
+
 ## 2026-10-18 PR #15 合并后的生产部署与源码加载核验
 
 - PR #15 已合并，提交 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（`deployer`）上成功完成；部署脚本执行 Alembic 迁移，使用 `/home/deployer/agent-attack-lab-releases/<commit>` 隔离 release worktree，并保留 `/opt/agent-attack-lab` 既有未提交修改。
