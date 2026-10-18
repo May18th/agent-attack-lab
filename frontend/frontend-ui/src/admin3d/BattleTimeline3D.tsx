@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AdminBattle, AdminBattleEvent } from '../adminApi'
 import type { ThreeScene } from './ThreeScene'
 import { buildBattleTimelineSceneModel } from './sceneModel'
 import { loadTimelineSceneRenderer } from './timelineSceneLoader'
+import { useCommittedRef } from './useCommittedRef'
 import './BattleTimeline3D.css'
 
 type BattleTimeline3DProps = {
@@ -25,7 +26,7 @@ function BattleTimeline3DView({ battle, events, audit, onSelectEvent }: BattleTi
   const sceneContainerRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<ThreeScene | null>(null)
   const sceneModel = useMemo(() => buildBattleTimelineSceneModel(battle, events), [battle, events])
-  const sceneModelRef = useRef(sceneModel)
+  const sceneModelRef = useCommittedRef(sceneModel)
   const orderedEvents = useMemo(() => events
     .map((event, index) => ({ event, index }))
     .sort((left, right) => (left.event.sequence ?? Number.MAX_SAFE_INTEGER) - (right.event.sequence ?? Number.MAX_SAFE_INTEGER) || left.index - right.index)
@@ -60,10 +61,9 @@ function BattleTimeline3DView({ battle, events, audit, onSelectEvent }: BattleTi
       } catch (error) { showError(error) }
     }).catch(showError)
     return () => { disposed = true; scene?.dispose(); sceneRef.current = null }
-  }, [onSelectEvent])
+  }, [onSelectEvent, sceneModelRef])
 
-  useEffect(() => {
-    sceneModelRef.current = sceneModel
+  useLayoutEffect(() => {
     sceneRef.current?.update(sceneModel)
   }, [sceneModel])
 
