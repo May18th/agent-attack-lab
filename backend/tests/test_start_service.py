@@ -47,6 +47,14 @@ def test_deploy_script_verifies_running_release_context() -> None:
     assert 'expected_pythonpath="$release_backend/src"' in source
 
 
+def test_deploy_script_supports_codeload_source_releases() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'source_dir=${DEPLOY_SOURCE_DIR:-}' in source
+    assert 'source release has an unexpected commit' in source
+    assert 'cp -a "$source_dir"/. "$release_dir"/' in source
+
+
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
 def test_start_service_prefers_release_src_on_pythonpath(tmp_path: Path) -> None:
     backend = tmp_path / "backend"
