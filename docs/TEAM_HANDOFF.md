@@ -917,3 +917,11 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - 使用临时 SQLite 验证 NVD API 2.0 的 2026-10-10 至 2026-10-17 UTC 发布时间窗口：API 返回 5,487 条，29 条 `Rejected` 被排除，5,458 个唯一 CVE 入库；`validate_database` 返回 `valid=true`，全部为 `verified_primary / external_fact / synthetic=false`。
 - 临时验证库已删除；本轮没有修改现有 CISA 数据库、生产案例库或 Redis，也没有与 CISA 做实库合并。已有自动化测试覆盖跨来源同 CVE 优先展示 CISA 的行为。
 - PR #9 未合入；生产导入必须等 PR 审核合入后，先备份生产案例库，再做有限窗口导入、验证接口去重结果、抽查来源及缓存失效。不要把 NVD 外部资料表述为本项目实战或观测事件。
+
+### 固定提交部署与 Partner mTLS/Discovery 复验（2026-10-18）
+
+- 生产部署 Workflow `39130920889`、Job `117685723339` 已成功，运行提交为 `8fb4a056599b52d33a3c1f6d97ef4ba5e4dcf46b`，与 `origin/main` 一致。VPS 通过 codeload 固定提交发布，保留原有生产本地修改和备份；未上传证书、私钥、Token、数据库或 Redis 数据。
+- 公网只读结果：`/health`、`/openapi.json`、`/auth/session` 均 200；无密钥 `/metrics` 为 401，`/rpc` GET 为 405；CORS 预检为 200，允许正式前端来源并允许凭据。未执行生产业务写请求。
+- Partner mTLS 复验：attack、defense `/health` 均 200；未加载客户端证书的 `/rpc` 均 403；加载 Leader clientAuth 证书和梧桐 trust bundle 后，两个 AIP Start 均返回 `awaiting-completion`，Complete 均返回 `completed`，攻击结果含 `samples`，防守结果含 `caught/risks/fixed`。本轮只产生 Partner 内存任务，未创建生产战局。
+- Discovery 复验：当前 Leader AIC `1.2.156.3088.1.BUPT.RX2TMW.34O5X3.KXMH76.09CQ`、攻击 AIC `1.2.156.3088.1.BUPT.RX2TMW.LMB4VK.NJ99P0.08RN`、防守 AIC `1.2.156.3088.1.BUPT.RX2TMW.KYUDTI.BI8UKQ.09SG` 均为 `active=true`，正式 endpoint 分别为 `https://api.yuanyiagentzhandui.cn/rpc`、`https://attack.yuanyiagentzhandui.cn/rpc`、`https://defense.yuanyiagentzhandui.cn/rpc`，传输 JSONRPC，安全方案 mTLS。查询服务存在偶发读超时，重试后按技能查询成功；不把偶发超时描述为持续不可用。
+- 本地后端全量测试：`126 passed, 5 skipped, 1 warning`。当前不接入外部 LLM/API，Partner 结果继续按规则兜底。后续若做完整业务验收，应使用隔离数据源执行 low/mid/high，并保留创建、终态、删除和事件清理的请求证据；不要直接对生产战局做破坏性写操作。
