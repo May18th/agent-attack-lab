@@ -4,6 +4,21 @@
 
 > 当前状态短版见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。本文后续章节保留历史验收证据、接口契约和平台操作说明；遇到旧时间线与短版冲突时，以最新验证记录和 Git 状态为准。
 
+## 2026-10-18 PR #15 合并后的生产部署与源码加载核验
+
+- PR #15 已合并，提交 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（`deployer`）上成功完成；部署脚本执行 Alembic 迁移，使用 `/home/deployer/agent-attack-lab-releases/<commit>` 隔离 release worktree，并保留 `/opt/agent-attack-lab` 既有未提交修改。
+- 首个本地 8787 健康探测在服务重启瞬间连接失败，后续重试通过，最终日志为 `DEPLOY OK: 10bb83e6703b244fcbdb5119c5c64f1e0f123cc8 (main)`。这只能证明健康探测最终通过，不能单独证明运行时导入的是目标 release 代码。
+- 2026-10-18 18:31（UTC+8）公网只读复验：`https://api.yuanyiagentzhandui.cn/health`、`/openapi.json`、`/dashboard/summary` 均 HTTP 200；健康响应 `requestId=req-2dfd86bc-49d9-4cd2-9978-9c1d8ee8894d`。OpenAPI 已包含 `DELETE /battles/{battle_id}`，但仍缺少 `/battles/{battle_id}/score` 和 `/internal-scores`。
+- 根因核查发现 release 的 `start-service.sh` 原先直接使用共享虚拟环境中的 `agent_attack_lab`，没有优先加入当前 release 的 `src`；因此可能出现部署提交已切换、运行时仍加载旧已安装包的情况。`codex/fix-release-import` 已新增启动脚本契约测试，并在进入 backend 目录后设置 `PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"`，确保当前 release 源码优先。该修复尚未部署。
+- 本机从 `backend` 目录执行后端测试：`122 passed, 5 skipped`，仅保留既有 Starlette/httpx 弃用警告。外部 LLM/API 未接入，攻击与防守保持规则兜底。
+
+下一步：
+
+1. 审核并合入 `codex/fix-release-import`；不要将 `.env`、证书/私钥、Token、数据库、Redis 数据、日志或长期记忆带入提交。
+2. 合入后观察新的生产部署 Workflow，确认三项本地健康检查、公网 `/health`、systemd 服务和 release 路径均通过。
+3. 重新读取公网 `/openapi.json`，确认是否出现评分路由；若仍缺失，继续核查服务进程的实际 `PYTHONPATH` 和 `WorkingDirectory`，不要直接修改生产数据库或覆盖原工作树。
+4. 评分接口确认上线后，再用隔离数据源验收空主题 422、合法创建 201、完成删除 204、运行中删除 409；当前没有隔离数据源时，不对生产业务数据做破坏性写测试。
+
 ## 2026-10-18 PR #10 合并后的当前核验
 
 - GitHub PR #10 已合并到 `main`，合并提交 `e7abe1defa3b78750e8b0ca991d45662b601a911`；GitHub Actions 项目检查通过，当前无开放 PR。本机 `codex/fix-pr9-review-findings` 与 `origin/main` 内容无差异，尚未切换本地分支。

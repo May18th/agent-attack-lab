@@ -4,16 +4,14 @@
 
 本文只记录当前状态；历史执行证据见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) 与 Git 历史。
 
-## 最新状态（2026-10-18）
+## 最新状态（2026-10-18 18:31 +08:00）
 
-- GitHub PR #10 已合并到 `main`，合并提交为 `e7abe1defa3b78750e8b0ca991d45662b601a911`；GitHub Actions 项目检查已通过，当前无开放 PR。本机修复分支 `codex/fix-pr9-review-findings` 内容与 `origin/main` 无差异，但尚未切换到本地 `main`。
-- 本次公网只读复验：`https://api.yuanyiagentzhandui.cn/health` HTTP 200；`/openapi.json` HTTP 200；`/auth/session` HTTP 200 且未认证；`/dashboard/summary` HTTP 200；正式前端 `https://yuanyiagentzhandui.cn/` HTTP 200；正式前端来源 CORS 预检 HTTP 200。
-- 生产 API 的 `/openapi.json` 当前仍未包含 `/battles/{battle_id}/score` 与 `/internal-scores`，因此不能据此认定评分 v2 已上线。`/metrics` 未带密钥返回 401；`/rpc` 使用 GET 返回 405，均为当前鉴权/方法边界的只读结果。
-- SSH `deployer@47.108.92.113:22` 仍连接超时。本轮未执行远程命令、部署、重启、数据库迁移或生产写请求；VPS 当前 checkout、工作树、systemd 状态、备份和回滚点仍无法确认。恢复 SSH 后必须先只读预检，再评估发布 `e7abe1d`。
-
-- 后端启动恢复已改为分页收齐所有 `pending` / `running` 战局，不再受每种状态 200 条上限影响；新增 205 条恢复回归测试。后端全量测试 `120 passed, 4 skipped`，有一条既有 Starlette/httpx 弃用警告。
-- NVD API 7 天窗口（2026-10-10 至 2026-10-17 UTC）本机临时库验收通过：收到 5,487 条，排除 29 条 Rejected，导入 5,458 个唯一 CVE；`validate_database` 返回 `valid=true`，记录均为 `verified_primary / external_fact / synthetic=false`。临时数据库已删除，未与 CISA 数据合并、未同步生产。
-- 上述修改已推送到 PR #9（提交 `e80554c`），后端测试、前端检查、Cloudflare Pages 和 Workers Builds 四项检查全部通过，PR 状态 `CLEAN`；目前无人 review，仍未合入或部署。Workers Builds 只更新分支 Preview（`npx wrangler preview`），未部署生产。未操作生产服务器。
+- PR #15 已合并到 `main`，合并提交为 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产后端部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（用户 `deployer`）上成功完成，部署脚本输出 `DEPLOY OK`；Alembic 迁移执行完成，release worktree 与原生产工作树隔离。
+- 部署脚本曾在服务重启后的首个 8787 探测出现一次瞬时连接失败，随后重试通过；该次失败不是最终部署失败。当前公网只读复验：`/health` HTTP 200，`/openapi.json` HTTP 200，`/dashboard/summary` HTTP 200。健康响应的 `requestId` 为 `req-2dfd86bc-49d9-4cd2-9978-9c1d8ee8894d`（2026-10-18 18:31 +08:00）。
+- 当前公网 OpenAPI 包含 `DELETE /battles/{battle_id}`，但仍不包含 `/battles/{battle_id}/score` 与 `/internal-scores`。因此评分 v2 尚未被公网 API 证明已上线；不得把主线代码或内部 Preview 验收当作生产评分接口。
+- 根因核查发现：release worktree 的 `start-service.sh` 原先未将 release 的 `src` 放到 `PYTHONPATH`，共享虚拟环境可能导入旧的已安装包，造成部署提交与运行代码不一致。分支 `codex/fix-release-import` 已补充启动路径契约测试和最小修复；该修复尚未部署，需先审核合入，再重新运行生产部署并复验 OpenAPI。
+- 当前不接入外部 LLM/API；攻击、防守继续使用现有规则兜底，除非负责人另行决定。当前无开放 PR（本地修复分支尚未创建 PR）。
+- 本机后端全量测试从 `backend` 目录执行为 `122 passed, 5 skipped`，仅有既有 Starlette/httpx 弃用警告；从仓库根目录运行会触发 Alembic 相对路径错误，不作为有效测试结果。
 
 ## 本地状态（2026-10-15，历史）
 
