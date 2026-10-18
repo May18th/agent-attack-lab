@@ -4,11 +4,12 @@
 
 本文只记录当前状态；历史执行证据见 [`TEAM_HANDOFF.md`](TEAM_HANDOFF.md) 与 Git 历史。
 
-## 最新状态（2026-10-18 20:20 +08:00）
+## 最新状态（2026-10-18 20:27 +08:00）
 
 - 生产部署 Workflow `39125655770` 针对主线提交 `49107974392b4712590d313638a92f11b2a87240` 的重跑已失败，未进入固定提交、部署迁移或服务验收步骤。失败发生在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps` 的 `actions/checkout@v4`：Runner 访问 `https://github.com/May18th/agent-attack-lab/` 时分别出现连接超时和 `GnuTLS recv error (-110)`；Job 用时约 6 分 55 秒后退出码 128。
 - 随后在 VPS 网络恢复后重跑同一 Workflow，Job `117673383376` 于 2026-10-18 20:19（UTC+8）成功完成。部署脚本输出 `DEPLOY OK: 49107974392b4712590d313638a92f11b2a87240 (main)`；脚本内置的服务 active、release 工作目录、release `PYTHONPATH`、三个本地健康接口和公网健康接口检查均通过。部署保留了 VPS 既有的本地生产修改和备份文件，未强制覆盖。
 - 当前公网只读复验：`/health` HTTP 200（`requestId=req-df129b9c-bcb7-43ff-bf15-ff764aa84fbd`），`/openapi.json` HTTP 200，`/dashboard/summary` HTTP 200；OpenAPI 已包含 `/battles/{battle_id}/score` 与 `/internal-scores`。本轮未执行生产业务写请求。
+- Partner TLS 差异复核：两个域名 DNS 均指向 `47.108.92.113`，TCP 443 可达。Windows Schannel `curl`（含 `-k`）对两个域名均出现连接重置；使用 Python 标准库 TLS 进行同等传输诊断时，两个 `/health` GET 均 HTTP 200，无客户端证书的 `/rpc` POST 均 HTTP 403。该结果说明服务端入口正常，差异来自 Windows TLS 客户端与梧桐私有 CA/握手的兼容性；本轮未持有本机 clientAuth 材料，因此没有宣称完成新的合法证书 AIP 调用。
 
 - PR #15 已合并到 `main`，合并提交为 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产后端部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（用户 `deployer`）上成功完成，部署脚本输出 `DEPLOY OK`；Alembic 迁移执行完成，release worktree 与原生产工作树隔离。
 - 部署脚本曾在服务重启后的首个 8787 探测出现一次瞬时连接失败，随后重试通过；该次失败不是最终部署失败。当前公网只读复验：`/health` HTTP 200，`/openapi.json` HTTP 200，`/dashboard/summary` HTTP 200。健康响应的 `requestId` 为 `req-2dfd86bc-49d9-4cd2-9978-9c1d8ee8894d`（2026-10-18 18:31 +08:00）。

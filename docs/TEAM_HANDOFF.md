@@ -11,6 +11,12 @@
 - VPS 网络恢复后立即重跑同一 Workflow，Job `117673383376` 于 2026-10-18 20:19（UTC+8）成功；部署脚本输出 `DEPLOY OK: 49107974392b4712590d313638a92f11b2a87240 (main)`。脚本内置的三项服务 active、release `WorkingDirectory`/`PYTHONPATH`、三个本地健康接口和公网健康接口均通过；部署保留 VPS 既有本地生产修改与备份，没有强制覆盖。
 - 公网只读复验：`/health`、`/openapi.json`、`/dashboard/summary` 均 HTTP 200；OpenAPI 已出现 `/battles/{battle_id}/score` 与 `/internal-scores`。本机到 VPS `47.108.92.113:22` 仍未建立连接，因此没有通过 SSH 追加远程命令。
 
+## 2026-10-18 Partner TLS 客户端差异复核
+
+- `attack.yuanyiagentzhandui.cn`、`defense.yuanyiagentzhandui.cn` 均解析到 `47.108.92.113`，本机 TCP 443 可达。
+- Windows Schannel `curl`（即使使用 `-k`）访问两个域名时连接被重置；使用 Python 标准库 TLS 做传输诊断时，两个 `/health` GET 均 HTTP 200，无客户端证书的 `/rpc` POST 均 HTTP 403。由此确认服务端入口仍可用，前者是 Windows TLS 客户端与梧桐私有 CA/握手的差异，不应据此修改 nginx 或证书。
+- 本轮本机未发现可用的 clientAuth 证书材料，因此只记录无证书拒绝和服务健康结果，不把这次诊断描述为新的合法 mTLS AIP 调用验收。
+
 ## 2026-10-18 PR #15 合并后的生产部署与源码加载核验
 
 - PR #15 已合并，提交 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（`deployer`）上成功完成；部署脚本执行 Alembic 迁移，使用 `/home/deployer/agent-attack-lab-releases/<commit>` 隔离 release worktree，并保留 `/opt/agent-attack-lab` 既有未提交修改。
