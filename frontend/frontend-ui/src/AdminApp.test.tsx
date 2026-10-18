@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AdminApp from './AdminApp'
 import * as adminApi from './adminApi'
@@ -10,7 +10,7 @@ vi.mock('./adminApi', async () => {
 })
 
 const battle = { id: 'b-1', difficulty: 'high' as const, topic: '测试战局', status: 'failed', createdAt: '2026-10-18T00:00:00Z', attackerOut: { samples: [] }, defenderOut: [] }
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks() })
 
 describe('AdminApp', () => {
   it('shows Cloudflare Access guidance when unauthenticated', async () => {
@@ -151,5 +151,65 @@ describe('AdminApp', () => {
     render(<AdminApp />)
     fireEvent.click(await screen.findByRole('button', { name: '退出会话' }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('请求 ID：logout-1'))
+  })
+
+  it('does not let a late detail response replace the currently selected battle', async () => {
+    const otherBattle = { ...battle, id: 'b-2', topic: '当前战局', status: 'completed' }
+    let resolveOldEvents!: (events: never[]) => void
+    vi.mocked(adminApi.getAdminBattleEvents).mockImplementation((id) => id === 'b-1'
+      ? new Promise((resolve) => { resolveOldEvents = resolve })
+      : Promise.resolve([{ sequence: 1, type: '当前事件' }]))
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 2 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [battle, otherBattle], total: 2 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.getAdminBattleDetail).mockImplementation(async (id) => ({ ...battle, id, topic: id === 'b-1' ? '旧战局' : '当前战局' }))
+    vi.mocked(adminApi.getAdminBattleScore).mockResolvedValue({} as never)
+    vi.mocked(adminApi.getAdminBattleAudit).mockResolvedValue({})
+    vi.mocked(adminApi.getAdminReport).mockResolvedValue({})
+    render(<AdminApp />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
+    fireEvent.click(screen.getByRole('button', { name: '查看当前战局' }))
+    expect((await screen.findAllByText(/当前事件/)).length).toBeGreaterThan(0)
+    await act(async () => { resolveOldEvents([{ sequence: 1, type: '旧战局迟到事件' }] as never[]) })
+
+    expect(screen.getAllByText('当前战局').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/旧战局迟到事件/)).not.toBeInTheDocument()
+  })
+
+  it('refreshes a visible pending battle every 15 seconds, pauses while hidden, and refreshes on return', async () => {
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 1 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [{ ...battle, status: 'pending' }], total: 1 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.getAdminBattleDetail).mockResolvedValue({ ...battle, status: 'pending' })
+    vi.mocked(adminApi.getAdminBattleScore).mockResolvedValue({} as never)
+    vi.mocked(adminApi.getAdminBattleEvents).mockResolvedValue([])
+    vi.mocked(adminApi.getAdminBattleAudit).mockResolvedValue({})
+    vi.mocked(adminApi.getAdminReport).mockResolvedValue({})
+    render(<AdminApp />)
+    fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
+    await waitFor(() => expect(adminApi.getAdminBattleDetail).toHaveBeenCalledTimes(1))
+    await act(async () => { vi.advanceTimersByTime(14_999) })
+    expect(adminApi.getAdminBattleDetail).toHaveBeenCalledTimes(1)
+    await act(async () => { vi.advanceTimersByTime(1) })
+    expect(adminApi.getAdminBattleDetail).toHaveBeenCalledTimes(2)
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    await act(async () => { vi.advanceTimersByTime(30_000) })
+    expect(adminApi.getAdminBattleDetail).toHaveBeenCalledTimes(2)
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(adminApi.getAdminBattleDetail).toHaveBeenCalledTimes(3)
+    if (originalVisibility) Object.defineProperty(document, 'visibilityState', originalVisibility)
+    else Reflect.deleteProperty(document, 'visibilityState')
   })
 })
