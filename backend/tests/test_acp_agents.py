@@ -154,6 +154,30 @@ def test_sdk_posts_aip_v2_start_command(monkeypatch: pytest.MonkeyPatch) -> None
     assert result == {"samples": [], "agentSource": "acp-rule-fallback"}
 
 
+def test_remote_call_tolerates_semicolon_no_proxy_during_sdk_init(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ProxySensitiveClient(FakeAipClient):
+        def __init__(self, *, partner_url: str, leader_id: str, ssl_context=None) -> None:
+            self.http_client = acp_agents.httpx.AsyncClient()
+            super().__init__(task_result({"samples": []}))
+
+        async def close(self) -> None:
+            await self.http_client.aclose()
+            await super().close()
+
+    monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
+    monkeypatch.setenv("NO_PROXY", "localhost;127.0.0.1;::1;*.cn;*.aliyun.com")
+    monkeypatch.setenv("no_proxy", "localhost;127.0.0.1;::1;*.cn;*.aliyun.com")
+    monkeypatch.setattr(acp_agents, "AipRpcClient", ProxySensitiveClient)
+
+    result = asyncio.run(
+        acp_agents.call_attacker({"difficulty": "low", "topic": "proxy"})
+    )
+
+    assert result == {"samples": [], "agentSource": "acp-rule-fallback"}
+
+
 def test_defender_requires_complete_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_client = FakeAipClient(task_result({
         "caught": [],
