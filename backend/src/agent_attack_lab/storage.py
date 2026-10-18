@@ -67,6 +67,7 @@ class BattleStore:
         self._lock = Lock()
         self._pool = None
         self._engine = None
+        self._closed = False
         if self._is_postgres:
             try:
                 from psycopg_pool import ConnectionPool
@@ -699,10 +700,17 @@ class BattleStore:
         return summary
 
     def close(self) -> None:
+        if self._closed:
+            return
         if self._pool is not None:
             self._pool.close()
+            self._pool = None
         if self._engine is not None:
             self._engine.dispose()
+            self._engine = None
+        if not self._is_postgres and not self._is_mysql:
+            self._connection.close()
+        self._closed = True
 
     @staticmethod
     def _to_record(row: Any) -> dict[str, Any]:
