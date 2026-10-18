@@ -95,7 +95,7 @@ dropins_changed=0
 restore_dropins() {
   local service path snapshot
   for service in "${services[@]}"; do
-    path="$user_unit_dir/$service.service.d/production-release.conf"
+    path="$user_unit_dir/$service.d/production-release.conf"
     snapshot="$snapshot_dir/$service.conf"
     if [[ -f "$snapshot" ]]; then
       mkdir -p "$(dirname "$path")"
@@ -124,14 +124,14 @@ trap rollback_on_failure EXIT
 
 write_dropin() {
   local service=$1 app=$2 port=$3
-  local path="$user_unit_dir/$service.service.d/production-release.conf"
+  local path="$user_unit_dir/$service.d/production-release.conf"
   mkdir -p "$(dirname "$path")"
   printf '[Service]\nWorkingDirectory=%s\nExecStart=\nExecStart=%s/scripts/start-service.sh %s %s\n' \
     "$release_backend" "$release_backend" "$app" "$port" > "$path"
 }
 
 for service in "${services[@]}"; do
-  existing_path="$user_unit_dir/$service.service.d/production-release.conf"
+  existing_path="$user_unit_dir/$service.d/production-release.conf"
   if [[ -f "$existing_path" ]]; then
     cp "$existing_path" "$snapshot_dir/$service.conf"
   fi
