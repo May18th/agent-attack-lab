@@ -1,7 +1,7 @@
-import type { AdminBattle, AdminMetrics } from '../adminApi'
+import type { AdminBattle, AdminBattleEvent, AdminMetrics } from '../adminApi'
 import type { ExternalCase } from '../api'
 
-export type AdminSceneNodeKind = 'attacker' | 'defender' | 'scheduler' | 'battle' | 'external-case'
+export type AdminSceneNodeKind = 'attacker' | 'defender' | 'scheduler' | 'battle' | 'external-case' | 'timeline-event'
 export type AdminSceneStatus = 'pending' | 'running' | 'completed' | 'failed' | 'unknown'
 export type AdminSceneNode = {
   id: string
@@ -11,7 +11,7 @@ export type AdminSceneNode = {
   color: string
   position: [number, number, number]
   timestamp?: string
-  source: AdminBattle | ExternalCase | AdminMetrics | null
+  source: AdminBattle | AdminBattleEvent | ExternalCase | AdminMetrics | null
 }
 export type AdminSceneEdge = { id: string; from: string; to: string; status: AdminSceneStatus; color: string }
 export type AdminSceneModel = {
@@ -79,4 +79,30 @@ export function buildAdminSceneModel(input: BuildAdminSceneModelInput): AdminSce
     if (edges.length < MAX_EDGES) edges.push({ id: `scheduler:${node.id}`, from: 'role:scheduler', to: node.id, status: node.status, color: node.color })
   }
   return { nodes, edges: edges.slice(0, MAX_EDGES), statusColors }
+}
+
+export function buildBattleTimelineSceneModel(battle: AdminBattle, events: AdminBattleEvent[]): AdminSceneModel {
+  const orderedEvents = events
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => (left.event.sequence ?? Number.MAX_SAFE_INTEGER) - (right.event.sequence ?? Number.MAX_SAFE_INTEGER) || left.index - right.index)
+  const nodes: AdminSceneNode[] = orderedEvents.map(({ event }, index) => {
+    const sequence = event.sequence ?? index + 1
+    const id = `event:${battle.id}:${sequence}:${index}`
+    const status = sceneStatus(String(event.status ?? battle.status))
+    const phase = index * 0.62
+    const x = orderedEvents.length < 2 ? 0 : (index / (orderedEvents.length - 1) - 0.5) * 8
+    return {
+      id, kind: 'timeline-event', label: String(event.eventType ?? event.type ?? event.status ?? `事件 ${sequence}`), status,
+      color: statusColors[status], position: [x, 0.25 + Math.sin(phase) * 0.55, Math.cos(phase) * 0.55],
+      timestamp: event.timestamp, source: event,
+    }
+  })
+  const edges: AdminSceneEdge[] = nodes.slice(1).map((node, index) => ({
+    id: `timeline:${battle.id}:${index}`,
+    from: nodes[index].id,
+    to: node.id,
+    status: node.status,
+    color: node.color,
+  }))
+  return { nodes, edges, statusColors }
 }

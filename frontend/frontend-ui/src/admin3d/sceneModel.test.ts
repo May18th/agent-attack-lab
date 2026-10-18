@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { AdminBattle, AdminMetrics } from '../adminApi'
+import type { AdminBattle, AdminBattleEvent, AdminMetrics } from '../adminApi'
 import type { ExternalCase } from '../api'
-import { buildAdminSceneModel } from './sceneModel'
+import { buildAdminSceneModel, buildBattleTimelineSceneModel } from './sceneModel'
 
 const battle = (id: string, status: string, createdAt: string): AdminBattle => ({
   id, status, createdAt, topic: id, difficulty: 'mid', attackerOut: { samples: [] }, defenderOut: [],
@@ -47,5 +47,23 @@ describe('buildAdminSceneModel', () => {
     expect(caseIds).toContain('case:CVE-69')
     expect(caseIds).toContain('case:CVE-9')
     expect(caseIds).not.toContain('case:CVE-8')
+  })
+
+  it('builds a sequence-ordered event-only 3D path for one battle', () => {
+    const events: AdminBattleEvent[] = [
+      { sequence: 4, type: 'end', status: 'completed' },
+      { sequence: 2, type: 'middle' },
+      { sequence: 1, type: 'start' },
+    ]
+    const model = buildBattleTimelineSceneModel(battle('timeline-battle', 'running', '2026-10-19'), events)
+
+    expect(model.nodes.map(node => node.kind)).toEqual(['timeline-event', 'timeline-event', 'timeline-event'])
+    expect(model.nodes.map(node => (node.source as AdminBattleEvent).sequence)).toEqual([1, 2, 4])
+    expect(model.edges.map(edge => [edge.from, edge.to])).toEqual([
+      ['event:timeline-battle:1:0', 'event:timeline-battle:2:1'],
+      ['event:timeline-battle:2:1', 'event:timeline-battle:4:2'],
+    ])
+    expect(model.nodes.every(node => node.source && typeof node.source === 'object' && 'sequence' in node.source)).toBe(true)
+    expect(model.nodes.some(node => node.kind === 'external-case')).toBe(false)
   })
 })
