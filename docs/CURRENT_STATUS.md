@@ -9,9 +9,9 @@
 - PR #15 已合并到 `main`，合并提交为 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产后端部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（用户 `deployer`）上成功完成，部署脚本输出 `DEPLOY OK`；Alembic 迁移执行完成，release worktree 与原生产工作树隔离。
 - 部署脚本曾在服务重启后的首个 8787 探测出现一次瞬时连接失败，随后重试通过；该次失败不是最终部署失败。当前公网只读复验：`/health` HTTP 200，`/openapi.json` HTTP 200，`/dashboard/summary` HTTP 200。健康响应的 `requestId` 为 `req-2dfd86bc-49d9-4cd2-9978-9c1d8ee8894d`（2026-10-18 18:31 +08:00）。
 - 当前公网 OpenAPI 包含 `DELETE /battles/{battle_id}`，但仍不包含 `/battles/{battle_id}/score` 与 `/internal-scores`。因此评分 v2 尚未被公网 API 证明已上线；不得把主线代码或内部 Preview 验收当作生产评分接口。
-- 根因核查发现：release worktree 的 `start-service.sh` 原先未将 release 的 `src` 放到 `PYTHONPATH`，共享虚拟环境可能导入旧的已安装包，造成部署提交与运行代码不一致。PR #16 已将该路径修复部署到生产，但公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径。PR #19 已合并，但 Workflow `39121146077` 仍因脚本把已带 `.service` 后缀的服务名拼成 `*.service.service.d` 而触发运行时路径护栏，部署已自动回滚；PR #20 已合并修正为 `$service.d`，但 Workflow `39121512220` 中 API 服务重启后未保持 active，部署再次自动回滚。跟进分支 `codex/diagnose-service-startup` 已加入 active 等待和失败时的 systemd/journal 诊断。
+- 根因核查发现：release worktree 的 `start-service.sh` 原先未将 release 的 `src` 放到 `PYTHONPATH`，共享虚拟环境可能导入旧的已安装包，造成部署提交与运行代码不一致。PR #16 已将该路径修复部署到生产，但公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径。PR #19 已合并，但 Workflow `39121146077` 仍因脚本把已带 `.service` 后缀的服务名拼成 `*.service.service.d` 而触发运行时路径护栏，部署已自动回滚；PR #20 已合并修正为 `$service.d`，但 Workflow `39121512220` 中 API 服务重启后未保持 active，诊断显示 release 的 `start-service.sh` Git 模式为 `100644`，systemd 报 `203/EXEC Permission denied`，部署再次自动回滚。跟进分支 `codex/fix-start-service-mode` 已将脚本模式修正为 `100755` 并补充回归测试。
 - 当前不接入外部 LLM/API；攻击、防守继续使用现有规则兜底，除非负责人另行决定。
-- 本机后端全量测试从 `backend` 目录执行为 `123 passed, 5 skipped`，仅有既有 Starlette/httpx 弃用警告；从仓库根目录运行会触发 Alembic 相对路径错误，不作为有效测试结果。
+- 本机后端全量测试从 `backend` 目录执行为 `124 passed, 5 skipped`，仅有既有 Starlette/httpx 弃用警告；从仓库根目录运行会触发 Alembic 相对路径错误，不作为有效测试结果。
 
 ## 本地状态（2026-10-15，历史）
 

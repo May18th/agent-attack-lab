@@ -10,12 +10,25 @@ import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "start-service.sh"
 DEPLOY_SCRIPT = Path(__file__).parents[1] / "scripts" / "deploy-production.sh"
+REPO_ROOT = SCRIPT.parents[2]
 
 
 def test_start_service_adds_release_src_to_pythonpath() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
 
     assert 'export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"' in source
+
+
+def test_start_service_is_executable_in_git() -> None:
+    result = subprocess.run(
+        ["git", "ls-files", "-s", "--", "backend/scripts/start-service.sh"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.startswith("100755 ")
 
 
 def test_deploy_script_verifies_running_release_context() -> None:
