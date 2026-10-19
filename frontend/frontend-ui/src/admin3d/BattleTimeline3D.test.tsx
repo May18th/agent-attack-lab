@@ -1,48 +1,40 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AdminBattle, AdminBattleEvent } from '../adminApi'
 import { BattleTimeline3D } from './BattleTimeline3D'
 import { buildBattleTimelineSceneModel } from './sceneModel'
-import { loadTimelineSceneRenderer } from './timelineSceneLoader'
-
-vi.mock('./timelineSceneLoader', () => ({ loadTimelineSceneRenderer: vi.fn(() => import('./ThreeScene')) }))
 
 const battle: AdminBattle = {
-  id: 'battle-1',
-  topic: '验证事件轨迹',
-  difficulty: 'high',
-  status: 'running',
-  createdAt: '2026-10-19T00:00:00Z',
-  attackerOut: { samples: [] },
-  defenderOut: [],
+  id: 'battle-1', topic: '验证事件轨迹', difficulty: 'high', status: 'running', createdAt: '2026-10-19T00:00:00Z',
+  attackerOut: { samples: [] }, defenderOut: [],
 }
 
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(cleanup)
 
 describe('BattleTimeline3D', () => {
-  it('renders events in ascending sequence order for the selected battle', () => {
+  it('renders the complete event history in sequence order as a 2D list', () => {
     const events: AdminBattleEvent[] = [
       { sequence: 3, type: '完成', timestamp: '2026-10-19T00:03:00Z' },
       { sequence: 1, type: '启动', timestamp: '2026-10-19T00:01:00Z' },
       { sequence: 2, type: '检测', timestamp: '2026-10-19T00:02:00Z' },
     ]
-    render(<BattleTimeline3D battle={battle} events={events} audit={{ actor: 'masked-user' }} onSelectEvent={vi.fn()} />)
+    render(<BattleTimeline3D battle={battle} events={events} audit={{ actor: 'masked-user' }} selectedEvent={null} onSelectEvent={vi.fn()} />)
 
-    expect(screen.getByRole('region', { name: '3D 战局事件轨迹' })).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: '战局事件列表' })).toBeInTheDocument()
     const buttons = screen.getAllByRole('button', { name: /第 [123] 条事件/ })
     expect(buttons.map((button) => button.textContent)).toEqual([
       expect.stringContaining('启动'),
       expect.stringContaining('检测'),
       expect.stringContaining('完成'),
     ])
-    expect(screen.getByText(/masked-user/)).toBeInTheDocument()
+    expect(screen.getByText(/actor/)).toBeInTheDocument()
     expect(screen.getByText(/battle-1/)).toBeInTheDocument()
   })
 
-  it('reports only the selected event without triggering an operation', () => {
+  it('reports the selected event without triggering an operation', () => {
     const event: AdminBattleEvent = { sequence: 7, type: '检测完成', status: 'ok' }
     const onSelectEvent = vi.fn()
-    render(<BattleTimeline3D battle={battle} events={[event]} audit={{}} onSelectEvent={onSelectEvent} />)
+    render(<BattleTimeline3D battle={battle} events={[event]} audit={{}} selectedEvent={null} onSelectEvent={onSelectEvent} />)
 
     fireEvent.click(screen.getByRole('button', { name: /第 7 条事件/ }))
 
@@ -51,56 +43,68 @@ describe('BattleTimeline3D', () => {
   })
 
   it('shows an empty state when the selected battle has no events', () => {
-    render(<BattleTimeline3D battle={battle} events={[]} audit={{}} onSelectEvent={vi.fn()} />)
-
+    render(<BattleTimeline3D battle={battle} events={[]} audit={{}} selectedEvent={null} onSelectEvent={vi.fn()} />)
     expect(screen.getByText('本场暂无事件')).toBeInTheDocument()
   })
 
-  it('clears the selected event when the selected battle changes', () => {
+  it('keeps selected event in sync with the 3D replay controller', () => {
     const event: AdminBattleEvent = { sequence: 7, type: '旧战局事件' }
-    const onSelectEvent = vi.fn()
-    const { rerender } = render(<BattleTimeline3D battle={battle} events={[event]} audit={{}} onSelectEvent={onSelectEvent} />)
-    fireEvent.click(screen.getByRole('button', { name: /第 7 条事件/ }))
+    render(<BattleTimeline3D battle={battle} events={[event]} audit={{}} selectedEvent={event} onSelectEvent={vi.fn()} />)
     expect(screen.getByRole('button', { name: /第 7 条事件/ })).toHaveAttribute('aria-pressed', 'true')
-
-    rerender(<BattleTimeline3D battle={{ ...battle, id: 'battle-2', topic: '另一战局' }} events={[event]} audit={{}} onSelectEvent={onSelectEvent} />)
-
-    expect(screen.getByRole('button', { name: /第 7 条事件/ })).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.queryByText(/已选事件/)).not.toBeInTheDocument()
   })
 
-  it('builds a sequence-ordered 3D event track with selectable event sources and no case links', () => {
-    const events: AdminBattleEvent[] = [
-      { sequence: 2, type: '第二步' },
-      { sequence: 1, type: '第一步' },
-    ]
+  it('builds a sequence-ordered replay path from stored events', () => {
+    const events: AdminBattleEvent[] = [{ sequence: 2, type: '第二步' }, { sequence: 1, type: '第一步' }]
     const model = buildBattleTimelineSceneModel(battle, events)
-
-    expect(model.nodes.map((node) => node.kind)).toEqual(['timeline-event', 'timeline-event'])
-    expect(model.nodes.map((node) => (node.source as AdminBattleEvent).sequence)).toEqual([1, 2])
-    expect(model.edges).toHaveLength(1)
-    expect(model.edges[0]).toMatchObject({ from: 'event:battle-1:1:0', to: 'event:battle-1:2:1' })
-    expect(model.nodes.every((node) => node.position.some((coordinate) => coordinate !== 0))).toBe(true)
-    expect(model.nodes.some((node) => node.kind === 'external-case')).toBe(false)
+    expect(model.nodes.filter((node) => node.kind === 'timeline-event').map((node) => (node.source as AdminBattleEvent).sequence)).toEqual([1, 2])
+    expect(model.edges.filter((edge) => edge.kind === 'timeline')).toHaveLength(1)
+    expect(model.edges.find((edge) => edge.kind === 'timeline')).toMatchObject({ from: 'event:battle-1:1:1', to: 'event:battle-1:2:0' })
+    expect(model.edges.filter((edge) => edge.kind === 'network')).toHaveLength(12)
   })
 
-  it('mounts the renderer with the latest model when its dynamic import resolves late', async () => {
-    let resolveRenderer!: (module: Awaited<ReturnType<typeof loadTimelineSceneRenderer>>) => void
-    const delayedImport = new Promise<Awaited<ReturnType<typeof loadTimelineSceneRenderer>>>((resolve) => { resolveRenderer = resolve })
-    vi.mocked(loadTimelineSceneRenderer).mockReturnValueOnce(delayedImport)
-    const onSelectEvent = vi.fn()
-    const initial = render(<BattleTimeline3D battle={battle} events={[]} audit={{}} onSelectEvent={onSelectEvent} />)
-    await vi.waitFor(() => expect(loadTimelineSceneRenderer).toHaveBeenCalledOnce())
-    const events: AdminBattleEvent[] = [{ sequence: 9, type: '导入期间到达' }]
-    initial.rerender(<BattleTimeline3D battle={battle} events={events} audit={{}} onSelectEvent={onSelectEvent} />)
-    const rendererModule = await import('./ThreeScene')
-    const mountSpy = vi.spyOn(rendererModule.ThreeScene.prototype, 'mount')
+  it('filters recorded events by searchable event data', () => {
+    const events: AdminBattleEvent[] = [
+      { sequence: 1, type: 'attack.sample.generated', data: { sample: 'alpha-marker' } },
+      { sequence: 2, type: 'round.completed', data: { sample: 'beta-marker' } },
+    ]
+    render(<BattleTimeline3D battle={battle} events={events} audit={{}} selectedEvent={null} onSelectEvent={vi.fn()} />)
 
-    await act(async () => { resolveRenderer(rendererModule) })
-    await vi.waitFor(() => expect(mountSpy).toHaveBeenCalledOnce())
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索事件记录' }), { target: { value: 'beta-marker' } })
 
-    const mountedModel = mountSpy.mock.calls[0][1]
-    expect(mountedModel.nodes.map((node) => (node.source as AdminBattleEvent).sequence)).toEqual([9])
-    mountSpy.mockRestore()
+    expect(screen.getByRole('button', { name: /第 2 条事件/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /第 1 条事件/ })).not.toBeInTheDocument()
+  })
+
+  it('exports the unfiltered source event sequence as JSON', async () => {
+    const events: AdminBattleEvent[] = [{ sequence: 1, type: 'audit.evidence', data: { ip: '192.0.2.8' } }]
+    const createObjectURL = vi.fn<(value: Blob) => string>(() => 'blob:events')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    render(<BattleTimeline3D battle={battle} events={events} audit={{}} selectedEvent={null} onSelectEvent={vi.fn()} />)
+
+    fireEvent.change(screen.getByRole('searchbox', { name: '搜索事件记录' }), { target: { value: 'not-found' } })
+    fireEvent.click(screen.getByRole('button', { name: '导出事件' }))
+
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+    const exported = await (createObjectURL.mock.calls[0][0] as Blob).text()
+    expect(JSON.parse(exported)).toMatchObject({ battleId: battle.id, events: [{ sequence: 1, data: { ip: '192.0.2.8' } }] })
+    expect(click).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:events')
+    vi.unstubAllGlobals()
+  })
+
+  it('labels partial exports and marks their JSON as incomplete', async () => {
+    const createObjectURL = vi.fn<(value: Blob) => string>(() => 'blob:partial-events')
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL: vi.fn() })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    render(<BattleTimeline3D battle={battle} events={[{ sequence: 1, type: '第一页' }]} audit={{}} eventsTotal={201} hasMoreEvents selectedEvent={null} onSelectEvent={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '导出已加载事件' }))
+
+    const exported = await createObjectURL.mock.calls[0][0].text()
+    expect(JSON.parse(exported)).toMatchObject({ complete: false, events: [{ sequence: 1 }] })
+    expect(click).toHaveBeenCalledOnce()
+    vi.unstubAllGlobals()
   })
 })

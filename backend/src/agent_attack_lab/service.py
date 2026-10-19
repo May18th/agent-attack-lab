@@ -107,7 +107,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
-    expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID"],
+    expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID", "X-Has-More", "X-Next-Sequence"],
 )
 
 _frontend_dist = Path(__file__).resolve().parents[3] / "frontend" / "frontend-ui" / "dist"
@@ -2650,11 +2650,52 @@ def list_battles(
     ]
 
 
-@app.get("/battles/{battle_id}/events", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
-def get_battle_events(battle_id: str) -> list[BattleEvent]:
+@app.get(
+    "/battles/{battle_id}/events",
+    summary="查询战局回放事件",
+    description="按事件序号升序分页返回已持久化的战局事件，可按类型、时间范围和事件内容检索。",
+    tags=["战局回放"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def get_battle_events(
+    battle_id: str,
+    response: Response,
+    limit: int = Query(default=200, ge=1, le=1000, description="每页最多返回 1000 条"),
+    after_sequence: int = Query(default=0, ge=0, description="返回序号大于此值的事件"),
+    event_type: str | None = Query(default=None, min_length=1, max_length=64),
+    from_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),
+    to_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),
+    q: str | None = Query(default=None, max_length=200, description="搜索事件类型和原始事件数据"),
+) -> list[BattleEvent]:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    return [BattleEvent.model_validate(item) for item in _battle_store.list_events(battle_id)]
+    def utc_iso(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return normalized.isoformat()
+
+    normalized_from = utc_iso(from_time)
+    normalized_to = utc_iso(to_time)
+    if normalized_from and normalized_to and normalized_from > normalized_to:
+        raise HTTPException(status_code=422, detail="from_time 不能晚于 to_time")
+
+    events, total = _battle_store.query_events(
+        battle_id,
+        limit=limit,
+        after_sequence=after_sequence,
+        event_type=event_type,
+        from_time=normalized_from,
+        to_time=normalized_to,
+        query=q,
+    )
+    has_more = len(events) > limit
+    page = events[:limit]
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Has-More"] = str(has_more).lower()
+    if page:
+        response.headers["X-Next-Sequence"] = str(page[-1]["sequence"])
+    return [BattleEvent.model_validate(item) for item in page]
 
 
 @app.get("/battles/{battle_id}/replay", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])

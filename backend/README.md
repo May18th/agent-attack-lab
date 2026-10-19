@@ -58,6 +58,8 @@ uv run pytest -q
 - `GET /leaderboard`：按攻击方、防守方累计得分统计排行榜。
 - `GET /metrics`：查看运行时间、请求数、错误数、战局数和事件数。
 
+管理员后台的事件回放接口字段、游标分页、访问控制边界和 3D 模型资源清单见 [`docs/ADMIN_3D_REPLAY.md`](../docs/ADMIN_3D_REPLAY.md)。
+
 `GET /health` 会返回服务版本、运行时间、存储状态和 `requestId`。所有响应都会带 `X-Request-ID`；公网排障时请保留该值。
 
 写入接口默认启用单进程限流：每个客户端每分钟最多 60 次。可通过 `AGENT_RATE_LIMIT_PER_MINUTE` 调整，设置为 `0` 关闭。超限返回 `429` 和 `Retry-After`。

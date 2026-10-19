@@ -1,15 +1,15 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { AdminBattle, AdminBattleEvent } from '../adminApi'
-import type { ThreeScene } from './ThreeScene'
-import { buildBattleTimelineSceneModel } from './sceneModel'
-import { loadTimelineSceneRenderer } from './timelineSceneLoader'
-import { useCommittedRef } from './useCommittedRef'
 import './BattleTimeline3D.css'
 
 type BattleTimeline3DProps = {
   battle: AdminBattle
   events: AdminBattleEvent[]
   audit: Record<string, unknown>
+  eventsTotal?: number
+  hasMoreEvents?: boolean
+  onLoadMoreEvents?: () => void
+  selectedEvent: AdminBattleEvent | null
   onSelectEvent: (event: AdminBattleEvent) => void
 }
 
@@ -21,86 +21,64 @@ function jsonPreview(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2)
 }
 
-function BattleTimeline3DView({ battle, events, audit, onSelectEvent }: BattleTimeline3DProps) {
-  const [selectedEvent, setSelectedEvent] = useState<AdminBattleEvent | null>(null)
-  const sceneContainerRef = useRef<HTMLDivElement>(null)
-  const sceneRef = useRef<ThreeScene | null>(null)
-  const sceneModel = useMemo(() => buildBattleTimelineSceneModel(battle, events), [battle, events])
-  const sceneModelRef = useCommittedRef(sceneModel)
+export function BattleTimeline3D({ battle, events, audit, eventsTotal = events.length, hasMoreEvents = false, onLoadMoreEvents, selectedEvent, onSelectEvent }: BattleTimeline3DProps) {
+  const [query, setQuery] = useState('')
   const orderedEvents = useMemo(() => events
     .map((event, index) => ({ event, index }))
     .sort((left, right) => (left.event.sequence ?? Number.MAX_SAFE_INTEGER) - (right.event.sequence ?? Number.MAX_SAFE_INTEGER) || left.index - right.index)
     .map(({ event }) => event), [events])
+  const filteredEvents = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase()
+    if (!normalizedQuery) return orderedEvents
+    return orderedEvents.filter((event) => jsonPreview(event).toLocaleLowerCase().includes(normalizedQuery))
+  }, [orderedEvents, query])
 
-  useEffect(() => {
-    const container = sceneContainerRef.current
-    if (!container) return
-    let disposed = false
-    let scene: ThreeScene | undefined
-    const showError = (error: unknown) => {
-      if (disposed) return
-      const fallback = document.createElement('div')
-      fallback.className = 'battle-timeline-scene-error'
-      fallback.setAttribute('role', 'status')
-      fallback.textContent = error instanceof Error ? error.message : '3D 事件轨迹暂不可用'
-      container.appendChild(fallback)
-    }
-    void loadTimelineSceneRenderer().then(({ ThreeScene: SceneRenderer }) => {
-      if (disposed) return
-      scene = new SceneRenderer()
-      sceneRef.current = scene
-      try {
-        scene.mount(container, sceneModelRef.current, {
-          onSelectNode: (node) => {
-            if (node.kind !== 'timeline-event' || !node.source || typeof node.source !== 'object') return
-            const event = node.source as AdminBattleEvent
-            setSelectedEvent(event)
-            onSelectEvent(event)
-          },
-        })
-      } catch (error) { showError(error) }
-    }).catch(showError)
-    return () => { disposed = true; scene?.dispose(); sceneRef.current = null }
-  }, [onSelectEvent, sceneModelRef])
+  const exportEvents = () => {
+    const content = JSON.stringify({ battleId: battle.id, exportedAt: new Date().toISOString(), complete: !hasMoreEvents, events: orderedEvents }, null, 2)
+    const objectUrl = URL.createObjectURL(new Blob([content], { type: 'application/json;charset=utf-8' }))
+    const anchor = document.createElement('a')
+    anchor.href = objectUrl
+    anchor.download = `${battle.id}-events.json`
+    anchor.click()
+    URL.revokeObjectURL(objectUrl)
+  }
 
-  useLayoutEffect(() => {
-    sceneRef.current?.update(sceneModel)
-  }, [sceneModel])
-
-  const selectEvent = (event: AdminBattleEvent) => { setSelectedEvent(event); onSelectEvent(event) }
-
-  return <section className="battle-timeline" aria-label={`${battle.topic || battle.id}战局时间线`}>
+  return <section className="battle-timeline" aria-label={`${battle.topic || battle.id}战局记录`}>
     <header className="battle-timeline-heading">
-      <div><h3>战局时间线</h3><p>{battle.topic || battle.id} · {battle.id} · {battle.status}</p></div>
-      <span>{orderedEvents.length} 条事件</span>
+      <div><h3>事件记录</h3><p>{battle.topic || battle.id} · {battle.id}</p></div>
+      <span>{filteredEvents.length === orderedEvents.length ? `${orderedEvents.length} 条` : `${filteredEvents.length} / ${orderedEvents.length} 条`}</span>
     </header>
-    <div className="battle-timeline-scene-frame" role="region" aria-label="3D 战局事件轨迹">
-      <div className="battle-timeline-scene" ref={sceneContainerRef} />
+    <div className="battle-timeline-tools">
+      <label className="battle-timeline-search">
+        <span>搜索</span>
+        <input aria-label="搜索事件记录" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="类型、序号或事件内容" />
+      </label>
+      <button className="battle-timeline-export" type="button" onClick={exportEvents} disabled={!orderedEvents.length}>{hasMoreEvents ? '导出已加载事件' : '导出事件'}</button>
     </div>
-    {orderedEvents.length ? <ol className="battle-timeline-track" aria-label="战局事件轨迹">
-      {orderedEvents.map((event, index) => {
+    {filteredEvents.length ? <ol className="battle-timeline-track" aria-label="战局事件列表">
+      {filteredEvents.map((event, index) => {
         const sequence = event.sequence ?? index + 1
-        const isSelected = selectedEvent === event
+        const isSelected = selectedEvent === event || (selectedEvent?.sequence != null && selectedEvent.sequence === event.sequence)
         return <li className="battle-timeline-point" key={`${sequence}-${index}`}>
-          <button type="button" aria-label={`第 ${sequence} 条事件：${eventLabel(event)}`} aria-pressed={isSelected} onClick={() => selectEvent(event)}>
+          <button type="button" aria-label={`第 ${sequence} 条事件：${eventLabel(event)}`} aria-pressed={isSelected} onClick={() => onSelectEvent(event)}>
             <span className="battle-timeline-sequence">{sequence}</span>
             <span className="battle-timeline-event">
               <strong>{eventLabel(event)}</strong>
               <small>{event.timestamp || event.status || '时间未提供'}</small>
-              <code>{jsonPreview(event)}</code>
+              {event.status && <small className={`battle-timeline-status status-${event.status}`}>{event.status}</small>}
             </span>
           </button>
         </li>
       })}
-    </ol> : <p className="battle-timeline-empty">本场暂无事件</p>}
-    {selectedEvent && <p className="battle-timeline-selection" role="status">已选事件：{selectedEvent.sequence ?? '—'} · {eventLabel(selectedEvent)}</p>}
-    <details className="battle-timeline-audit" open>
-      <summary>审计层</summary>
+    </ol> : <p className="battle-timeline-empty">{orderedEvents.length ? '没有匹配的事件' : '本场暂无事件'}</p>}
+    {hasMoreEvents && <button className="battle-timeline-load-more" type="button" onClick={onLoadMoreEvents}>加载更多事件（{events.length} / {eventsTotal}）</button>}
+    {selectedEvent && <details className="battle-timeline-selection" open>
+      <summary>事件详情：{selectedEvent.sequence ?? '—'} · {eventLabel(selectedEvent)}</summary>
+      <pre>{jsonPreview(selectedEvent)}</pre>
+    </details>}
+    <details className="battle-timeline-audit">
+      <summary>审计记录</summary>
       {Object.keys(audit).length ? <dl>{Object.entries(audit).map(([key, value]) => <div key={key}><dt>{key}</dt><dd><pre>{jsonPreview(value)}</pre></dd></div>)}</dl> : <p className="battle-timeline-empty">暂无审计数据</p>}
     </details>
   </section>
-}
-
-export function BattleTimeline3D(props: BattleTimeline3DProps) {
-  return <BattleTimeline3DView key={props.battle.id} {...props} />
 }

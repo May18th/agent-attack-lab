@@ -805,6 +805,51 @@ class BattleStore:
             ).fetchall()
         return [self._to_event(row) for row in rows]
 
+    def query_events(
+        self,
+        battle_id: str,
+        *,
+        limit: int,
+        after_sequence: int = 0,
+        event_type: str | None = None,
+        from_time: str | None = None,
+        to_time: str | None = None,
+        query: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return one filtered event page and the total matching event count."""
+        filter_clauses = ["battle_id = ?"]
+        filter_params: list[Any] = [battle_id]
+        if event_type:
+            filter_clauses.append("event_type = ?")
+            filter_params.append(event_type)
+        if from_time:
+            filter_clauses.append("created_at >= ?")
+            filter_params.append(from_time)
+        if to_time:
+            filter_clauses.append("created_at <= ?")
+            filter_params.append(to_time)
+        if query:
+            pattern = f"%{query.lower()}%"
+            data_type = "CHAR" if self._is_mysql else "TEXT"
+            filter_clauses.append(
+                "(LOWER(event_type) LIKE ? OR LOWER(CAST(data AS " + data_type + ")) LIKE ?)"
+            )
+            filter_params.extend([pattern, pattern])
+        filter_where = " WHERE " + " AND ".join(filter_clauses)
+        page_where = filter_where + " AND sequence > " + self._placeholder
+        page_params = [*filter_params, after_sequence]
+        with self._lock:
+            total_row = self._connection.execute(
+                "SELECT COUNT(*) AS total FROM battle_events" + filter_where.replace("?", self._placeholder),
+                filter_params,
+            ).fetchone()
+            rows = self._connection.execute(
+                "SELECT * FROM battle_events" + page_where.replace("?", self._placeholder)
+                + " ORDER BY sequence LIMIT " + self._placeholder,
+                [*page_params, limit + 1],
+            ).fetchall()
+        return [self._to_event(row) for row in rows], int(total_row["total"])
+
     def list_events_for_battles(self, battle_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         """Load event histories for a bounded set of battles in one query."""
         if not battle_ids:

@@ -43,6 +43,8 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     render(<AdminApp />)
     expect(await screen.findByText('运行指标')).toBeInTheDocument()
+    expect(await screen.findByText('总战局')).toBeInTheDocument()
+    expect(screen.queryByText('原始指标数据')).toBeInTheDocument()
     expect(screen.getByText('战局列表')).toBeInTheDocument()
     expect(screen.getByText('外部案例')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('textbox', { name: '搜索战局' }), { target: { value: 'needle' } })
@@ -126,7 +128,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     vi.mocked(adminApi.getAdminBattleDetail).mockResolvedValue(battle)
     vi.mocked(adminApi.getAdminBattleScore).mockResolvedValue({} as never)
-    vi.mocked(adminApi.getAdminBattleEvents).mockResolvedValue([])
+    vi.mocked(adminApi.getAdminBattleEvents).mockResolvedValue({ items: [], total: 0, hasMore: false })
     vi.mocked(adminApi.getAdminBattleAudit).mockResolvedValue({})
     vi.mocked(adminApi.getAdminReport).mockResolvedValue({})
     vi.mocked(adminApi.deleteAdminBattle).mockResolvedValue()
@@ -155,10 +157,10 @@ describe('AdminApp', () => {
 
   it('does not let a late detail response replace the currently selected battle', async () => {
     const otherBattle = { ...battle, id: 'b-2', topic: '当前战局', status: 'completed' }
-    let resolveOldEvents!: (events: never[]) => void
+    let resolveOldEvents!: (page: Awaited<ReturnType<typeof adminApi.getAdminBattleEvents>>) => void
     vi.mocked(adminApi.getAdminBattleEvents).mockImplementation((id) => id === 'b-1'
       ? new Promise((resolve) => { resolveOldEvents = resolve })
-      : Promise.resolve([{ sequence: 1, type: '当前事件' }]))
+      : Promise.resolve({ items: [{ sequence: 1, type: '当前事件' }], total: 1, hasMore: false }))
     vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
     vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 2 } as never)
     vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
@@ -173,7 +175,7 @@ describe('AdminApp', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
     fireEvent.click(screen.getByRole('button', { name: '查看当前战局' }))
     expect((await screen.findAllByText(/当前事件/)).length).toBeGreaterThan(0)
-    await act(async () => { resolveOldEvents([{ sequence: 1, type: '旧战局迟到事件' }] as never[]) })
+    await act(async () => { resolveOldEvents({ items: [{ sequence: 1, type: '旧战局迟到事件' }], total: 1, hasMore: false }) })
 
     expect(screen.getAllByText('当前战局').length).toBeGreaterThan(0)
     expect(screen.queryByText(/旧战局迟到事件/)).not.toBeInTheDocument()
@@ -190,7 +192,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     vi.mocked(adminApi.getAdminBattleDetail).mockResolvedValue({ ...battle, status: 'pending' })
     vi.mocked(adminApi.getAdminBattleScore).mockResolvedValue({} as never)
-    vi.mocked(adminApi.getAdminBattleEvents).mockResolvedValue([])
+    vi.mocked(adminApi.getAdminBattleEvents).mockResolvedValue({ items: [], total: 0, hasMore: false })
     vi.mocked(adminApi.getAdminBattleAudit).mockResolvedValue({})
     vi.mocked(adminApi.getAdminReport).mockResolvedValue({})
     render(<AdminApp />)
