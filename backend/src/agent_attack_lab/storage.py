@@ -9,6 +9,35 @@ from threading import Lock
 from typing import Any
 
 
+_AUDIT_SENSITIVE_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "certificate",
+    "key",
+    "password",
+    "private_key",
+    "privatekey",
+    "secret",
+    "token",
+}
+
+
+def _sanitize_audit_data(value: Any) -> Any:
+    """Keep audit records structured without persisting credentials or keys."""
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_audit_data(item)
+            for key, item in value.items()
+            if str(key).lower().replace("-", "_") not in _AUDIT_SENSITIVE_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_audit_data(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 class _PooledResult:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
@@ -180,10 +209,44 @@ class BattleStore:
             """
         )
         self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                request_id TEXT,
+                battle_id TEXT,
+                correlation_id TEXT,
+                actor_role TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                data TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_events_battle ON audit_events (battle_id, created_at)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_events_request ON audit_events (request_id, created_at)"
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS battle_idempotency (
+                idempotency_key TEXT PRIMARY KEY,
+                request_fingerprint TEXT NOT NULL,
+                battle_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (version) VALUES (1)"
         )
         self._connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (version) VALUES (2)"
+        )
+        self._connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (version) VALUES (3)"
         )
         self._connection.commit()
 
@@ -244,10 +307,44 @@ class BattleStore:
             """
         )
         self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                request_id TEXT,
+                battle_id TEXT,
+                correlation_id TEXT,
+                actor_role TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                data TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_events_battle ON audit_events (battle_id, created_at)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_events_request ON audit_events (request_id, created_at)"
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS battle_idempotency (
+                idempotency_key TEXT PRIMARY KEY,
+                request_fingerprint TEXT NOT NULL,
+                battle_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.execute(
             "INSERT INTO schema_migrations (version) VALUES (1) ON CONFLICT (version) DO NOTHING"
         )
         self._connection.execute(
             "INSERT INTO schema_migrations (version) VALUES (2) ON CONFLICT (version) DO NOTHING"
+        )
+        self._connection.execute(
+            "INSERT INTO schema_migrations (version) VALUES (3) ON CONFLICT (version) DO NOTHING"
         )
         self._connection.commit()
 
@@ -315,8 +412,44 @@ class BattleStore:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """
         )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id VARCHAR(191) PRIMARY KEY,
+                event_type VARCHAR(128) NOT NULL,
+                request_id VARCHAR(191) NULL,
+                battle_id VARCHAR(191) NULL,
+                correlation_id VARCHAR(191) NULL,
+                actor_role VARCHAR(64) NULL,
+                status VARCHAR(32) NOT NULL,
+                created_at VARCHAR(40) NOT NULL,
+                data LONGTEXT NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        for name, columns in (
+            ("idx_audit_events_battle", "battle_id, created_at"),
+            ("idx_audit_events_request", "request_id, created_at"),
+        ):
+            indexes = {
+                row["Key_name"]
+                for row in self._connection.execute("SHOW INDEX FROM audit_events").fetchall()
+            }
+            if name not in indexes:
+                self._connection.execute(f"CREATE INDEX {name} ON audit_events ({columns})")
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS battle_idempotency (
+                idempotency_key VARCHAR(191) PRIMARY KEY,
+                request_fingerprint VARCHAR(64) NOT NULL,
+                battle_id VARCHAR(191) NOT NULL,
+                created_at VARCHAR(40) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
         self._connection.execute("INSERT IGNORE INTO schema_migrations (version) VALUES (1)")
         self._connection.execute("INSERT IGNORE INTO schema_migrations (version) VALUES (2)")
+        self._connection.execute("INSERT IGNORE INTO schema_migrations (version) VALUES (3)")
         self._connection.commit()
 
     def save(self, record: dict[str, Any]) -> None:
@@ -481,6 +614,138 @@ class BattleStore:
             )
             self._connection.commit()
 
+    def save_audit_event(self, event: dict[str, Any]) -> None:
+        """Persist one sanitized cross-request audit record."""
+        values = (
+            event["id"],
+            event["eventType"],
+            event.get("requestId"),
+            event.get("battleId"),
+            event.get("correlationId"),
+            event.get("actorRole"),
+            event["status"],
+            event["createdAt"],
+            json.dumps(_sanitize_audit_data(event.get("data", {})), ensure_ascii=False),
+        )
+        with self._lock:
+            if self._is_postgres:
+                self._connection.execute(
+                    """
+                    INSERT INTO audit_events
+                    (id, event_type, request_id, battle_id, correlation_id, actor_role, status, created_at, data)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET status=EXCLUDED.status, data=EXCLUDED.data
+                    """,
+                    values,
+                )
+            elif self._is_mysql:
+                self._connection.execute(
+                    """
+                    INSERT INTO audit_events
+                    (id, event_type, request_id, battle_id, correlation_id, actor_role, status, created_at, data)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE status=VALUES(status), data=VALUES(data)
+                    """,
+                    values,
+                )
+            else:
+                self._connection.execute(
+                    """
+                    INSERT INTO audit_events
+                    (id, event_type, request_id, battle_id, correlation_id, actor_role, status, created_at, data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET status=excluded.status, data=excluded.data
+                    """,
+                    values,
+                )
+            self._connection.commit()
+
+    def list_audit_events(
+        self, *, battle_id: str | None = None, request_id: str | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if battle_id:
+            clauses.append("battle_id = " + self._placeholder)
+            params.append(battle_id)
+        if request_id:
+            clauses.append("request_id = " + self._placeholder)
+            params.append(request_id)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        params.append(limit)
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM audit_events" + where + " ORDER BY created_at, id LIMIT " + self._placeholder,
+                params,
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "eventType": row["event_type"],
+                "requestId": row["request_id"],
+                "battleId": row["battle_id"],
+                "correlationId": row["correlation_id"],
+                "actorRole": row["actor_role"],
+                "status": row["status"],
+                "createdAt": row["created_at"],
+                "data": json.loads(row["data"]),
+            }
+            for row in rows
+        ]
+
+    def count_audit_events(self) -> int:
+        with self._lock:
+            row = self._connection.execute("SELECT COUNT(*) AS total FROM audit_events").fetchone()
+        return int(row["total"])
+
+    def get_idempotency(self, key: str) -> dict[str, str] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT idempotency_key, request_fingerprint, battle_id, created_at "
+                "FROM battle_idempotency WHERE idempotency_key = " + self._placeholder,
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "key": row["idempotency_key"],
+            "fingerprint": row["request_fingerprint"],
+            "battleId": row["battle_id"],
+            "createdAt": row["created_at"],
+        }
+
+    def save_idempotency(self, key: str, fingerprint: str, battle_id: str) -> None:
+        values = (key, fingerprint, battle_id, datetime.now(timezone.utc).isoformat())
+        with self._lock:
+            if self._is_postgres:
+                self._connection.execute(
+                    """
+                    INSERT INTO battle_idempotency (idempotency_key, request_fingerprint, battle_id, created_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (idempotency_key) DO NOTHING
+                    """,
+                    values,
+                )
+            elif self._is_mysql:
+                self._connection.execute(
+                    """
+                    INSERT IGNORE INTO battle_idempotency
+                    (idempotency_key, request_fingerprint, battle_id, created_at)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    values,
+                )
+            else:
+                self._connection.execute(
+                    """
+                    INSERT INTO battle_idempotency (idempotency_key, request_fingerprint, battle_id, created_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(idempotency_key) DO NOTHING
+                    """,
+                    values,
+                )
+            self._connection.commit()
+
     def get(self, battle_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._connection.execute(
@@ -540,6 +805,51 @@ class BattleStore:
             ).fetchall()
         return [self._to_event(row) for row in rows]
 
+    def query_events(
+        self,
+        battle_id: str,
+        *,
+        limit: int,
+        after_sequence: int = 0,
+        event_type: str | None = None,
+        from_time: str | None = None,
+        to_time: str | None = None,
+        query: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return one filtered event page and the total matching event count."""
+        filter_clauses = ["battle_id = ?"]
+        filter_params: list[Any] = [battle_id]
+        if event_type:
+            filter_clauses.append("event_type = ?")
+            filter_params.append(event_type)
+        if from_time:
+            filter_clauses.append("created_at >= ?")
+            filter_params.append(from_time)
+        if to_time:
+            filter_clauses.append("created_at <= ?")
+            filter_params.append(to_time)
+        if query:
+            pattern = f"%{query.lower()}%"
+            data_type = "CHAR" if self._is_mysql else "TEXT"
+            filter_clauses.append(
+                "(LOWER(event_type) LIKE ? OR LOWER(CAST(data AS " + data_type + ")) LIKE ?)"
+            )
+            filter_params.extend([pattern, pattern])
+        filter_where = " WHERE " + " AND ".join(filter_clauses)
+        page_where = filter_where + " AND sequence > " + self._placeholder
+        page_params = [*filter_params, after_sequence]
+        with self._lock:
+            total_row = self._connection.execute(
+                "SELECT COUNT(*) AS total FROM battle_events" + filter_where.replace("?", self._placeholder),
+                filter_params,
+            ).fetchone()
+            rows = self._connection.execute(
+                "SELECT * FROM battle_events" + page_where.replace("?", self._placeholder)
+                + " ORDER BY sequence LIMIT " + self._placeholder,
+                [*page_params, limit + 1],
+            ).fetchall()
+        return [self._to_event(row) for row in rows], int(total_row["total"])
+
     def list_events_for_battles(self, battle_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         """Load event histories for a bounded set of battles in one query."""
         if not battle_ids:
@@ -570,6 +880,14 @@ class BattleStore:
             )
             self._connection.execute(
                 "DELETE FROM battle_scores WHERE battle_id = " + self._placeholder,
+                (battle_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM audit_events WHERE battle_id = " + self._placeholder,
+                (battle_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM battle_idempotency WHERE battle_id = " + self._placeholder,
                 (battle_id,),
             )
             self._connection.commit()

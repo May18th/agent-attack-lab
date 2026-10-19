@@ -19,6 +19,8 @@ from acps_sdk.aip import AipRpcClient, StructuredDataItem, TaskResult, TextDataI
 
 Role = Literal["attacker", "defender"]
 logger = logging.getLogger("agent_attack_lab.acp")
+_rpc_retry_count = 0
+_rpc_timeout_count = 0
 
 
 class ACPAgentError(RuntimeError):
@@ -30,6 +32,35 @@ def _rpc_timeout_seconds() -> float:
         return min(max(float(os.getenv("AGENT_RPC_TIMEOUT_SECONDS", "90")), 5.0), 300.0)
     except ValueError:
         return 90.0
+
+
+def _rpc_retries() -> int:
+    try:
+        return min(max(int(os.getenv("AGENT_RPC_RETRIES", "2")), 0), 3)
+    except ValueError:
+        return 2
+
+
+def _is_retryable_error(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response is None or exc.response.status_code >= 500
+    return isinstance(
+        exc,
+        (
+            asyncio.TimeoutError,
+            TimeoutError,
+            ConnectionError,
+            OSError,
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+            httpx.ReadError,
+        ),
+    )
+
+
+def rpc_metrics() -> dict[str, int]:
+    return {"retries": _rpc_retry_count, "timeouts": _rpc_timeout_count}
 
 
 def _state_name(task: TaskResult) -> str:
@@ -171,6 +202,7 @@ async def _invoke(
         return None
 
     timeout_seconds = _rpc_timeout_seconds()
+    retries = _rpc_retries()
     client: AipRpcClient | None = None
     try:
         ssl_context = _ssl_context()
@@ -236,7 +268,23 @@ async def _invoke(
                 task = await client.get_task(task_id=task.taskId, session_id=session_id)
             return task
 
-        task = await asyncio.wait_for(start_and_wait(), timeout=timeout_seconds)
+        global _rpc_retry_count, _rpc_timeout_count
+        attempt = 0
+        while True:
+            try:
+                task = await asyncio.wait_for(start_and_wait(), timeout=timeout_seconds)
+                break
+            except asyncio.TimeoutError:
+                _rpc_timeout_count += 1
+                if attempt >= retries:
+                    raise
+                _rpc_retry_count += 1
+            except Exception as exc:
+                if not _is_retryable_error(exc) or attempt >= retries:
+                    raise
+                _rpc_retry_count += 1
+            await asyncio.sleep(min(0.1 * (2**attempt), 0.5))
+            attempt += 1
         return _validate_result(role, _task_data(task))
     except asyncio.TimeoutError as exc:
         logger.warning("Remote %s ACP Agent timed out", role)

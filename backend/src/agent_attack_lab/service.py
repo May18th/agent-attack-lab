@@ -43,6 +43,7 @@ from agent_attack_lab.acp_agents import (
     ACPAgentError,
     call_attacker,
     call_defender,
+    rpc_metrics,
     is_configured as acp_agent_configured,
 )
 from agent_attack_lab.battle_audit import audit_battle
@@ -106,7 +107,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
-    expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID"],
+    expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID", "X-Has-More", "X-Next-Sequence"],
 )
 
 _frontend_dist = Path(__file__).resolve().parents[3] / "frontend" / "frontend-ui" / "dist"
@@ -185,6 +186,11 @@ _event_data_max_bytes = 32768
 _leaderboard_cache: tuple[float, dict[str, Any]] | None = None
 _redis_cache = RedisJsonCache()
 _recovery_tasks: set[asyncio.Task[Any]] = set()
+_battle_tasks: dict[str, asyncio.Task[Any]] = {}
+_cancel_requested: set[str] = set()
+_idempotency_lock = Lock()
+_battle_timeout_count = 0
+_battle_cancel_count = 0
 
 
 def _env_int(name: str, default: int, minimum: int = 0) -> int:
@@ -192,6 +198,12 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
         return max(minimum, int(os.getenv(name, str(default))))
     except ValueError:
         return default
+
+
+_battle_timeout_seconds = min(
+    max(_env_int("AGENT_BATTLE_TIMEOUT_SECONDS", 300, minimum=5), 5),
+    3600,
+)
 
 
 _browser_password = os.getenv("AGENT_BROWSER_PASSWORD", "")
@@ -237,6 +249,22 @@ def _request_id(request: Request) -> str:
     return f"req-{uuid.uuid4()}"
 
 
+def _idempotency_key(request: Request) -> str | None:
+    value = request.headers.get("idempotency-key", "").strip()
+    if not value:
+        return None
+    if len(value) > 128 or any(char.isspace() for char in value):
+        raise HTTPException(status_code=400, detail="Idempotency-Key 格式无效")
+    return value
+
+
+def _battle_fingerprint(payload: BattleRequest) -> str:
+    serialized = json.dumps(
+        payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 @app.middleware("http")
 async def collect_request_metrics(request: Request, call_next: Any) -> Any:
     global _request_count, _request_errors, _request_total_duration_ms, _request_max_duration_ms
@@ -271,6 +299,18 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
         request.url.path,
         response.status_code,
         duration_ms,
+    )
+    _record_audit_event(
+        "http.request",
+        status="completed" if response.status_code < 400 else "failed",
+        request_id=request_id,
+        actor_role="http",
+        data={
+            "method": request.method,
+            "path": request.url.path,
+            "statusCode": response.status_code,
+            "durationMs": duration_ms,
+        },
     )
     return response
 
@@ -451,6 +491,10 @@ def _api_key_dependency(request: Request) -> None:
     _check_api_key(request)
 
 
+def _metrics_auth_dependency(request: Request) -> None:
+    _check_browser_or_api_auth(request)
+
+
 def _read_auth_dependency(request: Request) -> None:
     if _protect_read_routes or _browser_password or _cloudflare_access_configured:
         _check_browser_or_api_auth(request)
@@ -546,6 +590,89 @@ def _event(battle_id: str, sequence: int, event_type: str, status: str, data: di
     }
 
 
+def _record_audit_event(
+    event_type: str,
+    *,
+    status: str,
+    request_id: str | None = None,
+    battle_id: str | None = None,
+    correlation_id: str | None = None,
+    actor_role: str | None = None,
+    data: dict[str, Any] | None = None,
+) -> None:
+    try:
+        _battle_store.save_audit_event(
+            {
+                "id": f"audit-{uuid.uuid4()}",
+                "eventType": event_type,
+                "requestId": request_id,
+                "battleId": battle_id,
+                "correlationId": correlation_id,
+                "actorRole": actor_role,
+                "status": status,
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "data": data or {},
+            }
+        )
+    except Exception as exc:  # pragma: no cover - database-specific failure path
+        logger.warning("Audit persistence failed event=%s error=%s", event_type, type(exc).__name__)
+
+
+def _mark_battle_terminal(battle_id: str, event_type: str, reason: str) -> None:
+    record = _battle_store.get(battle_id)
+    if record is None or record["status"] in {"completed", "failed"}:
+        return
+    record["status"] = "failed"
+    _battle_store.save(record)
+    events = _battle_store.list_events(battle_id)
+    _battle_store.save_event(
+        _event(
+            battle_id,
+            max((item["sequence"] for item in events), default=0) + 1,
+            event_type,
+            "failed",
+            {"reason": reason},
+        )
+    )
+    _record_audit_event(
+        event_type,
+        status="failed",
+        battle_id=battle_id,
+        actor_role="system",
+        data={"reason": reason},
+    )
+    _persist_internal_score(record)
+    _invalidate_leaderboard_cache()
+
+
+async def _run_battle_with_tracking(battle_id: str, payload: BattleRequest) -> None:
+    global _battle_timeout_count, _battle_cancel_count
+    current = asyncio.current_task()
+    if current is not None:
+        _battle_tasks[battle_id] = current
+    try:
+        await asyncio.wait_for(
+            _run_battle_async(battle_id, payload), timeout=_battle_timeout_seconds
+        )
+    except asyncio.TimeoutError:
+        _battle_timeout_count += 1
+        _mark_battle_terminal(battle_id, "battle.timeout", "execution_timeout")
+    except asyncio.CancelledError:
+        if battle_id in _cancel_requested:
+            _cancel_requested.discard(battle_id)
+            _mark_battle_terminal(battle_id, "battle.cancelled", "requested_by_client")
+            return
+        raise
+    finally:
+        _battle_tasks.pop(battle_id, None)
+
+
+def _schedule_battle_task(
+    background_tasks: BackgroundTasks, battle_id: str, payload: BattleRequest
+) -> None:
+    background_tasks.add_task(_run_battle_with_tracking, battle_id, payload)
+
+
 async def _battle_attack(
     payload: BattleRequest, *, correlation_id: str
 ) -> tuple[dict[str, Any], str]:
@@ -599,17 +726,34 @@ async def _tracked_agent_call(
 
     started = time.monotonic()
     add_event("agent.call.started", "running", event_data)
+    _record_audit_event(
+        "agent.call.started",
+        status="running",
+        battle_id=battle_id,
+        correlation_id=correlation_id,
+        actor_role=role,
+        data=event_data,
+    )
     try:
         result, source = await invoke(correlation_id)
     except Exception as exc:
+        failure_data = {
+            **event_data,
+            "durationMs": round((time.monotonic() - started) * 1000),
+            "errorType": type(exc).__name__,
+        }
         add_event(
             "agent.call.failed",
             "failed",
-            {
-                **event_data,
-                "durationMs": round((time.monotonic() - started) * 1000),
-                "errorType": type(exc).__name__,
-            },
+            failure_data,
+        )
+        _record_audit_event(
+            "agent.call.failed",
+            status="failed",
+            battle_id=battle_id,
+            correlation_id=correlation_id,
+            actor_role=role,
+            data=failure_data,
         )
         logger.warning(
             "Battle %s %s call failed (correlation_id=%s, error_type=%s)",
@@ -620,14 +764,23 @@ async def _tracked_agent_call(
         )
         raise
 
+    completed_data = {
+        **event_data,
+        "durationMs": round((time.monotonic() - started) * 1000),
+        "resultSource": source,
+    }
     add_event(
         "agent.call.completed",
         "completed",
-        {
-            **event_data,
-            "durationMs": round((time.monotonic() - started) * 1000),
-            "resultSource": source,
-        },
+        completed_data,
+    )
+    _record_audit_event(
+        "agent.call.completed",
+        status="completed",
+        battle_id=battle_id,
+        correlation_id=correlation_id,
+        actor_role=role,
+        data=completed_data,
     )
     return result, source, correlation_id
 
@@ -780,7 +933,7 @@ async def _lifespan(_app: FastAPI):
             continue
         recovered_ids.add(record["id"])
         payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
-        task = asyncio.create_task(_run_battle_async(record["id"], payload))
+        task = asyncio.create_task(_run_battle_with_tracking(record["id"], payload))
         _recovery_tasks.add(task)
         task.add_done_callback(_recovery_tasks.discard)
     try:
@@ -2070,9 +2223,10 @@ def delete_browser_session(request: Request, response: Response) -> dict[str, bo
     return {"authenticated": False}
 
 
-@app.get("/metrics", include_in_schema=False, dependencies=[Depends(_api_key_dependency)])
+@app.get("/metrics", include_in_schema=False, dependencies=[Depends(_metrics_auth_dependency)])
 def metrics() -> dict[str, Any]:
     average_latency = _request_total_duration_ms / _request_count if _request_count else 0
+    acp = rpc_metrics()
     return {
         "service": "智能体攻防实验室",
         "uptimeSeconds": round(time.monotonic() - _started_at, 2),
@@ -2085,6 +2239,12 @@ def metrics() -> dict[str, Any]:
         "protectReadRoutes": _protect_read_routes,
         "eventDataMaxBytes": _event_data_max_bytes,
         "recoveryTasks": len(_recovery_tasks),
+        "activeBattleTasks": len(_battle_tasks),
+        "battleTimeouts": _battle_timeout_count,
+        "battleCancellations": _battle_cancel_count,
+        "acpRetries": acp["retries"],
+        "acpTimeouts": acp["timeouts"],
+        "auditEvents": _battle_store.count_audit_events(),
         "battles": _battle_store.count(),
         "events": _battle_store.count_events(),
     }
@@ -2167,7 +2327,9 @@ def battle_audit(battle_id: str) -> dict[str, Any]:
     record = _battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    return audit_battle(record, _battle_store.list_events(battle_id))
+    result = audit_battle(record, _battle_store.list_events(battle_id))
+    result["auditEvents"] = _battle_store.list_audit_events(battle_id=battle_id)
+    return result
 
 
 @app.post(
@@ -2184,6 +2346,26 @@ async def create_battle(
     background_tasks: BackgroundTasks,
     background: bool = Query(default=False, description="是否后台异步执行"),
 ) -> BattleRecord:
+    idempotency_key = _idempotency_key(request) if background else None
+    fingerprint = _battle_fingerprint(payload) if idempotency_key else None
+    if idempotency_key and fingerprint:
+        with _idempotency_lock:
+            existing = _battle_store.get_idempotency(idempotency_key)
+            if existing is not None:
+                if existing["fingerprint"] != fingerprint:
+                    raise HTTPException(status_code=409, detail="Idempotency-Key 已用于不同请求")
+                existing_record = _battle_store.get(existing["battleId"])
+                if existing_record is None:
+                    raise HTTPException(status_code=409, detail="幂等记录对应的战局已不存在")
+                _record_audit_event(
+                    "battle.idempotency.reused",
+                    status="reused",
+                    request_id=request.state.request_id,
+                    battle_id=existing["battleId"],
+                    actor_role="public",
+                    data={"idempotencyKeyPresent": True},
+                )
+                return BattleRecord.model_validate(existing_record)
     battle_id = f"battle-{uuid.uuid4()}"
     created_at = datetime.now(timezone.utc).isoformat()
     if background:
@@ -2197,6 +2379,16 @@ async def create_battle(
             defenderOut=[],
         )
         _battle_store.save(record.model_dump())
+        if idempotency_key and fingerprint:
+            _battle_store.save_idempotency(idempotency_key, fingerprint, battle_id)
+        _record_audit_event(
+            "battle.created",
+            status="accepted",
+            request_id=request.state.request_id,
+            battle_id=battle_id,
+            actor_role="public",
+            data={"difficulty": payload.difficulty, "idempotencyKeyPresent": bool(idempotency_key)},
+        )
         _battle_store.save_event(
             _event(
                 battle_id,
@@ -2211,7 +2403,7 @@ async def create_battle(
                 },
             )
         )
-        background_tasks.add_task(_run_battle_async, battle_id, payload)
+        _schedule_battle_task(background_tasks, battle_id, payload)
         return record
 
     events: list[dict[str, Any]] = []
@@ -2374,8 +2566,43 @@ def retry_battle(
         )
     )
     payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
-    background_tasks.add_task(_run_battle_async, battle_id, payload)
+    _schedule_battle_task(background_tasks, battle_id, payload)
     return BattleRecord.model_validate(record)
+
+
+@app.post(
+    "/battles/{battle_id}/cancel",
+    dependencies=[Depends(_rate_limit_dependency)],
+    status_code=202,
+    summary="取消运行中的战局",
+    tags=["战局接口"],
+)
+def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
+    global _battle_cancel_count
+    _check_browser_or_api_auth(request)
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    if record["status"] in {"completed", "failed"}:
+        raise HTTPException(status_code=409, detail="终态战局不能取消")
+    _battle_cancel_count += 1
+    task = _battle_tasks.get(battle_id)
+    if task is not None and not task.done():
+        _cancel_requested.add(battle_id)
+        task.cancel()
+    _mark_battle_terminal(battle_id, "battle.cancelled", "requested_by_client")
+    _record_audit_event(
+        "battle.cancel.requested",
+        status="accepted",
+        request_id=request.state.request_id,
+        battle_id=battle_id,
+        actor_role="operator",
+        data={"taskTracked": task is not None and not task.done()},
+    )
+    updated = _battle_store.get(battle_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    return BattleRecord.model_validate(updated)
 
 
 @app.delete(
@@ -2423,11 +2650,52 @@ def list_battles(
     ]
 
 
-@app.get("/battles/{battle_id}/events", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
-def get_battle_events(battle_id: str) -> list[BattleEvent]:
+@app.get(
+    "/battles/{battle_id}/events",
+    summary="查询战局回放事件",
+    description="按事件序号升序分页返回已持久化的战局事件，可按类型、时间范围和事件内容检索。",
+    tags=["战局回放"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def get_battle_events(
+    battle_id: str,
+    response: Response,
+    limit: int = Query(default=200, ge=1, le=1000, description="每页最多返回 1000 条"),
+    after_sequence: int = Query(default=0, ge=0, description="返回序号大于此值的事件"),
+    event_type: str | None = Query(default=None, min_length=1, max_length=64),
+    from_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),
+    to_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),
+    q: str | None = Query(default=None, max_length=200, description="搜索事件类型和原始事件数据"),
+) -> list[BattleEvent]:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    return [BattleEvent.model_validate(item) for item in _battle_store.list_events(battle_id)]
+    def utc_iso(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return normalized.isoformat()
+
+    normalized_from = utc_iso(from_time)
+    normalized_to = utc_iso(to_time)
+    if normalized_from and normalized_to and normalized_from > normalized_to:
+        raise HTTPException(status_code=422, detail="from_time 不能晚于 to_time")
+
+    events, total = _battle_store.query_events(
+        battle_id,
+        limit=limit,
+        after_sequence=after_sequence,
+        event_type=event_type,
+        from_time=normalized_from,
+        to_time=normalized_to,
+        query=q,
+    )
+    has_more = len(events) > limit
+    page = events[:limit]
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Has-More"] = str(has_more).lower()
+    if page:
+        response.headers["X-Next-Sequence"] = str(page[-1]["sequence"])
+    return [BattleEvent.model_validate(item) for item in page]
 
 
 @app.get("/battles/{battle_id}/replay", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])

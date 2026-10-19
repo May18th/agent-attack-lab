@@ -444,6 +444,73 @@ def test_battle_events_report_filters_and_leaderboard() -> None:
     assert client.get("/metrics").json()["events"] >= len(events.json())
 
 
+def test_battle_events_support_cursor_pagination_and_server_side_filters(monkeypatch, tmp_path) -> None:
+    store = BattleStore(str(tmp_path / "replay-events.sqlite3"))
+    store.save({
+        "id": "battle-replay-page",
+        "difficulty": "mid",
+        "topic": "分页回放测试",
+        "status": "completed",
+        "createdAt": "2026-10-19T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    })
+    for sequence, event_type, created_at, marker in (
+        (1, "attack.sample.generated", "2026-10-19T00:00:01+00:00", "marker-alpha"),
+        (2, "round.completed", "2026-10-19T00:00:02+00:00", "marker-beta"),
+        (3, "attack.sample.generated", "2026-10-19T00:00:03+00:00", "marker-gamma"),
+        (4, "attack.sample.generated", "2026-10-18T23:59:59+00:00", "marker-outside"),
+    ):
+        store.save_event({
+            "id": f"replay-event-{sequence}",
+            "battleId": "battle-replay-page",
+            "sequence": sequence,
+            "type": event_type,
+            "status": "completed",
+            "createdAt": created_at,
+            "data": {"marker": marker},
+        })
+    monkeypatch.setattr(service, "_battle_store", store)
+
+    first = client.get(
+        "/battles/battle-replay-page/events",
+        params={
+            "limit": 1,
+            "after_sequence": 0,
+            "event_type": "attack.sample.generated",
+            "q": "marker-",
+            "from_time": "2026-10-19T00:00:00+00:00",
+            "to_time": "2026-10-19T00:01:00+00:00",
+        },
+    )
+    assert first.status_code == 200
+    assert [item["sequence"] for item in first.json()] == [1]
+    assert first.headers["X-Total-Count"] == "2"
+    assert first.headers["X-Has-More"] == "true"
+    assert first.headers["X-Next-Sequence"] == "1"
+
+    second = client.get(
+        "/battles/battle-replay-page/events",
+        params={
+            "limit": 1,
+            "after_sequence": first.headers["X-Next-Sequence"],
+            "event_type": "attack.sample.generated",
+            "q": "marker-",
+            "from_time": "2026-10-19T00:00:00+00:00",
+            "to_time": "2026-10-19T00:01:00+00:00",
+        },
+    )
+    assert [item["sequence"] for item in second.json()] == [3]
+    assert second.headers["X-Has-More"] == "false"
+    assert second.headers["X-Total-Count"] == "2"
+
+    invalid_range = client.get(
+        "/battles/battle-replay-page/events",
+        params={"from_time": "2026-10-19T00:01:00+00:00", "to_time": "2026-10-19T00:00:00"},
+    )
+    assert invalid_range.status_code == 422
+
+
 def test_battle_store_persists_records(tmp_path) -> None:
     database = tmp_path / "battles.sqlite3"
     record = {
@@ -689,7 +756,7 @@ def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(tmp_path, m
     import sqlite3
 
     connection = sqlite3.connect(database)
-    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261015_0002"
+    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261018_0003"
     assert connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'battle_scores'"
     ).fetchone()[0] == "battle_scores"
@@ -807,6 +874,7 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(monkeypa
     assert "httponly" in login.headers["set-cookie"].lower()
     assert "server-only-secret" not in login.headers["set-cookie"]
     assert browser.get("/auth/session").json() == {"enabled": True, "authenticated": True}
+    assert browser.get("/metrics", headers={"Origin": origin}).status_code == 200
 
     created = browser.post(
         "/battles",
@@ -1182,6 +1250,8 @@ def test_cors_preflight_allows_api_key_header() -> None:
 
     page = client.get("/battles?limit=1", headers={"Origin": "http://localhost:5173"})
     assert "X-Total-Count" in page.headers["Access-Control-Expose-Headers"]
+    assert "X-Has-More" in page.headers["Access-Control-Expose-Headers"]
+    assert "X-Next-Sequence" in page.headers["Access-Control-Expose-Headers"]
     assert "X-Battle-ID" in page.headers["Access-Control-Expose-Headers"]
     assert "X-Request-ID" in page.headers["Access-Control-Expose-Headers"]
     assert "X-Battle-ID" in page.headers["Access-Control-Expose-Headers"]

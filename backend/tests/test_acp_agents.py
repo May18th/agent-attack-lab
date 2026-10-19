@@ -240,6 +240,35 @@ def test_remote_failure_does_not_fall_back_to_local(monkeypatch: pytest.MonkeyPa
     assert fake_client.closed
 
 
+def test_remote_transient_failure_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FlakyClient(FakeAipClient):
+        def __init__(self) -> None:
+            super().__init__(task_result({"samples": []}))
+            self.attempts = 0
+
+        async def start_task(self, *, session_id: str, user_input: str) -> TaskResult:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise OSError("connection reset")
+            return await super().start_task(session_id=session_id, user_input=user_input)
+
+    fake_client = FlakyClient()
+    monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
+    monkeypatch.setenv("AGENT_RPC_RETRIES", "1")
+    monkeypatch.setattr(acp_agents, "AipRpcClient", lambda **_: fake_client)
+    original_sleep = acp_agents.asyncio.sleep
+
+    async def no_sleep(_delay: float) -> None:
+        await original_sleep(0)
+
+    monkeypatch.setattr(acp_agents.asyncio, "sleep", no_sleep)
+
+    result = asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "retry"}))
+
+    assert result == {"samples": [], "agentSource": "acp-rule-fallback"}
+    assert fake_client.attempts == 2
+
+
 def test_unconfigured_role_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_ATTACKER_RPC_URL", raising=False)
     assert asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "test"})) is None
