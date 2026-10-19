@@ -4,6 +4,7 @@ import {
   apiErrorMessage, cancelAdminBattle, deleteAdminBattle, getAdminBattleAudit, getAdminBattleDetail,
   getAdminBattleEvents, getAdminBattleScore, getAdminDashboardSummary, getAdminExternalCases, getAdminMetrics,
   getAdminReport, getAdminSession, listAdminBattles, logoutAdminSession, retryAdminBattle,
+  loginAdminSession,
   type AdminBattle, type AdminBattleEvent, type AdminBattleListFilters, type AdminExternalCases,
 } from './adminApi'
 import { ApiError } from './api'
@@ -34,6 +35,8 @@ function errorText(error: unknown): string {
 export default function AdminApp() {
   const [session, setSession] = useState<{ enabled: boolean; authenticated: boolean } | null>(null)
   const [sessionError, setSessionError] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginBusy, setLoginBusy] = useState(false)
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null)
   const [metrics, setMetrics] = useState<Record<string, unknown> | null>(null)
   const [battles, setBattles] = useState<AdminBattle[]>([])
@@ -67,6 +70,20 @@ export default function AdminApp() {
     } catch (e) { setError(errorText(e)) }
 
   }, [])
+  const handlePasswordLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoginBusy(true)
+    setSessionError('')
+    try {
+      await loginAdminSession(loginPassword)
+      setLoginPassword('')
+      await checkSession()
+    } catch (e) {
+      setSessionError(errorText(e))
+    } finally {
+      setLoginBusy(false)
+    }
+  }
   useEffect(() => { queueMicrotask(() => void checkSession()) }, [checkSession])
 
   const loadList = useCallback(async (filters?: Partial<AdminBattleListFilters>) => {
@@ -188,7 +205,7 @@ export default function AdminApp() {
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const overviewItems = useMemo(() => Object.entries(summary ?? {}).filter(([, value]) => typeof value === 'number').slice(0, 8), [summary])
   if (!session) return <main className="admin-shell"><header className="admin-header"><h1>管理员后台</h1></header><section className="admin-auth"><h2>正在检查后台会话</h2>{sessionError && <p className="admin-error">{sessionError}</p>}<button onClick={() => void checkSession()}>重新检查会话</button></section></main>
-  if (session.enabled && !session.authenticated) return <main className="admin-shell"><header className="admin-header"><h1>管理员后台</h1></header><section className="admin-auth"><h2>需要 Cloudflare Access 认证</h2><p>请在当前浏览器完成 Cloudflare Access 组织认证。认证由浏览器会话处理，后台不会收集密码。</p>{sessionError && <p className="admin-error">{sessionError}</p>}<button onClick={() => void checkSession()}>我已完成认证，重新检查</button></section></main>
+  if (session.enabled && !session.authenticated) return <main className="admin-shell"><header className="admin-header"><h1>管理员后台</h1></header><section className="admin-auth"><h2>管理员认证</h2><p>可使用 Cloudflare Access，或使用后台管理密码建立安全会话。</p><form onSubmit={(event) => void handlePasswordLogin(event)}><label htmlFor="admin-login-password">后台管理密码</label><input id="admin-login-password" type="password" autoComplete="current-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required maxLength={256} /><button type="submit" disabled={loginBusy}>{loginBusy ? '登录中…' : '登录管理后台'}</button></form>{sessionError && <p className="admin-error">{sessionError}</p>}<button type="button" onClick={() => void checkSession()}>我已完成认证，重新检查</button></section></main>
 
   return <main className="admin-shell">
     <header className="admin-header"><div><span className="admin-kicker">AGENT ATTACK LAB / OPERATIONS</span><h1>管理员后台</h1></div><button onClick={() => void handleLogout()}>退出会话</button></header>

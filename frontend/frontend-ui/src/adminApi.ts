@@ -58,6 +58,10 @@ export function getAdminSession(): Promise<AdminSession> {
   return api<AdminSession>('/auth/session')
 }
 
+export function loginAdminSession(password: string): Promise<void> {
+  return api('/auth/session', { method: 'POST', body: JSON.stringify({ password }) }).then(() => undefined)
+}
+
 export async function logoutAdminSession(): Promise<void> {
   try {
     await api<unknown>('/auth/session', { method: 'DELETE' })
