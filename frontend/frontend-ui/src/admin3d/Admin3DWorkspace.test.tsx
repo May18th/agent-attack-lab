@@ -89,6 +89,24 @@ describe('Admin3DWorkspace', () => {
     vi.useRealTimers()
   })
 
+  it('applies the selected playback speed to event timing', () => {
+    vi.useFakeTimers()
+    const events: AdminBattleEvent[] = [
+      { sequence: 1, type: '攻击请求' },
+      { sequence: 2, type: '防守拦截' },
+    ]
+    const onSelectEvent = vi.fn()
+    renderWorkspace({ selectedBattle: battle, events, onSelectEvent })
+    fireEvent.change(screen.getByRole('combobox', { name: '回放速度' }), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: '播放回放' }))
+
+    act(() => { vi.advanceTimersByTime(1249) })
+    expect(onSelectEvent).toHaveBeenLastCalledWith(events[0])
+    act(() => { vi.advanceTimersByTime(1) })
+    expect(onSelectEvent).toHaveBeenLastCalledWith(events[1])
+    vi.useRealTimers()
+  })
+
   it('preserves the current event duration when replay is paused and resumed', () => {
     vi.useFakeTimers()
     const events: AdminBattleEvent[] = [

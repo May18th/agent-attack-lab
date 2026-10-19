@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AdminApp from './AdminApp'
 import * as adminApi from './adminApi'
@@ -179,6 +179,33 @@ describe('AdminApp', () => {
 
     expect(screen.getAllByText('当前战局').length).toBeGreaterThan(0)
     expect(screen.queryByText(/旧战局迟到事件/)).not.toBeInTheDocument()
+  })
+
+  it('does not request the same next event page twice while it is loading', async () => {
+    let resolveNextPage!: (page: Awaited<ReturnType<typeof adminApi.getAdminBattleEvents>>) => void
+    vi.mocked(adminApi.getAdminBattleEvents)
+      .mockResolvedValueOnce({ items: [{ sequence: 1, type: '首条事件' }], total: 2, hasMore: true })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNextPage = resolve }))
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 1 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [battle], total: 1 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.getAdminBattleDetail).mockResolvedValue(battle)
+    vi.mocked(adminApi.getAdminBattleScore).mockResolvedValue({} as never)
+    vi.mocked(adminApi.getAdminBattleAudit).mockResolvedValue({})
+    vi.mocked(adminApi.getAdminReport).mockResolvedValue({})
+    render(<AdminApp />)
+    fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
+
+    const replay = await screen.findByRole('region', { name: '3D 战局回放' })
+    const loadMore = await within(replay).findByRole('button', { name: '加载更多事件（1 / 2）' })
+    fireEvent.click(loadMore)
+    fireEvent.click(loadMore)
+
+    await waitFor(() => expect(adminApi.getAdminBattleEvents).toHaveBeenCalledTimes(2))
+    await act(async () => { resolveNextPage({ items: [{ sequence: 2, type: '下一条事件' }], total: 2, hasMore: false }) })
+    await waitFor(() => expect(screen.queryByRole('button', { name: /加载更多事件/ })).not.toBeInTheDocument())
   })
 
   it('refreshes a visible pending battle every 15 seconds, pauses while hidden, and refreshes on return', async () => {

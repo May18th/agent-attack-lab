@@ -8,6 +8,7 @@ type BattleTimeline3DProps = {
   audit: Record<string, unknown>
   eventsTotal?: number
   hasMoreEvents?: boolean
+  loadingMoreEvents?: boolean
   onLoadMoreEvents?: () => void
   selectedEvent: AdminBattleEvent | null
   onSelectEvent: (event: AdminBattleEvent) => void
@@ -21,7 +22,7 @@ function jsonPreview(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2)
 }
 
-export function BattleTimeline3D({ battle, events, audit, eventsTotal = events.length, hasMoreEvents = false, onLoadMoreEvents, selectedEvent, onSelectEvent }: BattleTimeline3DProps) {
+export function BattleTimeline3D({ battle, events, audit, eventsTotal = events.length, hasMoreEvents = false, loadingMoreEvents = false, onLoadMoreEvents, selectedEvent, onSelectEvent }: BattleTimeline3DProps) {
   const [query, setQuery] = useState('')
   const orderedEvents = useMemo(() => events
     .map((event, index) => ({ event, index }))
@@ -71,7 +72,7 @@ export function BattleTimeline3D({ battle, events, audit, eventsTotal = events.l
         </li>
       })}
     </ol> : <p className="battle-timeline-empty">{orderedEvents.length ? '没有匹配的事件' : '本场暂无事件'}</p>}
-    {hasMoreEvents && <button className="battle-timeline-load-more" type="button" onClick={onLoadMoreEvents}>加载更多事件（{events.length} / {eventsTotal}）</button>}
+    {hasMoreEvents && <button className="battle-timeline-load-more" type="button" disabled={loadingMoreEvents} onClick={onLoadMoreEvents}>{loadingMoreEvents ? '正在加载事件…' : `加载更多事件（${events.length} / ${eventsTotal}）`}</button>}
     {selectedEvent && <details className="battle-timeline-selection" open>
       <summary>事件详情：{selectedEvent.sequence ?? '—'} · {eventLabel(selectedEvent)}</summary>
       <pre>{jsonPreview(selectedEvent)}</pre>

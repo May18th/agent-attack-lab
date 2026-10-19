@@ -13,6 +13,7 @@ type Admin3DWorkspaceProps = {
   events: AdminBattleEvent[]
   eventsTotal?: number
   hasMoreEvents?: boolean
+  loadingMoreEvents?: boolean
   onLoadMoreEvents?: () => void
   selectedEvent: AdminBattleEvent | null
   onSelectBattle: (battle: AdminBattle) => void
@@ -51,7 +52,7 @@ export function Admin3DWorkspace(props: Admin3DWorkspaceProps) {
   return <Admin3DReplay key={props.selectedBattle?.id ?? 'no-battle'} {...props} />
 }
 
-function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.length, hasMoreEvents = false, onLoadMoreEvents, selectedEvent, onSelectBattle, onSelectEvent }: Admin3DWorkspaceProps) {
+function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.length, hasMoreEvents = false, loadingMoreEvents = false, onLoadMoreEvents, selectedEvent, onSelectBattle, onSelectEvent }: Admin3DWorkspaceProps) {
   const [playbackIndex, setPlaybackIndex] = useState(-1)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
@@ -162,7 +163,7 @@ function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.l
       onSelectEvent(event)
       const node = modelRef.current?.nodes.find((candidate) => candidate.source === event)
       sceneRef.current?.setActiveNode(node?.id, true)
-    }, clock.remainingMs)
+    }, clock.remainingMs / speed)
     return () => {
       window.clearTimeout(timer)
       if (clock.startedAt !== null) {
@@ -291,7 +292,7 @@ function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.l
           </label>
           <span className="admin3d-progress-count">{currentIndex < 0 ? 0 : currentIndex + 1} / {orderedEvents.length}</span>
         </div>
-        {hasMoreEvents && <button type="button" className="admin3d-load-more" onClick={onLoadMoreEvents}>加载更多事件（{orderedEvents.length} / {eventsTotal}）</button>}
+        {hasMoreEvents && <button type="button" className="admin3d-load-more" disabled={loadingMoreEvents} onClick={onLoadMoreEvents}>{loadingMoreEvents ? '正在加载事件…' : `加载更多事件（${orderedEvents.length} / ${eventsTotal}）`}</button>}
       </div>
 
       <aside className="admin3d-event-panel" aria-live="polite">
