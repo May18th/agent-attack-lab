@@ -1,5 +1,6 @@
 import {
   api,
+  apiCursorPage,
   apiPage,
   ApiError,
   type Battle,
@@ -32,6 +33,7 @@ export type AdminBattleEvent = {
   [key: string]: unknown
 }
 export type AdminBattleEvents = AdminBattleEvent[]
+export type AdminBattleEventPage = { items: AdminBattleEvents; total: number; hasMore: boolean; nextSequence?: number }
 export type AdminBattleScore = BattleScore
 export type AdminDashboardSummary = DashboardSummary & Record<string, number>
 export type AdminMetrics = Record<string, unknown>
@@ -56,6 +58,10 @@ export function getAdminSession(): Promise<AdminSession> {
   return api<AdminSession>('/auth/session')
 }
 
+export function loginAdminSession(password: string): Promise<void> {
+  return api('/auth/session', { method: 'POST', body: JSON.stringify({ password }) }).then(() => undefined)
+}
+
 export async function logoutAdminSession(): Promise<void> {
   try {
     await api<unknown>('/auth/session', { method: 'DELETE' })
@@ -77,8 +83,8 @@ export function getAdminBattleAudit(battleId: string): Promise<AdminBattleAudit>
   return api<AdminBattleAudit>(battlePath(battleId, '/audit'))
 }
 
-export function getAdminBattleEvents(battleId: string): Promise<AdminBattleEvents> {
-  return api<AdminBattleEvents>(battlePath(battleId, '/events'))
+export function getAdminBattleEvents(battleId: string, afterSequence = 0): Promise<AdminBattleEventPage> {
+  return apiCursorPage<AdminBattleEvent>(`${battlePath(battleId, '/events')}${queryString({ after_sequence: afterSequence, limit: 200 })}`)
 }
 
 export function getAdminBattleScore(battleId: string): Promise<AdminBattleScore> {

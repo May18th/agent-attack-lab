@@ -1,2 +1,62 @@
-.battle-timeline{margin-top:16px;padding:14px 0;border-top:1px solid #34443f;color:#e8edf5}.battle-timeline-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.battle-timeline-heading h3{margin:0;font-size:16px}.battle-timeline-heading p{margin:3px 0 0;color:#a9c0bd;font-size:12px;overflow-wrap:anywhere}.battle-timeline-heading>span{color:#a9c0bd;font-size:12px;white-space:nowrap}.battle-timeline-scene-frame{height:220px;margin-top:12px;overflow:hidden;border:1px solid #34443f;border-radius:4px;background:#101820}.battle-timeline-scene{position:relative;width:100%;height:100%}.battle-timeline-scene canvas{display:block;width:100%;height:100%}.battle-timeline-scene-error{display:grid;place-items:center;width:100%;height:100%;padding:18px;color:#b8c7d9;text-align:center}.battle-timeline-track{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:14px 0;padding:0;list-style:none}.battle-timeline-point{position:relative;min-width:0}.battle-timeline-point:before{content:"";position:absolute;left:15px;top:17px;bottom:-10px;width:1px;background:#4b7567}.battle-timeline-point button{position:relative;display:flex;align-items:flex-start;gap:9px;width:100%;min-height:112px;padding:9px;text-align:left;color:inherit;background:#151f26;border:1px solid #34443f;border-radius:4px;cursor:pointer}.battle-timeline-point button:hover,.battle-timeline-point button[aria-pressed=true]{border-color:#79bda5;background:#1b2b2c}.battle-timeline-sequence{display:grid;place-items:center;flex:0 0 22px;aspect-ratio:1;border-radius:50%;background:#68b99a;color:#10211b;font-size:11px;font-weight:700}.battle-timeline-event{display:grid;gap:4px;min-width:0}.battle-timeline-event strong,.battle-timeline-event small{overflow-wrap:anywhere}.battle-timeline-event small{color:#a9c0bd;font-size:11px}.battle-timeline-event code{display:block;max-height:90px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:#c0d0cf;font:10px/1.4 ui-monospace,monospace}.battle-timeline-empty{margin:12px 0;color:#9aadaf;font-size:13px}.battle-timeline-selection{color:#b6ead5;font-size:12px}.battle-timeline-audit{margin-top:12px;border-top:1px solid #34443f;padding-top:10px}.battle-timeline-audit summary{cursor:pointer;color:#b5d4c9}.battle-timeline-audit dl{display:grid;gap:7px;margin:10px 0}.battle-timeline-audit dl>div{display:grid;grid-template-columns:minmax(100px,.3fr) minmax(0,1fr);gap:10px;padding:8px;background:#151f26;border-radius:4px}.battle-timeline-audit dt{color:#a9c0bd;font-size:12px;overflow-wrap:anywhere}.battle-timeline-audit dd{min-width:0;margin:0}.battle-timeline-audit pre{max-height:150px;margin:0;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:#c0d0cf;font-size:11px}.battle-timeline-audit>p{margin-bottom:0}
-@media(max-width:560px){.battle-timeline-track{grid-template-columns:1fr}.battle-timeline-point:before{display:none}.battle-timeline-audit dl>div{grid-template-columns:1fr;gap:4px}}
+.battle-timeline {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #34444a;
+  color: #e3e9eb;
+}
+.battle-timeline-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.battle-timeline-heading-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.battle-timeline-risk { padding: 4px 7px; color: #ffc4a8; background: #321f1d; border: 1px solid #955646; border-radius: 3px; font: 650 11px/1.2 ui-monospace, Consolas, monospace; }
+.battle-timeline-heading h3 { margin: 0; font-size: 16px; }
+.battle-timeline-heading p { margin: 4px 0 0; color: #9aaab0; font-size: 12px; overflow-wrap: anywhere; }
+.battle-timeline-heading > span { color: #aab8bc; font: 12px/1.4 ui-monospace, monospace; }
+.battle-timeline-score { margin-top: 12px; padding: 10px 12px; color: #d8e4df; background: #111a1e; border: 1px solid #33494d; border-radius: 4px; }
+.battle-timeline-score-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #b9cac7; font-size: 12px; }
+.battle-timeline-score-heading strong { color: #e5f0ec; font-size: 13px; }
+.battle-timeline-score-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.battle-timeline-score-grid span { padding: 8px 9px; background: #172327; border: 1px solid #2b3c41; border-radius: 3px; color: #aabdc0; font-size: 12px; }
+.battle-timeline-score-grid strong { display: block; margin-top: 3px; color: #80d6bb; font: 650 16px/1.2 ui-monospace, Consolas, monospace; }
+.battle-timeline-score p { margin: 7px 0 0; color: #aab8bc; font-size: 12px; }
+.battle-timeline-tools { display: flex; align-items: end; gap: 8px; margin-top: 12px; }
+.battle-timeline-search { display: grid; flex: 1; gap: 5px; min-width: 0; color: #aab8bc; font-size: 11px; }
+.battle-timeline-search input { width: 100%; min-height: 36px; padding: 7px 9px; color: #e3e9eb; background: #111a1e; border: 1px solid #34444a; border-radius: 3px; }
+.battle-timeline-search input:focus-visible,
+.battle-timeline-export:focus-visible { outline: 2px solid #83b79f; outline-offset: 2px; }
+.battle-timeline-export-actions { display: flex; align-items: stretch; gap: 7px; flex-wrap: wrap; }
+.battle-timeline-export { min-height: 36px; padding: 7px 11px; color: #d8e4df; background: #1a2a2c; border: 1px solid #476159; border-radius: 3px; cursor: pointer; }
+.battle-timeline-export:disabled { opacity: .45; cursor: not-allowed; }
+.battle-timeline-load-more { min-height: 34px; padding: 6px 10px; color: #c9d9d4; background: #172422; border: 1px solid #426257; border-radius: 3px; cursor: pointer; }
+.battle-timeline-track { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; max-height: 360px; margin: 14px 0; padding: 0 2px 4px 0; overflow: auto; list-style: none; }
+.battle-timeline-point { min-width: 0; }
+.battle-timeline-point button { display: flex; align-items: flex-start; gap: 9px; width: 100%; min-height: 66px; padding: 10px; color: inherit; text-align: left; background: #151f24; border: 1px solid #2f4046; border-radius: 4px; cursor: pointer; }
+.battle-timeline-point button:hover,
+.battle-timeline-point button[aria-pressed="true"] { border-color: #83b79f; background: #1a2a2c; }
+.battle-timeline-sequence { display: grid; flex: 0 0 24px; aspect-ratio: 1; place-items: center; color: #0e1c17; background: #8fc6ad; border-radius: 50%; font: 650 11px/1 ui-monospace, monospace; }
+.battle-timeline-event { display: grid; gap: 4px; min-width: 0; }
+.battle-timeline-event strong,
+.battle-timeline-event small { overflow-wrap: anywhere; }
+.battle-timeline-event strong { font-size: 13px; }
+.battle-timeline-event small { color: #98a9ae; font-size: 11px; }
+.battle-timeline-event .status-failed { color: #e98775; }
+.battle-timeline-event .status-completed { color: #86c996; }
+.battle-timeline-event .status-running { color: #66c9be; }
+.battle-timeline-empty { margin: 12px 0; color: #98a9ae; font-size: 13px; }
+.battle-timeline-selection,
+.battle-timeline-audit { margin-top: 12px; border-top: 1px solid #2d3b40; padding-top: 10px; }
+.battle-timeline-selection summary,
+.battle-timeline-audit summary { cursor: pointer; color: #bbcec7; font-size: 13px; }
+.battle-timeline-selection pre { max-height: 200px; margin: 10px 0 0; overflow: auto; color: #c2cecf; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 ui-monospace, Consolas, monospace; }
+.battle-timeline-audit dl { display: grid; gap: 7px; margin: 10px 0; }
+.battle-timeline-audit dl > div { display: grid; grid-template-columns: minmax(100px, .3fr) minmax(0, 1fr); gap: 10px; padding: 8px; background: #151f24; border-radius: 3px; }
+.battle-timeline-audit dt { color: #a4b3b7; font-size: 12px; overflow-wrap: anywhere; }
+.battle-timeline-audit dd { min-width: 0; margin: 0; }
+.battle-timeline-audit pre { max-height: 150px; margin: 0; overflow: auto; color: #c2cecf; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+
+@media (max-width: 560px) {
+  .battle-timeline-tools { align-items: stretch; flex-direction: column; }
+  .battle-timeline-export-actions { align-items: stretch; flex-direction: column; }
+  .battle-timeline-export { align-self: stretch; }
+  .battle-timeline-track { grid-template-columns: 1fr; max-height: 420px; }
+  .battle-timeline-audit dl > div { grid-template-columns: 1fr; gap: 4px; }
+  .battle-timeline-score-grid { grid-template-columns: 1fr; }
+}

@@ -6,7 +6,7 @@ import json
 import agent_attack_lab.agents.llm_runtime as llm_runtime
 
 
-def test_complete_json_uses_common_openai_json_object_format(monkeypatch) -> None:
+def test_complete_json_uses_deepseek_json_object_format(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class FakeResponse:
@@ -31,17 +31,17 @@ def test_complete_json_uses_common_openai_json_object_format(monkeypatch) -> Non
             captured.update(url=url, headers=headers, body=json)
             return FakeResponse()
 
-    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://api.deepseek.com/v1")
     monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key-not-a-real-secret")
-    monkeypatch.setenv("AGENT_LLM_MODEL", "gpt-4o-mini")
+    monkeypatch.setenv("AGENT_LLM_MODEL", "deepseek-chat")
     monkeypatch.setattr(llm_runtime.httpx, "AsyncClient", FakeClient)
 
     result = asyncio.run(llm_runtime.complete_json("Return JSON.", {"topic": "test"}))
 
     assert result == {"samples": []}
-    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    assert captured["url"] == "https://api.deepseek.com/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer test-key-not-a-real-secret"
     assert captured["body"]["response_format"] == {"type": "json_object"}
     assert "json_schema" not in captured["body"]["response_format"]
-    assert captured["body"]["model"] == "gpt-4o-mini"
+    assert captured["body"]["model"] == "deepseek-chat"
     assert json.loads(captured["body"]["messages"][1]["content"]) == {"topic": "test"}

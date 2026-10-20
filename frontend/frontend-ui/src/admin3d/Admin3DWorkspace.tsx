@@ -1,165 +1,352 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AdminBattle, AdminExternalCases, AdminMetrics } from '../adminApi'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
+import type { AdminBattle, AdminBattleEvent, AdminBattleScore } from '../adminApi'
+import type { ExternalCase } from '../api'
 import { ThreeScene } from './ThreeScene'
-import { buildAdminSceneModel } from './sceneModel'
+import { buildBattleTimelineSceneModel, eventActorLabel, eventActorRole, eventFlowLabel, replayEventCue, replayEventSummary, securityPathTheme, type AdminSceneNode } from './sceneModel'
+import { NodeDetailsPanel } from './NodeDetailsPanel'
+
+const REPLAY_EVENT_DURATION_MS = 2500
 import './Admin3DWorkspace.css'
 
-type WorkspaceView = 'overview' | 'battles' | 'audit' | 'cases'
-
 type Admin3DWorkspaceProps = {
-  metrics: AdminMetrics
   battles: AdminBattle[]
-  cases: AdminExternalCases | null
   selectedBattle: AdminBattle | null
-  detailData: Record<string, unknown>
+  events: AdminBattleEvent[]
+  eventsTotal?: number
+  hasMoreEvents?: boolean
+  onLoadMoreEvents?: () => void
+  selectedEvent: AdminBattleEvent | null
+  score?: AdminBattleScore | null
+  externalCases?: ExternalCase[]
+  /** Search text from the 2D event timeline; the 3D scene mirrors this filter. */
+  eventQuery?: string
   onSelectBattle: (battle: AdminBattle) => void
+  onSelectEvent: (event: AdminBattleEvent) => void
 }
 
-const views: { id: WorkspaceView; label: string }[] = [
-  { id: 'overview', label: '态势总览' },
-  { id: 'battles', label: '战局' },
-  { id: 'audit', label: '审计' },
-  { id: 'cases', label: '案例' },
-]
+const statusLabels: Record<string, string> = {
+  pending: '等待中', running: '进行中', completed: '已完成', failed: '失败',
+}
 
-const jsonPreview = (value: unknown) => JSON.stringify(value ?? {}, null, 2)
+const expectedRounds: Record<string, number> = { low: 1, mid: 2, high: 3 }
 
-export function Admin3DWorkspace({ metrics, battles, cases, selectedBattle, detailData, onSelectBattle }: Admin3DWorkspaceProps) {
-  const [view, setView] = useState<WorkspaceView>('overview')
-  const [motionPaused, setMotionPaused] = useState(false)
+function eventLabel(event: AdminBattleEvent): string {
+  const type = String(event.eventType ?? event.type ?? '')
+  const labels: Record<string, string> = {
+    'attack.started': '攻击阶段开始',
+    'attack.sample.generated': '攻击样本生成',
+    'attack.completed': '攻击阶段完成',
+    'agent.call.started': '智能体调用开始',
+    'agent.call.completed': '智能体调用完成',
+    'agent.call.failed': '智能体调用失败',
+    'round.started': '防守检测开始',
+    'round.completed': '本轮检测结果',
+    'defense.completed': '防守阶段完成',
+    'battle.completed': '战局完成',
+    'battle.failed': '战局失败',
+  }
+  return (labels[type] ?? type) || String(event.status ?? '战局事件')
+}
+
+function eventDetails(event: AdminBattleEvent): string {
+  return JSON.stringify(event.data ?? event, null, 2)
+}
+
+export function Admin3DWorkspace(props: Admin3DWorkspaceProps) {
+  return <Admin3DReplay key={props.selectedBattle?.id ?? 'no-battle'} {...props} />
+}
+
+function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.length, hasMoreEvents = false, onLoadMoreEvents, selectedEvent, score, eventQuery = '', externalCases = [], onSelectBattle, onSelectEvent }: Admin3DWorkspaceProps) {
+  const [playbackIndex, setPlaybackIndex] = useState(-1)
+  const [playing, setPlaying] = useState(false)
+  const [speed, setSpeed] = useState(1)
+  const [selectedNode, setSelectedNode] = useState<AdminSceneNode | null>(null)
   const sceneContainerRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<ThreeScene | null>(null)
-  const battleRef = useRef(battles)
-  const selectRef = useRef(onSelectBattle)
-  const model = useMemo(() => buildAdminSceneModel({
-    battles,
-    metrics,
-    externalCases: cases?.available ? cases.items : [],
-  }), [battles, metrics, cases])
-  const initialModelRef = useRef(model)
+  const replayClock = useRef({ eventIndex: -2, remainingMs: REPLAY_EVENT_DURATION_MS, startedAt: null as number | null })
+  const model = useMemo(
+    () => selectedBattle && events.length ? buildBattleTimelineSceneModel(selectedBattle, events, externalCases, score) : null,
+    [selectedBattle, events, externalCases, score],
+  )
+  const modelRef = useRef(model)
+  const orderedEvents = useMemo(() => events
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => (left.event.sequence ?? Number.MAX_SAFE_INTEGER) - (right.event.sequence ?? Number.MAX_SAFE_INTEGER) || left.index - right.index)
+    .map(({ event }) => event), [events])
+  const eventsRef = useRef(orderedEvents)
+  const selectEventRef = useRef(onSelectEvent)
+  const selectedBattleId = selectedBattle?.id
+  const hasModel = Boolean(model)
+  const activeSecurityTheme = securityPathTheme(selectedBattle?.topic)
+  const selectedEventIndex = selectedEvent ? orderedEvents.indexOf(selectedEvent) : -1
+  const currentIndex = selectedEventIndex >= 0 ? selectedEventIndex : playbackIndex
+  const currentEvent = currentIndex >= 0 ? orderedEvents[currentIndex] : undefined
+  const finalEvent = [...orderedEvents].reverse().find((event) => {
+    const type = String(event.eventType ?? event.type ?? '')
+    return type === 'battle.completed' || type === 'battle.failed'
+  })
+  const showFinalSummary = Boolean(finalEvent || selectedBattle?.status === 'completed' || selectedBattle?.status === 'failed')
+  const finalSummary = finalEvent
+    ? replayEventSummary(finalEvent, orderedEvents)
+    : selectedBattle?.status === 'failed'
+      ? '战局已失败，但记录中缺少终局事件，无法确定中断原因。'
+      : '战局已完成，但记录中缺少终局事件，无法汇总逐轮证据。真实目标验证状态无法确认。'
+  const finalStatus = finalEvent
+    ? String(finalEvent.eventType ?? finalEvent.type ?? '') === 'battle.failed' ? 'failed' : 'completed'
+    : selectedBattle?.status ?? 'unknown'
 
-  useEffect(() => {
-    battleRef.current = battles
-    selectRef.current = onSelectBattle
-  }, [battles, onSelectBattle])
+  useLayoutEffect(() => {
+    modelRef.current = model
+    eventsRef.current = orderedEvents
+    selectEventRef.current = onSelectEvent
+  }, [model, orderedEvents, onSelectEvent])
 
   useEffect(() => {
     const container = sceneContainerRef.current
-    if (!container) return
+    const initialModel = modelRef.current
+    if (!container || !selectedBattleId || !initialModel) return
     const scene = new ThreeScene()
     sceneRef.current = scene
     try {
-      scene.mount(container, initialModelRef.current, {
+      scene.mount(container, initialModel, {
         onSelectNode: (node) => {
-          if (node.kind !== 'battle') return
-          const selected = battleRef.current.find((battle) => `battle:${battle.id}` === node.id)
-          if (selected) selectRef.current(selected)
+          setSelectedNode(node)
+          if (node.kind !== 'timeline-event' || !node.source || typeof node.source !== 'object') return
+          const event = node.source as AdminBattleEvent
+          const index = eventsRef.current.indexOf(event)
+          if (index >= 0) {
+            setPlaybackIndex(index)
+            selectEventRef.current(event)
+          }
         },
       })
     } catch (error) {
       const fallback = document.createElement('div')
       fallback.className = 'admin3d-scene-error'
       fallback.setAttribute('role', 'status')
-      fallback.textContent = error instanceof Error ? error.message : '3D 场景暂不可用'
+      fallback.textContent = error instanceof Error ? error.message : '3D 回放暂不可用'
       container.appendChild(fallback)
     }
-    const observer = typeof ResizeObserver === 'undefined'
-      ? undefined
-      : new ResizeObserver(() => window.dispatchEvent(new Event('resize')))
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => scene.resize())
     observer?.observe(container)
     return () => {
       observer?.disconnect()
       scene.dispose()
       sceneRef.current = null
     }
-  }, [])
+  }, [selectedBattleId, hasModel])
 
-  useEffect(() => { sceneRef.current?.update(model) }, [model])
-  useEffect(() => { sceneRef.current?.setMotionPaused(motionPaused) }, [motionPaused])
+  useLayoutEffect(() => { if (model) sceneRef.current?.update(model) }, [model])
 
-  const sceneLegend = model.nodes.filter((node) => ['attacker', 'defender', 'scheduler'].includes(node.kind))
-  const caseNodes = model.nodes.filter((node) => node.kind === 'external-case')
-  const numericMetrics = Object.entries(metrics).filter(([, value]) => typeof value === 'number')
+  useEffect(() => {
+    const query = eventQuery.trim()
+    sceneRef.current?.setNodeQuery(query)
+    if (!query || !model) return
+    const normalized = query.toLocaleLowerCase()
+    const match = orderedEvents.find((event) => JSON.stringify(event).toLocaleLowerCase().includes(normalized))
+    if (!match) return
+    if (selectedEvent !== match) onSelectEvent(match)
+    const node = model.nodes.find((candidate) => candidate.source === match)
+    if (node) sceneRef.current?.setActiveNode(node.id)
+  }, [eventQuery, model, orderedEvents, onSelectEvent, selectedEvent])
+
+  useEffect(() => { sceneRef.current?.setPlaybackPaused(!playing) }, [playing, hasModel])
+
+  useEffect(() => {
+    if (!selectedEvent) return
+    const index = orderedEvents.indexOf(selectedEvent)
+    if (index < 0 || index === playbackIndex) return
+    const node = model?.nodes.find((candidate) => candidate.source === selectedEvent)
+    sceneRef.current?.setActiveNode(node?.id)
+  }, [selectedEvent, orderedEvents, model, playbackIndex])
+
+  useEffect(() => {
+    if (!playing || !orderedEvents.length) return
+    const clock = replayClock.current
+    if (clock.eventIndex !== currentIndex) {
+      clock.eventIndex = currentIndex
+      clock.remainingMs = REPLAY_EVENT_DURATION_MS / Math.max(speed, 0.01)
+    }
+    clock.startedAt = performance.now()
+    const timer = window.setTimeout(() => {
+      clock.startedAt = null
+      clock.eventIndex = currentIndex + 1
+      clock.remainingMs = REPLAY_EVENT_DURATION_MS / Math.max(speed, 0.01)
+      const nextIndex = currentIndex + 1
+      if (nextIndex >= orderedEvents.length) {
+        setPlaying(false)
+        return
+      }
+      const event = orderedEvents[nextIndex]
+      setPlaybackIndex(nextIndex)
+      onSelectEvent(event)
+      const node = modelRef.current?.nodes.find((candidate) => candidate.source === event)
+      sceneRef.current?.setActiveNode(node?.id, true)
+    }, clock.remainingMs)
+    return () => {
+      window.clearTimeout(timer)
+      if (clock.startedAt !== null) {
+        clock.remainingMs = Math.max(0, clock.remainingMs - (performance.now() - clock.startedAt))
+        clock.startedAt = null
+      }
+    }
+  }, [playing, currentIndex, orderedEvents, onSelectEvent, speed])
+
+  const selectEvent = (index: number, animate = false) => {
+    const event = orderedEvents[index]
+    if (!event) return
+    setPlaybackIndex(index)
+    onSelectEvent(event)
+    const node = model?.nodes.find((candidate) => candidate.source === event)
+    sceneRef.current?.setActiveNode(node?.id, animate)
+  }
+
+  const togglePlayback = () => {
+    if (playing) {
+      setPlaying(false)
+      return
+    }
+    if (!orderedEvents.length) return
+    if (currentIndex < 0 || currentIndex >= orderedEvents.length - 1) selectEvent(0, true)
+    else {
+      const event = orderedEvents[currentIndex]
+      const node = model?.nodes.find((candidate) => candidate.source === event)
+      sceneRef.current?.setActiveNode(node?.id, true)
+    }
+    setPlaying(true)
+  }
+
+  const handleBattleSelect = (battleId: string) => {
+    const battle = battles.find((item) => item.id === battleId)
+    if (battle) onSelectBattle(battle)
+  }
 
   return <section className="admin3d-workspace" aria-labelledby="admin3d-title">
-    <div className="admin3d-heading">
+    <header className="admin3d-heading">
       <div>
-        <span className="admin3d-kicker">OPERATIONS / 3D WORKSPACE</span>
-        <h2 id="admin3d-title">攻防态势工作台</h2>
+        <span className="admin3d-kicker">战局记录 / 事件回放</span>
+        <h2 id="admin3d-title">3D 战局回放</h2>
       </div>
-      <div className="admin3d-controls" aria-label="场景控制">
-        <button type="button" aria-pressed={motionPaused} onClick={() => setMotionPaused((paused) => !paused)}>{motionPaused ? '继续动效' : '暂停动效'}</button>
-        <button type="button" onClick={() => sceneRef.current?.resetCamera()}>重置视角</button>
-        <button type="button" onClick={() => document.getElementById('admin-2d-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>查看 2D 列表</button>
+      <div className="admin3d-heading-controls">
+        <label className="admin3d-battle-select">
+          <span>战局</span>
+          <select aria-label="选择战局回放" value={selectedBattle?.id ?? ''} onChange={(event) => handleBattleSelect(event.target.value)}>
+            <option value="">选择战局</option>
+            {battles.map((battle) => <option value={battle.id} key={battle.id}>{battle.topic || battle.id}</option>)}
+          </select>
+        </label>
+        <button type="button" className="admin3d-reset" title="回到全局拓扑视角" disabled={!model} onClick={() => sceneRef.current?.resetCamera()}>全局视角</button>
+        <button type="button" className="admin3d-reset" title="解除当前节点的视角锁定，也可在场景中点击鼠标右键" disabled={!model} onClick={() => sceneRef.current?.unlockView()}>取消视角锁定</button>
+        <button type="button" className="admin3d-reset" title="恢复初始攻击路径" disabled={!model} onClick={() => sceneRef.current?.resetSecurityPath()}>重置路径</button>
       </div>
+    </header>
+
+    {showFinalSummary && <section className={`admin3d-final-summary outcome-${finalStatus}`} role="status" aria-label="战局最终总结">
+      <div className="admin3d-final-summary-heading">
+        <h3>战局最终总结</h3>
+        <strong>{statusLabels[finalStatus] ?? '终局状态待确认'}</strong>
+      </div>
+      <p>{finalSummary}</p>
+    </section>}
+
+    <div className="admin3d-replay-layout">
+      <div className="admin3d-scene-column">
+        <div className="admin3d-scene-frame">
+          {selectedBattle && events.length
+            ? <div className="admin3d-scene" ref={sceneContainerRef} />
+            : <div className="admin3d-empty-state">
+              <span className="admin3d-empty-mark" aria-hidden="true">3D</span>
+              <strong>{selectedBattle ? '暂无事件，无法回放' : '选择一场战局开始回放'}</strong>
+              {selectedBattle && <small>该战局当前没有可用的事件记录</small>}
+            </div>}
+          <div className="admin3d-legend" aria-label="事件状态图例">
+            <span><i className="is-attacker" />攻击方轨迹</span>
+            <span><i className="is-defender" />防守方轨迹</span>
+            <span><i className="is-interaction" />队内关联 / 攻防交接</span>
+            <span><i className="is-jump" />攻击跳板</span>
+            <span><i className="is-asset" />防守内网</span>
+            <span className="legend-status"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /></svg>正常守护</span>
+            <span className="legend-status"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4" /><path d="m9.5 9.5 4.5 4.5" /></svg>正在被探测</span>
+            <span className="legend-status"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 14 13H2L8 2Z M8 6v3 M8 11v.2" /></svg>遭受攻击</span>
+            <span className="legend-status"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8 M12 4l-8 8" /></svg>已沦陷</span>
+            <span><i className="is-running" />进行中</span>
+            <span><i className="is-completed" />已完成</span>
+            <span><i className="is-failed" />失败</span>
+            <span><i className="is-active" />当前事件</span>
+          </div>
+          {selectedBattle && <div className="admin3d-security-theme" aria-label="当前主题防护路径">
+            <span>{activeSecurityTheme.name}</span>
+            <strong>重点防护层：第 {activeSecurityTheme.focusedLayers.join('、')} 层</strong>
+            <small>拦截统计：后端防守结果推导；缺失时显示未记录</small>
+          </div>}
+        </div>
+        <div className="admin3d-transport">
+          <button type="button" className="admin3d-play" disabled={!orderedEvents.length} onClick={togglePlayback}>
+            {playing ? '暂停回放' : '播放回放'}
+          </button>
+          <label className="admin3d-speed">
+            <span>速度</span>
+            <select aria-label="回放速度" value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
+              <option value={0.25}>0.25×</option>
+              <option value={0.5}>0.5×</option>
+              <option value={1}>1×</option>
+              <option value={2}>2×</option>
+              <option value={4}>4×</option>
+            </select>
+          </label>
+          <label className="admin3d-progress">
+            <span className="sr-only">回放进度</span>
+            <input
+              aria-label="回放进度"
+              type="range"
+              min={0}
+              max={Math.max(orderedEvents.length - 1, 0)}
+              value={Math.max(currentIndex, 0)}
+              disabled={!orderedEvents.length}
+              onChange={(event) => selectEvent(Number(event.target.value))}
+            />
+            <span className="admin3d-progress-markers" aria-hidden="true">
+              {orderedEvents.map((event, index) => {
+                const cue = replayEventCue(event)
+                const style = { left: `${orderedEvents.length < 2 ? 50 : index / (orderedEvents.length - 1) * 100}%`, '--marker-color': cue.color } as CSSProperties
+                const showLabel = index === (currentIndex < 0 ? 0 : currentIndex)
+                return <i key={`${event.sequence ?? index}-${index}`} data-testid="replay-event-marker" data-kind={cue.kind} style={style} title={cue.label}>
+                  {showLabel && <span className="admin3d-progress-marker-label">{cue.label}</span>}
+                </i>
+              })}
+            </span>
+          </label>
+          <span className="admin3d-progress-count">{currentIndex < 0 ? 0 : currentIndex + 1} / {orderedEvents.length}</span>
+        </div>
+        {hasMoreEvents && <button type="button" className="admin3d-load-more" onClick={onLoadMoreEvents}>加载更多事件（{orderedEvents.length} / {eventsTotal}）</button>}
+      </div>
+
+      <aside className="admin3d-event-panel" aria-live="polite">
+        <div className="admin3d-event-heading">
+          <span>当前事件</span>
+          {currentEvent?.status && <strong className={`status-${currentEvent.status}`}>{statusLabels[currentEvent.status] ?? currentEvent.status}</strong>}
+        </div>
+        {selectedBattle && <p className="admin3d-battle-meta">{selectedBattle.topic || selectedBattle.id}<br /><small>{selectedBattle.id}</small></p>}
+        {currentEvent ? <>
+          <div className={`admin3d-event-flow actor-${eventActorRole(currentEvent)}`}>
+            <span>{eventActorLabel(eventActorRole(currentEvent))}</span>
+            <strong>{eventFlowLabel(currentEvent, orderedEvents[currentIndex - 1], orderedEvents[currentIndex + 1])}</strong>
+          </div>
+          <h3>{eventLabel(currentEvent)}</h3>
+          <p className="admin3d-event-meta">序号 {currentEvent.sequence ?? currentIndex + 1} · {currentEvent.timestamp || '未记录时间'}</p>
+          {typeof currentEvent.data?.round === 'number' && <p className="admin3d-round-marker">第 {currentEvent.data.round} / {expectedRounds[selectedBattle?.difficulty ?? ''] ?? '—'} 轮</p>}
+          {currentEvent !== finalEvent && replayEventSummary(currentEvent, orderedEvents) && <p className="admin3d-event-summary" role="status">{replayEventSummary(currentEvent, orderedEvents)}</p>}
+          <pre>{eventDetails(currentEvent)}</pre>
+        </> : <p className="admin3d-muted">播放或拖动进度后显示对应记录。</p>}
+      </aside>
+      <NodeDetailsPanel node={selectedNode} score={score} />
     </div>
 
-    <div className="admin3d-layout">
-      <nav className="admin3d-nav" role="tablist" aria-label="工作台视图">
-        {views.map((item) => <button
-          key={item.id}
-          type="button"
-          role="tab"
-          id={`admin3d-tab-${item.id}`}
-          aria-selected={view === item.id}
-          aria-controls="admin3d-panel"
-          onClick={() => setView(item.id)}
-        >{item.label}</button>)}
-      </nav>
-
-      <div className="admin3d-scene-column">
-        <div className="admin3d-scene-frame" role="region" aria-label="3D 攻防态势">
-          <div className="admin3d-scene" ref={sceneContainerRef} />
-          <div className="admin3d-legend" aria-label="场景图例">
-            {sceneLegend.map((node) => <span key={node.id}><i style={{ backgroundColor: node.color }} />{node.label}</span>)}
-          </div>
-        </div>
-        <div className="admin3d-statusline" aria-live="polite">
-          <span><i className="status-dot" />{battles.filter((battle) => battle.status === 'running').length} 场进行中</span>
-          <span>{selectedBattle ? `当前战局：${selectedBattle.topic || selectedBattle.id}` : '未选择战局'}</span>
-          <span>{model.nodes.length} 个场景节点</span>
-        </div>
-      </div>
-
-      <section className="admin3d-panel" id="admin3d-panel" role="tabpanel" aria-labelledby={`admin3d-tab-${view}`}>
-        {view === 'overview' && <>
-          <h3>运行态势</h3>
-          <div className="admin3d-metrics">
-            {numericMetrics.length ? numericMetrics.map(([key, value]) => <div key={key}><span>{key}</span><strong>{String(value)}</strong></div>) : <p className="admin3d-muted">暂无数值指标</p>}
-          </div>
-        </>}
-        {view === 'battles' && <>
-          <h3>战局节点</h3>
-          {battles.length ? <ul className="admin3d-battle-list">{battles.map((battle) => <li key={battle.id}>
-            <button type="button" className={selectedBattle?.id === battle.id ? 'is-selected' : ''} onClick={() => onSelectBattle(battle)}>
-              <span className="admin3d-node-marker" style={{ backgroundColor: model.nodes.find((node) => node.id === `battle:${battle.id}`)?.color ?? model.statusColors.unknown }} />
-              <span><strong>{battle.topic || battle.id}</strong><small>{battle.id} · {battle.status}</small></span>
-            </button>
-          </li>)}</ul> : <p className="admin3d-muted">暂无战局</p>}
-        </>}
-        {view === 'audit' && <>
-          <h3>审计与事件</h3>
-          {selectedBattle ? <>
-            <p className="admin3d-context">{selectedBattle.topic || selectedBattle.id} · {selectedBattle.id}</p>
-            {Object.entries(detailData).length ? <div className="admin3d-audit-list">{Object.entries(detailData).map(([key, value]) => <details key={key} open={key === '审计'}>
-              <summary>{key}</summary><pre>{jsonPreview(value)}</pre>
-            </details>)}</div> : <p className="admin3d-muted">暂无审计或事件数据</p>}
-          </> : <p className="admin3d-muted">选择战局后查看其审计、事件和报告。</p>}
-        </>}
-        {view === 'cases' && <>
-          <h3>独立案例节点</h3>
-          {cases?.available === false ? <p className="admin3d-muted">{cases.reason || '外部案例不可用'}</p>
-            : caseNodes.length ? <ul className="admin3d-case-list" aria-label="外部案例节点">{caseNodes.map((node) => {
-              const item = cases?.items.find((candidate) => `case:${candidate.externalId}` === node.id)
-              if (!item) return null
-              return <li key={node.id}>
-                <span className="admin3d-node-marker" style={{ backgroundColor: node.color }} />
-                <div><strong>{item.externalId} · {item.title}</strong><p>{item.vendorProject} · {item.product} · {item.provenanceStatus}</p><small>来源哈希 {item.source.contentSha256.slice(0, 12)}</small></div>
-              </li>
-            })}</ul>
-              : <p className="admin3d-muted">暂无匹配案例</p>}
-        </>}
-      </section>
+    <div className="admin3d-statusline" aria-live="polite">
+      <span><i className={`status-dot status-${selectedBattle?.status ?? 'unknown'}`} />{selectedBattle ? statusLabels[selectedBattle.status] ?? selectedBattle.status : '未选择战局'}</span>
+      <span>{selectedBattle ? `战局：${selectedBattle.topic || selectedBattle.id}` : '尚未开始'}</span>
+      <span>{orderedEvents.length} / {eventsTotal} 条记录</span>
     </div>
   </section>
 }

@@ -1,10 +1,10 @@
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { configurePagesApi } from './build-environment.mjs'
+import { configureBuildApi } from './build-environment.mjs'
 
-const pagesBuild = configurePagesApi()
-if (pagesBuild) {
-  console.log(`Cloudflare Pages branch ${pagesBuild.branch}: using ${pagesBuild.api}`)
+const configuredBuild = configureBuildApi()
+if (configuredBuild) {
+  console.log(`Frontend build target ${configuredBuild.target}: using ${configuredBuild.api}`)
 }
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url))

@@ -12,6 +12,7 @@ import {
   getAdminReport,
   getAdminSession,
   listAdminBattles,
+  loginAdminSession,
   logoutAdminSession,
   retryAdminBattle,
 } from './adminApi'
@@ -35,6 +36,19 @@ describe('admin API', () => {
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/auth/session'), expect.objectContaining({ credentials: 'include' }))
   })
 
+  it('logs in with the browser admin password', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({ authenticated: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(loginAdminSession('secret')).resolves.toBeUndefined()
+    expect(fetchMock.mock.calls[0][0]).toContain('/auth/session')
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      credentials: 'include',
+      body: JSON.stringify({ password: 'secret' }),
+    })
+  })
+
   it('lists battles with filters and parses the total header', async () => {
     const fetchMock = vi.fn().mockResolvedValue(response([{ id: 'b-1' }], { headers: { 'X-Total-Count': '9' } }))
     vi.stubGlobal('fetch', fetchMock)
@@ -46,7 +60,6 @@ describe('admin API', () => {
   it.each([
     ['getAdminBattleDetail', getAdminBattleDetail, '/battles/b%2F1'],
     ['getAdminBattleAudit', getAdminBattleAudit, '/battles/b%2F1/audit'],
-    ['getAdminBattleEvents', getAdminBattleEvents, '/battles/b%2F1/events'],
     ['getAdminBattleScore', getAdminBattleScore, '/battles/b%2F1/score'],
   ])('%s uses the battle endpoint', async (_name, fn, path) => {
     const fetchMock = vi.fn().mockResolvedValue(response({ ok: true }))
@@ -54,6 +67,19 @@ describe('admin API', () => {
     await expect(fn('b/1')).resolves.toEqual({ ok: true })
     expect(fetchMock.mock.calls[0][0]).toContain(path)
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ credentials: 'include' })
+  })
+
+  it('loads a bounded event page and reads its cursor headers', async () => {
+    const events = [{ sequence: 1, type: 'battle.created' }]
+    const fetchMock = vi.fn().mockResolvedValue(response(events, { headers: {
+      'X-Total-Count': '241',
+      'X-Has-More': 'true',
+      'X-Next-Sequence': '1',
+    } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getAdminBattleEvents('b/1')).resolves.toEqual({ items: events, total: 241, hasMore: true, nextSequence: 1 })
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/battles\/b%2F1\/events\?after_sequence=0&limit=200$/)
   })
 
   it('loads dashboard, metrics and external cases', async () => {

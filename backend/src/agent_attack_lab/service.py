@@ -50,6 +50,7 @@ from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend, local_rule_case_count
 from agent_attack_lab.cache import RedisJsonCache
 from agent_attack_lab.external_cases import query_external_cases
+from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 from agent_attack_lab.scoring import SCORING_VERSION, score_battle
 from agent_attack_lab.storage import BattleStore
@@ -107,7 +108,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
-    expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID"],
+    expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID", "X-Has-More", "X-Next-Sequence"],
 )
 
 _frontend_dist = Path(__file__).resolve().parents[3] / "frontend" / "frontend-ui" / "dist"
@@ -203,6 +204,10 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
 _battle_timeout_seconds = min(
     max(_env_int("AGENT_BATTLE_TIMEOUT_SECONDS", 300, minimum=5), 5),
     3600,
+)
+_score_backfill_batch_size = min(
+    _env_int("AGENT_SCORE_BACKFILL_BATCH_SIZE", 100, minimum=1),
+    1000,
 )
 
 
@@ -786,16 +791,77 @@ async def _tracked_agent_call(
 
 
 def _persist_internal_score(record: dict[str, Any]) -> None:
-    """Cache a terminal battle's evidence-derived score; reads support legacy fallback."""
+    """Persist a terminal battle's evidence-derived score snapshot."""
     try:
         score = score_battle(record, _battle_store.list_events(record["id"]))
         _battle_store.save_score(record["id"], score)
     except Exception as exc:  # pragma: no cover - database-specific failure path
         logger.warning(
-            "Battle %s score snapshot unavailable; live score fallback remains active (%s)",
+            "Battle %s score snapshot unavailable (%s)",
             record.get("id"),
             type(exc).__name__,
         )
+
+
+def _insufficient_internal_score() -> dict[str, Any]:
+    """Return the explicit no-snapshot response used by read APIs.
+
+    A live calculation is intentionally not exposed as an authoritative score. Terminal
+    battles are scored once and persisted in ``battle_scores``; callers without that
+    snapshot must see evidence insufficiency instead of a value that can change.
+    """
+    role_message = "缺少已持久化的 Agent 调用评分快照，无法提供真实分数。"
+    return {
+        "version": SCORING_VERSION,
+        "status": "insufficient_evidence",
+        "message": "当前战局没有可用的 battle_scores 快照；未使用前端或接口实时估算值。",
+        "attacker": {
+            "status": "insufficient_evidence",
+            "score": None,
+            "maxScore": 100,
+            "message": role_message,
+            "categories": [],
+        },
+        "defender": {
+            "status": "insufficient_evidence",
+            "score": None,
+            "maxScore": 100,
+            "message": role_message,
+            "categories": [],
+        },
+    }
+
+
+def _backfill_missing_internal_scores(limit: int = _score_backfill_batch_size) -> int:
+    """Backfill a bounded batch of terminal battles without replacing snapshots."""
+    list_records = getattr(_battle_store, "list", None)
+    list_scores = getattr(_battle_store, "list_scores", None)
+    if not callable(list_records) or not callable(list_scores) or limit <= 0:
+        return 0
+
+    records: list[dict[str, Any]] = []
+    remaining = limit
+    try:
+        for status in ("completed", "failed"):
+            if remaining <= 0:
+                break
+            batch = list_records(limit=remaining, offset=0, status=status)
+            records.extend(batch)
+            remaining -= len(batch)
+        if not records:
+            return 0
+        stored = list_scores([record["id"] for record in records])
+        missing = [record for record in records if record["id"] not in stored]
+        for record in missing:
+            _persist_internal_score(record)
+        return len(missing)
+    except Exception as exc:  # pragma: no cover - database-specific failure path
+        logger.warning("Battle score backfill unavailable (%s)", type(exc).__name__)
+        return 0
+
+
+async def _run_score_backfill() -> None:
+    await asyncio.to_thread(_backfill_missing_internal_scores)
 
 
 async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
@@ -894,7 +960,14 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     "correlationId": defense_call_id,
                 },
             )
-        add_event("defense.completed", "completed", {"roundCount": len(defender_results)})
+        add_event(
+            "defense.completed",
+            "completed",
+            {
+                "roundCount": len(defender_results),
+                "layerInterceptions": derive_layer_interceptions(payload.topic, defender_results),
+            },
+        )
         record["status"] = "completed"
         _battle_store.save(record)
         await asyncio.to_thread(_invalidate_leaderboard_cache)
@@ -936,6 +1009,9 @@ async def _lifespan(_app: FastAPI):
         task = asyncio.create_task(_run_battle_with_tracking(record["id"], payload))
         _recovery_tasks.add(task)
         task.add_done_callback(_recovery_tasks.discard)
+    score_backfill = asyncio.create_task(_run_score_backfill())
+    _recovery_tasks.add(score_backfill)
+    score_backfill.add_done_callback(_recovery_tasks.discard)
     try:
         yield
     finally:
@@ -2511,7 +2587,14 @@ async def create_battle(
                 "correlationId": correlation_id,
             },
         )
-    add_event("defense.completed", "completed", {"roundCount": len(defense_results)})
+    add_event(
+        "defense.completed",
+        "completed",
+        {
+            "roundCount": len(defense_results),
+            "layerInterceptions": derive_layer_interceptions(payload.topic, defense_results),
+        },
+    )
     record = BattleRecord(
         id=battle_id,
         difficulty=payload.difficulty,
@@ -2650,11 +2733,52 @@ def list_battles(
     ]
 
 
-@app.get("/battles/{battle_id}/events", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
-def get_battle_events(battle_id: str) -> list[BattleEvent]:
+@app.get(
+    "/battles/{battle_id}/events",
+    summary="查询战局回放事件",
+    description="按事件序号升序分页返回已持久化的战局事件，可按类型、时间范围和事件内容检索。",
+    tags=["战局回放"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def get_battle_events(
+    battle_id: str,
+    response: Response,
+    limit: int = Query(default=200, ge=1, le=1000, description="每页最多返回 1000 条"),
+    after_sequence: int = Query(default=0, ge=0, description="返回序号大于此值的事件"),
+    event_type: str | None = Query(default=None, min_length=1, max_length=64),
+    from_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),
+    to_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),
+    q: str | None = Query(default=None, max_length=200, description="搜索事件类型和原始事件数据"),
+) -> list[BattleEvent]:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    return [BattleEvent.model_validate(item) for item in _battle_store.list_events(battle_id)]
+    def utc_iso(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return normalized.isoformat()
+
+    normalized_from = utc_iso(from_time)
+    normalized_to = utc_iso(to_time)
+    if normalized_from and normalized_to and normalized_from > normalized_to:
+        raise HTTPException(status_code=422, detail="from_time 不能晚于 to_time")
+
+    events, total = _battle_store.query_events(
+        battle_id,
+        limit=limit,
+        after_sequence=after_sequence,
+        event_type=event_type,
+        from_time=normalized_from,
+        to_time=normalized_to,
+        query=q,
+    )
+    has_more = len(events) > limit
+    page = events[:limit]
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Has-More"] = str(has_more).lower()
+    if page:
+        response.headers["X-Next-Sequence"] = str(page[-1]["sequence"])
+    return [BattleEvent.model_validate(item) for item in page]
 
 
 @app.get("/battles/{battle_id}/replay", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
@@ -2689,9 +2813,12 @@ def _scores(record: dict[str, Any]) -> tuple[int, int]:
     return attacker_score, defender_score
 
 
-def _markdown_report(record: dict[str, Any], events: list[dict[str, Any]]) -> str:
+def _markdown_report(
+    record: dict[str, Any],
+    events: list[dict[str, Any]],
+    internal_score: dict[str, Any],
+) -> str:
     attacker_score, defender_score = _scores(record)
-    internal_score = score_battle(record, events)
     lines = [
         f"# 智能体攻防战报：{record['topic']}",
         "",
@@ -2762,24 +2889,30 @@ def battle_report(
         raise HTTPException(status_code=404, detail="战局不存在")
     events = _battle_store.list_events(battle_id)
     if format == "markdown":
+        stored_internal_score = _battle_store.get_score(battle_id)
         return PlainTextResponse(
-            _markdown_report(record, events),
+            _markdown_report(
+                record,
+                events,
+                stored_internal_score if stored_internal_score is not None else _insufficient_internal_score(),
+            ),
             media_type="text/markdown; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{battle_id}.md"'},
         )
     attacker_score, defender_score = _scores(record)
+    stored_internal_score = _battle_store.get_score(battle_id)
     return {
         "battle": record,
         "events": events,
         "scores": {"attacker": attacker_score, "defender": defender_score},
-        "internalScore": _battle_store.get_score(battle_id) or score_battle(record, events),
+        "internalScore": stored_internal_score if stored_internal_score is not None else _insufficient_internal_score(),
     }
 
 
 @app.get(
     "/battles/{battle_id}/score",
     summary="查看战局内部运行质量评分",
-    description="根据战局事件计算可追溯的运行评分，不代表攻击成功率或检测准确率。",
+    description="返回战局完成后持久化的可追溯运行评分，不代表攻击成功率或检测准确率；缺少快照时返回证据不足。",
     tags=["评分接口"],
     dependencies=[Depends(_read_auth_dependency)],
 )
@@ -2787,7 +2920,8 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
     record = _battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    return _battle_store.get_score(battle_id) or score_battle(record, _battle_store.list_events(battle_id))
+    stored = _battle_store.get_score(battle_id)
+    return stored if stored is not None else _insufficient_internal_score()
 
 
 @app.get(
@@ -2800,12 +2934,9 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
 def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
     items = []
     records = _battle_store.list(limit=limit)
-    events_by_battle = _battle_store.list_events_for_battles(
-        [record["id"] for record in records]
-    )
     stored_scores = _battle_store.list_scores([record["id"] for record in records])
     for record in records:
-        score = stored_scores.get(record["id"]) or score_battle(record, events_by_battle.get(record["id"], []))
+        score = stored_scores.get(record["id"]) or _insufficient_internal_score()
         items.append({
             "battleId": record["id"],
             "topic": record["topic"],

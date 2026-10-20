@@ -58,6 +58,8 @@ uv run pytest -q
 - `GET /leaderboard`：按攻击方、防守方累计得分统计排行榜。
 - `GET /metrics`：查看运行时间、请求数、错误数、战局数和事件数。
 
+管理员后台的事件回放接口字段、游标分页、访问控制边界和 3D 模型资源清单见 [`docs/ADMIN_3D_REPLAY.md`](../docs/ADMIN_3D_REPLAY.md)。
+
 `GET /health` 会返回服务版本、运行时间、存储状态和 `requestId`。所有响应都会带 `X-Request-ID`；公网排障时请保留该值。
 
 写入接口默认启用单进程限流：每个客户端每分钟最多 60 次。可通过 `AGENT_RATE_LIMIT_PER_MINUTE` 调整，设置为 `0` 关闭。超限返回 `429` 和 `Retry-After`。
@@ -141,7 +143,7 @@ $env:no_proxy = "localhost,127.0.0.1,::1"
 
 ### 配置外部大模型
 
-独立 Agent 使用 OpenAI Chat Completions 兼容接口。默认配置为 OpenAI `gpt-4o-mini`；也可以替换为任意兼容服务，只需修改 `AGENT_LLM_BASE_URL` 和 `AGENT_LLM_MODEL`。复制 `.env.example` 为 `.env`，只在本机填写 `AGENT_LLM_API_KEY`。`.env` 已加入 Git 忽略规则，不要把密钥发到聊天或提交到仓库。启动/重启脚本会自动读取该文件，并启动 8788/8789 两个 Agent。
+独立 Agent 仅配置 DeepSeek Chat Completions 接口，默认地址为 `https://api.deepseek.com/v1`，模型为 `deepseek-chat`。复制 `.env.example` 为 `.env`，只在服务端填写 `AGENT_LLM_API_KEY`。`.env` 已加入 Git 忽略规则，不要把密钥发到聊天、写入 `VITE_*` 变量或提交到仓库。启动/重启脚本会自动读取该文件，并启动 8788/8789 两个 Agent。
 
 当前实现请求 JSON Object，再由 Agent 本地校验返回结构；模型调用失败或输出不符合 Agent 契约时会标记并降级到本地规则。配置更新后运行 `.\restart.ps1`，并确认两个 Agent 的健康状态及战局来源标签。具体环境变量见 `.env.example`。
 

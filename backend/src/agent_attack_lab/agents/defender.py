@@ -84,7 +84,7 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
             "caught": caught,
             "risks": risks,
             "fixed": fixed,
-            "analysisMode": "OpenAI 兼容模型辅助分类 + OWASP LLM Top 10 (2025)；真实目标未验证",
+            "analysisMode": "DeepSeek 模型辅助分类 + OWASP LLM Top 10 (2025)；真实目标未验证",
             "verificationStatus": f"大模型分类 {len(caught)} 条文本线索；真实目标未验证",
             "scopeNotice": "仅提交样本文本给配置的模型；未请求真实业务接口、未访问数据库或执行工具。",
             "agentMode": "llm",
