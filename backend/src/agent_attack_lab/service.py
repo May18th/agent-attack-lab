@@ -10,20 +10,16 @@ import os
 import secrets
 import time
 import uuid
-from contextlib import asynccontextmanager
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from html import escape as escape_html
 from pathlib import Path
 from threading import Lock
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Literal
 from urllib.parse import quote, urlsplit
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
 from acps_sdk.aip import (
     Product,
     StructuredDataItem,
@@ -38,24 +34,56 @@ from acps_sdk.aip.aip_rpc_server import (
     TaskManager,
     handle_rpc_request,
 )
-from agent_attack_lab.aip_compat import server_identity_options
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import (
+    HTMLResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, field_validator
+
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
     call_attacker,
     call_defender,
     rpc_metrics,
+)
+from agent_attack_lab.acp_agents import (
     is_configured as acp_agent_configured,
 )
+from agent_attack_lab.agent_logic import (
+    AttackRequest,
+    DefendRequest,
+    attack,
+    defend,
+    local_rule_case_count,
+)
+from agent_attack_lab.aip_compat import server_identity_options
 from agent_attack_lab.battle_audit import audit_battle
-from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend, local_rule_case_count
 from agent_attack_lab.cache import RedisJsonCache
 from agent_attack_lab.external_cases import query_external_cases
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
-from agent_attack_lab.scoring import SCORING_VERSION, score_battle
+from agent_attack_lab.scoring import SCORING_VERSION, score_battle, score_battle_rounds
 from agent_attack_lab.storage import BattleStore
-from agent_attack_lab.target_verify import aggregate_verdict, configured_verify_mode, verify_round
-
+from agent_attack_lab.target_verify import (
+    aggregate_verdict,
+    configured_verify_mode,
+    verify_round,
+)
 
 logger = logging.getLogger("agent_attack_lab")
 
@@ -76,6 +104,7 @@ _default_origins = {
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://yuanyiagentzhandui.cn",
 }
 _configured_origins = {
     origin.strip()
@@ -99,9 +128,12 @@ _cloudflare_access_configured = bool(
 _browser_auth_configured = bool(os.getenv("AGENT_BROWSER_PASSWORD", "")) or _cloudflare_access_configured
 if _browser_auth_configured and "*" in _cors_origins:
     raise RuntimeError("启用浏览器会话时 AGENT_CORS_ORIGINS 必须使用精确来源")
-if _browser_auth_configured and not os.getenv("AGENT_API_KEY", "").strip():
-    if bool(os.getenv("AGENT_BROWSER_PASSWORD", "")):
-        raise RuntimeError("启用浏览器会话时必须同时配置服务端 AGENT_API_KEY")
+if (
+    _browser_auth_configured
+    and not os.getenv("AGENT_API_KEY", "").strip()
+    and bool(os.getenv("AGENT_BROWSER_PASSWORD", ""))
+):
+    raise RuntimeError("启用浏览器会话时必须同时配置服务端 AGENT_API_KEY")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=sorted(_cors_origins),
@@ -374,7 +406,7 @@ def _verify_cloudflare_access_jwt(token: str) -> bool:
             options={"require": ["exp", "iat", "iss", "aud"]},
         )
         return True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - token libraries expose heterogeneous errors.
         logger.warning("Cloudflare Access JWT rejected reason=%s", type(exc).__name__)
         return False
 
@@ -602,15 +634,59 @@ def _bounded_event_data(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _event(battle_id: str, sequence: int, event_type: str, status: str, data: dict[str, Any]) -> dict[str, Any]:
+    normalized_data = dict(data)
+    normalized_data.setdefault("stageId", _event_stage_id(event_type, normalized_data))
+    normalized_data.setdefault("round", normalized_data.get("round"))
+    normalized_data.setdefault("layerIndex", normalized_data.get("layerIndex"))
+    normalized_data.setdefault("classification", _event_classification(event_type, normalized_data))
+    scores = normalized_data.get("scores")
+    normalized_data["scores"] = scores if isinstance(scores, dict) else {}
     return {
         "id": f"event-{uuid.uuid4()}",
         "battleId": battle_id,
         "sequence": sequence,
         "type": event_type,
         "status": status,
-        "createdAt": datetime.now(timezone.utc).isoformat(),
-        "data": _bounded_event_data(data),
+        "createdAt": datetime.now(UTC).isoformat(),
+        "data": _bounded_event_data(normalized_data),
     }
+
+
+_EVENT_STAGE_IDS = {
+    "battle.created": "A1",
+    "attack.started": "A1",
+    "agent.call.started": "A2",
+    "attack.sample.generated": "A3",
+    "attack.completed": "A4",
+    "round.started": "A5",
+    "round.completed": "A6",
+    "attack.compromised": "A7",
+    "defense.completed": "A8",
+    "battle.completed": "L0",
+    "battle.failed": "L0",
+}
+
+
+def _event_stage_id(event_type: str, data: dict[str, Any]) -> str:
+    explicit = data.get("stageId")
+    return str(explicit) if explicit else _EVENT_STAGE_IDS.get(event_type, event_type)
+
+
+def _event_classification(event_type: str, data: dict[str, Any]) -> str:
+    explicit = data.get("classification")
+    if explicit:
+        return str(explicit)
+    if event_type == "attack.compromised":
+        return "compromised"
+    if event_type == "round.completed":
+        return "blocked" if data.get("caught") else "passed"
+    if event_type.endswith(".failed") or data.get("error"):
+        return "failed"
+    if event_type.endswith(".started"):
+        return "started"
+    if event_type.endswith(".completed"):
+        return "completed"
+    return "observed"
 
 
 def _record_audit_event(
@@ -633,11 +709,11 @@ def _record_audit_event(
                 "correlationId": correlation_id,
                 "actorRole": actor_role,
                 "status": status,
-                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "createdAt": datetime.now(UTC).isoformat(),
                 "data": data or {},
             }
         )
-    except Exception as exc:  # pragma: no cover - database-specific failure path
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
         logger.warning("Audit persistence failed event=%s error=%s", event_type, type(exc).__name__)
 
 
@@ -669,7 +745,7 @@ def _mark_battle_terminal(battle_id: str, event_type: str, reason: str) -> None:
 
 
 async def _run_battle_with_tracking(battle_id: str, payload: BattleRequest) -> None:
-    global _battle_timeout_count, _battle_cancel_count
+    global _battle_timeout_count
     current = asyncio.current_task()
     if current is not None:
         _battle_tasks[battle_id] = current
@@ -677,7 +753,7 @@ async def _run_battle_with_tracking(battle_id: str, payload: BattleRequest) -> N
         await asyncio.wait_for(
             _run_battle_async(battle_id, payload), timeout=_battle_timeout_seconds
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _battle_timeout_count += 1
         _mark_battle_terminal(battle_id, "battle.timeout", "execution_timeout")
     except asyncio.CancelledError:
@@ -813,7 +889,7 @@ def _persist_internal_score(record: dict[str, Any]) -> None:
     try:
         score = score_battle(record, _battle_store.list_events(record["id"]))
         _battle_store.save_score(record["id"], score)
-    except Exception as exc:  # pragma: no cover - database-specific failure path
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
         logger.warning(
             "Battle %s score snapshot unavailable (%s)",
             record.get("id"),
@@ -885,7 +961,7 @@ def _backfill_missing_internal_scores(limit: int = _score_backfill_batch_size) -
         for record in missing:
             _persist_internal_score(record)
         return len(missing)
-    except Exception as exc:  # pragma: no cover - database-specific failure path
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
         logger.warning("Battle score backfill unavailable (%s)", type(exc).__name__)
         return 0
 
@@ -2173,7 +2249,7 @@ def health(request: Request) -> dict[str, Any]:
     storage_status = "ok"
     try:
         _battle_store.count()
-    except Exception:
+    except Exception:  # noqa: BLE001 - health must report degraded storage instead of failing.
         storage_status = "error"
     return {
         "status": "ok" if storage_status == "ok" else "degraded",
@@ -2193,9 +2269,8 @@ def browser_login_page(
     destination = next or "/dashboard"
     if (
         not destination.startswith("/")
-        or destination.startswith("//")
+        or destination.startswith(("//", "/login"))
         or "\\" in destination
-        or destination.startswith("/login")
         or any(ord(char) < 32 for char in destination)
     ):
         destination = "/dashboard"
@@ -2602,7 +2677,7 @@ async def create_battle(
                 return BattleRecord.model_validate(existing_record)
     battle_id = f"battle-{uuid.uuid4()}"
     battle_code = _battle_store.next_battle_code()
-    created_at = datetime.now(timezone.utc).isoformat()
+    created_at = datetime.now(UTC).isoformat()
     if background:
         record = BattleRecord(
             id=battle_id,
@@ -2937,8 +3012,8 @@ def get_battle_events(
     limit: int = Query(default=200, ge=1, le=1000, description="每页最多返回 1000 条"),
     after_sequence: int = Query(default=0, ge=0, description="返回序号大于此值的事件"),
     event_type: str | None = Query(default=None, min_length=1, max_length=64),
-    from_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),
-    to_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),
+    from_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),  # noqa: B008
+    to_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),  # noqa: B008
     q: str | None = Query(default=None, max_length=200, description="搜索事件类型和原始事件数据"),
 ) -> list[BattleEvent]:
     if _battle_store.get(battle_id) is None:
@@ -2946,7 +3021,7 @@ def get_battle_events(
     def utc_iso(value: datetime | None) -> str | None:
         if value is None:
             return None
-        normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
         return normalized.isoformat()
 
     normalized_from = utc_iso(from_time)
@@ -3068,24 +3143,29 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         if item["durationMs"] is not None or not item["startedAt"] or not item["finishedAt"]:
             return
         try:
-            started = datetime.fromisoformat(str(item["startedAt"]).replace("Z", "+00:00"))
-            finished = datetime.fromisoformat(str(item["finishedAt"]).replace("Z", "+00:00"))
+            started = datetime.fromisoformat(str(item["startedAt"]))
+            finished = datetime.fromisoformat(str(item["finishedAt"]))
             item["durationMs"] = max(0, round((finished - started).total_seconds() * 1000))
         except (TypeError, ValueError):
             item["durationMs"] = None
 
-    score_snapshot = _battle_store.get_score(battle_id)
-    if score_snapshot is None:
-        score_snapshot = score_battle(record, events)
-    score_values = {
-        "attacker": score_snapshot.get("attacker", {}).get("score"),
-        "defender": score_snapshot.get("defender", {}).get("score"),
+    round_scores = {
+        item["round"]: item
+        for item in score_battle_rounds(record, events)
     }
     for item in grouped.values():
         duration_from_timestamps(item)
         defense = {key: item[key] for key in ("caught", "risks", "fixed")}
         item["layerInterceptions"] = derive_layer_interceptions(record["topic"], [defense])
-        item["scores"] = score_values
+        scored_round = round_scores.get(item["round"])
+        if scored_round is None:
+            item["attacker"] = _insufficient_internal_score()["attacker"]
+            item["defender"] = _insufficient_internal_score()["defender"]
+            item["scores"] = {"attacker": None, "defender": None}
+        else:
+            item["attacker"] = scored_round["attacker"]
+            item["defender"] = scored_round["defender"]
+            item["scores"] = scored_round["scores"]
     stats = _battle_stats(record, events)
     # `total` reflects what was actually produced so callers never see a
     # mismatch (for example "5 of 5" while only three rounds exist). The
@@ -3383,7 +3463,7 @@ def _command_text(command: TaskCommand) -> str:
 
 
 async def _aip_start(command: TaskCommand, task: TaskResult | None) -> TaskResult:
-    result = await DefaultHandlers.start(command, task)
+    await DefaultHandlers.start(command, task)
     command_params = command.commandParams or {}
     payload: dict[str, Any] = command_params.get("payload", {})
     if not payload:
@@ -3446,7 +3526,7 @@ async def rpc(request: Request) -> dict[str, Any]:
                 "id": parsed_request.id,
                 "error": {"code": -32601, "message": "Method not found"},
             }
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - JSON-RPC boundary must normalize all validation errors.
         return {
             "jsonrpc": "2.0",
             "id": parsed_request.id,
