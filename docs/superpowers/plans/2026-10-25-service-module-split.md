@@ -2,14 +2,15 @@
 
 - 日期：2026-10-25
 - 对象：`backend/src/agent_attack_lab/service.py`
-- 现状：**3664 行 / 39 个 HTTP 接口 / 87 个顶层函数 / 8 个 Pydantic 模型**
+- 现状：**3955 行 / 21 path（39 endpoint）/ 87 个顶层函数 / 8 个 Pydantic 模型**
+  （行数口径 = `wc -l`，基线为 `git show d2a8b11:backend/src/agent_attack_lab/service.py`；此前文中写的 3664 是估数，已按 git 实测更正）
 - 目标：每个文件 ≤ 600 行，单文件单职责；接口路径、响应结构、错误码零变化
 
 ## 一、为什么要拆
 
 | 症状 | 证据 |
 |---|---|
-| 单文件占后端 45% | 后端 src 共 8009 行，`service.py` 3664 行 |
+| 单文件占后端 45% | 后端 src 共 8009 行，`service.py` 3955 行 |
 | 六类职责混在一起 | 配置解析、鉴权、限流、事件构造、战局编排、报告渲染、管理端 CRUD 都在同一文件 |
 | 单次改动面过大 | 一个功能改动常常同时触碰鉴权、事件、路由三段代码，review 难以聚焦 |
 | 并行开发冲突 | 多个会话同时改这一文件，今晚已经出现「提交了别人正在写的快照」 |
@@ -75,7 +76,7 @@ agent_attack_lab/
   ```bash
   uv run python -c "import json; from agent_attack_lab.service import app; print(json.dumps(sorted(app.openapi()['paths']), ensure_ascii=False, indent=0))" > /tmp/paths-before.json
   ```
-- 记录：3664 行、39 接口、193 passed。
+- 记录：3955 行、21 path / 39 endpoint、193 passed。
 
 ### S1 抽 `state.py`（只搬单例）
 
@@ -193,7 +194,7 @@ agent_attack_lab/
 
 | 文件 | 行数 |
 |---|---|
-| `service.py` | **186**（原 3664，−95%） |
+| `service.py` | **186**（原 3955，−95%） |
 | `pages.py` | 1075（HTML 模板） |
 | `routers/battles.py` | 795 |
 | `routers/meta.py` | 197 |
@@ -202,13 +203,30 @@ agent_attack_lab/
 | `routers/rpc.py` | 153 |
 | `routers/scores.py` | 124 |
 | `routers/reports.py` | 109 |
-| `config.py` / `security.py` / `events.py` / `battle_runner.py` / `scoring_glue.py` / `models.py` / `reports.py` / `state.py` | 150 / 290 / 139 / 394 / 140 / 89 / 89 / 65 |
+| `config.py` / `security.py` / `events.py` / `battle_runner.py` / `scoring_glue.py` / `models.py` / `state.py` | 155 / 290 / 139 / 394 / 140 / 89 / 65 |
 
 `service.py` 现在只剩：`app = FastAPI(...)`、CORS、`/ui` 静态挂载、`_request_id`、请求指标中间件、`_lifespan`、7 个 `include_router`。
 
 唯一超过 600 行的业务文件是 `routers/battles.py`（795）：里面是 12 个端点，其中 `create_battle` 一个函数就含同步与异步两条执行路径。再拆会让「创建战局」这条主线跨文件，收益不抵成本，本次不动。
 
 依赖方向已实证：`routers/*` 七个模块逐个独立 import，`agent_attack_lab.service` 都不在 `sys.modules` 里。
+
+### 合并后的终验（对「重构前的基线」而非对「上一版」）
+
+不再依赖任何临时快照文件：用 `git show d2a8b11:backend/src/agent_attack_lab/service.py` 取出**重构前的原始 3955 行文件**，按真实深度落到 `backend/src/agent_attack_lab/` 下（基线里 `Path(__file__).parents[3]` 要推 `frontend/frontend-ui/dist`，放浅了会 `IndexError`），`importlib` 以 `old_service` 载入，与主干同进程对比：
+
+| 项 | 基线 d2a8b11 | 主干 ff29a02 | 结果 |
+|---|---|---|---|
+| `openapi()["paths"]` md5 | `205720905bff8a2de3d92df4323aa4c0` | 同 | 一致（21 path） |
+| 路由表（path, methods, 依赖数, 是否入 schema） | 40 条 | 40 条 | 逐条一致（39 APIRoute + 1 WS） |
+| `GET /dashboard` 响应体 | 76607 B | 76607 B | 字节一致 |
+| `pytest -q` | — | 193 passed / 5 skipped，**exit=0** | 绿 |
+| `ruff check` + `format --check` | — | 全绿（72 files formatted） | 绿 |
+
+两个必须记住的坑：
+
+1. **契约 md5 有两套口径**：`print(json.dumps(...))` 写文件会多一个换行，得 `12465f27…`；直接 `md5(json.dumps(...).encode())` 得 `20572090…`。内容完全相同，**比对时必须两侧同口径**，否则会误判成「契约变了」。
+2. **`pytest` 可能「全过却 exit=1」**：本机沙箱的批量删除保护会在 session 收尾清理 `Temp/pytest-of-*/garbage-*`（88 个文件 > 阈值 50）时打断进程，**汇总行被吞掉且退出码为 1**，看起来像红灯。用 `--basetemp=<固定目录>` 绕开垃圾回收即得 `exit=0`；`--junitxml` 里的 `tests/failures/errors` 也可用来交叉验证。
 
 ## 六、风险与应对
 
