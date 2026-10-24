@@ -72,7 +72,10 @@ export function replayEventCue(event: Pick<AdminBattleEvent, 'eventType' | 'type
     const caught = Array.isArray(event.data?.caught) ? event.data.caught.length : 0
     return { kind: 'defense', label: caught ? `防守命中 ${caught} 项` : '防守未命中', color: '#57e8c7' }
   }
-  if (/compromis|breach|被攻陷|沦陷|入侵成功/.test(value)) return { kind: 'compromised', label: '节点沦陷', color: '#ff4e64' }
+  if (/compromis|breach|被攻陷|沦陷|入侵成功/.test(value)) {
+    if (event.data?.targetVerified === true) return { kind: 'compromised', label: '已验证沦陷', color: '#ff435f' }
+    return { kind: 'exploit', label: '穿透未验证', color: '#F39C12' }
+  }
   if (/fail|失败|error|异常/.test(value)) return { kind: 'other', label: '战局失败', color: '#ff4e64' }
   if (/exploit|漏洞利用|利用成功/.test(value)) return { kind: 'exploit', label: '漏洞利用', color: '#ff815e' }
   if (/probe|scan|port.scan|端口扫描|扫描探测/.test(value)) return { kind: 'probe', label: '扫描探测', color: '#00dfdc' }

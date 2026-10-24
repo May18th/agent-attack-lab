@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ConeGeometry, CylinderGeometry, Group, Mesh, MeshPhysicalMaterial, OctahedronGeometry, Raycaster, TubeGeometry, Vector2, Vector3 } from 'three'
+import { ConeGeometry, CylinderGeometry, Group, Mesh, MeshPhysicalMaterial, OctahedronGeometry, PerspectiveCamera, Raycaster, Scene, TubeGeometry, Vector2, Vector3 } from 'three'
 import type { AdminBattleEvent } from '../adminApi'
-import { getReplayBloomProfile, ThreeScene } from './ThreeScene'
+import { getReplayBloomProfile, getReplayPostprocessingPasses, ThreeScene } from './ThreeScene'
 import { buildAdminSceneModel, buildBattleTimelineSceneModel } from './sceneModel'
 
 describe('ThreeScene', () => {
+  it('orders the admin postprocessing passes as render, bloom, SMAA, output', () => {
+    const passes = getReplayPostprocessingPasses(new Scene(), new PerspectiveCamera(), 640, 480, false)
+    expect(passes.map((pass) => pass.constructor.name)).toEqual(['RenderPass', 'UnrealBloomPass', 'SMAAPass', 'OutputPass'])
+  })
+
   it('renders abstract role nodes and energy-fiber links without physical equipment', () => {
     const scene = new ThreeScene()
     const container = document.createElement('div')
@@ -352,7 +357,7 @@ describe('ThreeScene', () => {
         id: 'battle-packets', topic: 'packets', status: 'completed', difficulty: 'high', createdAt: '2026-10-19',
         attackerOut: { samples: [] }, defenderOut: [],
       }, [
-        { sequence: 1, type: 'attack.compromised', status: 'completed', data: { agentRole: 'attacker', targetRole: 'defender', description: '入侵成功' } },
+        { sequence: 1, type: 'attack.compromised', status: 'completed', data: { agentRole: 'attacker', targetRole: 'defender', description: '入侵成功', targetVerified: true } },
         { sequence: 2, type: 'defense.rule.matched', status: 'completed', data: { agentRole: 'defender' } },
       ])
       scene.mount(container, model, {

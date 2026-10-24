@@ -324,8 +324,9 @@ export function statusFromNode(node: AdminSceneNode): 'normal' | 'scanning' | 'c
 export function isExplicitlyCompromised(node: AdminSceneNode): boolean {
   const source = node.source as unknown as Record<string, unknown> | null
   const data = source?.data && typeof source.data === 'object' ? source.data as Record<string, unknown> : source
-  const value = `${String(data?.eventType ?? data?.type ?? '')} ${String(data?.description ?? data?.event ?? '')}`
-  return /compromis|breach|exploited|被攻陷|入侵成功/i.test(value)
+  const type = String(source?.eventType ?? source?.type ?? data?.eventType ?? data?.type ?? '')
+  const value = `${type} ${String(data?.description ?? data?.event ?? '')}`
+  return data?.targetVerified === true && /compromis|breach|exploited|被攻陷|入侵成功/i.test(value)
 }
 
 export function nodeDisplayIp(node: AdminSceneNode): string {

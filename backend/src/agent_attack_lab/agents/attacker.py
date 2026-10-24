@@ -32,7 +32,7 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
         return _local(request.model_dump(), "local-rule")
 
     try:
-        expected_count = {"low": 1, "mid": 2, "high": 3}[request.difficulty]
+        expected_count = request.rounds
         prompt = _SYSTEM_PROMPT + f"\n本次必须恰好生成 {expected_count} 个样本，不能多也不能少。"
         response = await complete_json(prompt, request.model_dump())
         generated = response.get("samples")

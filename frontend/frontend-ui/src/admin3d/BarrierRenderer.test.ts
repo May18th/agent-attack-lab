@@ -33,7 +33,7 @@ describe('BarrierRenderer', () => {
     expect([...barriers.labels.values()].map((label) => label.element.title)).toEqual([
       '第 1 层：输入标准化清洗', '第 2 层：推理引导', '第 3 层：工具动作管控', '第 4 层：审计监测恢复',
     ])
-    expect([...barriers.labels.values()].every((label) => label.element.classList.contains('admin3d-security-barrier-label--compact'))).toBe(true)
+    expect([...barriers.labels.values()].every((label) => label.element.classList.contains('admin3d-security-barrier-label--readable'))).toBe(true)
     expect(scene.getObjectByName('security-barrier:3')).toBe(barriers.groups.get(2))
     expect(new Set([...barriers.labels.values()].map((label) => label.position.y)).size).toBe(1)
     for (const group of barriers.groups.values()) {
@@ -71,7 +71,7 @@ describe('BarrierRenderer', () => {
     const secondBarrier = barriers.groups.get(1)!
     expect((secondBarrier.getObjectByName('security-impact-burst') as import('three').Group).visible).toBe(true)
     const pulseMaterial = (secondBarrier.getObjectByName('security-barrier-pulse:2') as import('three').Mesh).material as import('three').MeshPhysicalMaterial
-    expect(pulseMaterial.color.getHexString()).toBe('e74c3c')
+    expect(pulseMaterial.color.getHexString()).toBe('36c98e')
     expect(feedback.frame).toBe(41)
     feedback.cancel()
     frame.mockRestore()
@@ -90,7 +90,7 @@ describe('BarrierRenderer', () => {
     frame.mockRestore()
   })
 
-  it('uses blue for the passing pulse', () => {
+  it('uses orange for the unverified penetration pulse', () => {
     const scene = new Scene()
     const barriers = createSecurityBarriers(scene, model)
     const feedback = new BarrierFeedbackPlayer(() => {})
@@ -99,7 +99,7 @@ describe('BarrierRenderer', () => {
     feedback.pulse(scene, barriers, { name: '通用', focusedLayers: [1, 2, 3, 4] }, 1, 'penetrated')
 
     const pulse = barriers.groups.get(1)?.getObjectByName('security-barrier-pulse:2') as import('three').Mesh
-    expect((pulse.material as import('three').MeshPhysicalMaterial).color.getHexString()).toBe('4a9eff')
+    expect((pulse.material as import('three').MeshPhysicalMaterial).color.getHexString()).toBe('f39c12')
     feedback.cancel()
     frame.mockRestore()
   })

@@ -98,6 +98,93 @@ def test_dashboard_is_chinese_html() -> None:
     assert "OpenAPI JSON" not in response.text
 
 
+def test_attack_rounds_default_bounds_and_unique_deterministic_expansion() -> None:
+    assert AttackRequest().rounds == 3
+    assert len(attack(AttackRequest(topic="SQL 注入", rounds=1))["samples"]) == 1
+    expanded = attack(AttackRequest(topic="SQL 注入", rounds=5))["samples"]
+    assert len(expanded) == 5
+    assert len({sample["testCaseId"] for sample in expanded}) == 5
+    assert [sample["round"] for sample in expanded] == [1, 2, 3, 4, 5]
+    assert len(attack(AttackRequest(topic="SQL 注入", rounds=10))["samples"]) == 10
+    for invalid in (0, 11):
+        try:
+            AttackRequest(rounds=invalid)
+        except Exception as error:
+            assert "rounds" in str(error)
+        else:
+            raise AssertionError(f"rounds={invalid} must be rejected")
+
+
+def test_battle_round_count_is_persisted_and_validated_by_api(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "round-count.sqlite3"))
+    record = {
+        "id": "round-persisted", "code": "A-001", "difficulty": "low", "topic": "测试",
+        "status": "pending", "rounds": 5, "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": []}, "defenderOut": [],
+    }
+    store.save(record)
+    assert store.get("round-persisted")["rounds"] == 5
+    assert service.BattleRequest().rounds == 3
+    for invalid in (0, 11):
+        response = client.post("/battles", json={"rounds": invalid})
+        assert response.status_code == 422
+    store.close()
+
+
+def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_verification(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "created-rounds.sqlite3"))
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "configured_verify_mode", lambda: "off")
+    response = client.post("/battles", json={"topic": "提示注入", "difficulty": "low", "rounds": 5})
+    assert response.status_code == 201
+    battle = response.json()
+    assert battle["rounds"] == 5
+    assert battle["verdict"] == "undetermined"
+    assert len(battle["attackerOut"]["samples"]) == 5
+    assert len({sample["testCaseId"] for sample in battle["attackerOut"]["samples"]}) == 5
+    assert client.get(f"/battles/{battle['id']}/rounds").json()["total"] == 5
+    assert not any(event["type"] == "attack.compromised" for event in store.list_events(battle["id"]))
+    store.close()
+
+
+def test_simulated_compromise_is_persisted_and_explicitly_labeled(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "simulated-verdict.sqlite3"))
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "configured_verify_mode", lambda: "simulated")
+    response = client.post("/battles", json={"topic": "general", "difficulty": "high", "rounds": 3})
+    battle = response.json()
+    events = store.list_events(battle["id"])
+    compromised = [event for event in events if event["type"] == "attack.compromised"]
+    assert battle["verdict"] == "attacker_won"
+    assert compromised
+    assert all(event["data"]["simulated"] is True for event in compromised)
+    round_results = client.get(f"/battles/{battle['id']}/rounds").json()["rounds"]
+    assert any(item.get("compromised", {}).get("simulated") is True for item in round_results)
+    store.close()
+
+
+def test_recovery_and_retry_reuse_persisted_round_count(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "round-recovery.sqlite3"))
+    store.save({
+        "id": "round-recovery", "code": "A-010", "difficulty": "low", "topic": "通用安全测试",
+        "status": "pending", "rounds": 7, "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": []}, "defenderOut": [],
+    })
+    captured: list[int] = []
+
+    async def fake_run(_battle_id: str, payload: service.BattleRequest) -> None:
+        captured.append(payload.rounds)
+
+    monkeypatch.setattr(service, "_run_battle_with_tracking", fake_run)
+    async def recover() -> None:
+        async with service._lifespan(service.app):
+            await asyncio.sleep(0)
+    monkeypatch.setattr(service, "_battle_store", store)
+    asyncio.run(recover())
+    assert captured == [7]
+    store.close()
+
+
 def test_dashboard_prefills_query_params_and_escapes_topic() -> None:
     for difficulty in ("low", "mid", "high"):
         response = client.get(
@@ -474,6 +561,7 @@ def test_score_route_does_not_compute_or_expose_live_score_without_persisted_sna
         "difficulty": "mid",
         "topic": "无评分快照",
         "status": "completed",
+        "rounds": 1,
         "createdAt": "2026-10-19T00:00:00+00:00",
         "attackerOut": {"samples": [{"type": "sample"}]},
         "defenderOut": [],
@@ -602,6 +690,8 @@ def test_battle_store_persists_records(tmp_path) -> None:
         "createdAt": "2026-10-06T00:00:00+00:00",
         "attackerOut": {"samples": []},
         "defenderOut": [],
+        "rounds": 3,
+        "verdict": None,
     }
     first_store = BattleStore(str(database))
     first_store.save(record)
@@ -882,11 +972,13 @@ def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(tmp_path, m
     import sqlite3
 
     connection = sqlite3.connect(database)
-    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261024_0004"
+    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261024_0005"
     assert connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'battle_scores'"
     ).fetchone()[0] == "battle_scores"
     assert connection.execute("SELECT COUNT(*) FROM battles").fetchone()[0] == 0
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(battles)")}
+    assert {"rounds", "verdict"}.issubset(columns)
 
 
 def test_sqlite_store_handles_concurrent_writes(tmp_path) -> None:
@@ -1173,7 +1265,7 @@ def test_lifespan_resumes_interrupted_battle(tmp_path, monkeypatch) -> None:
 
     async def recover() -> None:
         async with service._lifespan(service.app):
-            for _ in range(40):
+            for _ in range(120):
                 record = service._battle_store.get(battle_id)
                 if record and record["status"] == "completed":
                     return
@@ -1282,6 +1374,7 @@ def test_rounds_endpoint_aggregates_events_and_stats(tmp_path, monkeypatch) -> N
         "difficulty": "low",
         "topic": "通用安全测试",
         "status": "completed",
+        "rounds": 1,
         "createdAt": "2026-10-24T00:00:00+00:00",
         "attackerOut": {"samples": [{"type": "x", "content": "payload"}]},
         "defenderOut": [{"caught": [{"reason": "命中"}], "risks": [], "fixed": [{"action": "修复"}] }],

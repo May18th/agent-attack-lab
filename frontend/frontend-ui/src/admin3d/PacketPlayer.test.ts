@@ -33,7 +33,7 @@ describe('PacketPlayer', () => {
     expect(player.units.filter((unit) => unit.visible)).toHaveLength(5)
   })
 
-  it('keeps penetrating packets blue and positions visible units on the route', () => {
+  it('colors unverified penetration orange and positions visible units on the route', () => {
     const player = new PacketPlayer()
     player.setCount(eventNode('attack.started'), model)
     player.setVisualState('penetrated')
@@ -41,16 +41,26 @@ describe('PacketPlayer', () => {
     player.position(route, 0.5, new Vector3(4, 0, 0), false)
 
     const shell = player.units[0].getObjectByName('replay-packet-shell') as Mesh
-    expect((shell.material as MeshPhysicalMaterial).emissive.getHexString()).toBe('4a9eff')
+    expect((shell.material as MeshPhysicalMaterial).emissive.getHexString()).toBe('f39c12')
     expect(player.units[0].position.x).toBeCloseTo(2)
     expect(player.units[1].position.x).toBeLessThan(player.units[0].position.x)
   })
 
-  it('colors intercepted packets red', () => {
+  it('colors intercepted packets green', () => {
     const player = new PacketPlayer()
     player.setVisualState('intercepted')
     const shell = player.units[0].getObjectByName('replay-packet-shell') as Mesh
 
-    expect((shell.material as MeshPhysicalMaterial).emissive.getHexString()).toBe('e74c3c')
+    expect((shell.material as MeshPhysicalMaterial).emissive.getHexString()).toBe('36c98e')
+  })
+
+  it('only turns a compromise cue red when target verification evidence is present', () => {
+    const player = new PacketPlayer()
+    player.setTheme(eventNode('attack.compromised'))
+    expect(player.visualState).toBe('attack')
+    player.setTheme({ ...eventNode('attack.compromised'), source: { type: 'attack.compromised', data: { targetVerified: true } } })
+    expect(player.visualState).toBe('compromised')
+    const shell = player.units[0].getObjectByName('replay-packet-shell') as Mesh
+    expect((shell.material as MeshPhysicalMaterial).emissive.getHexString()).toBe('ff435f')
   })
 })

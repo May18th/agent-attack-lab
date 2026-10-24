@@ -155,9 +155,11 @@ class BattleStore:
         self._initialize_admin_library_schema()
 
     def _ensure_battle_code_schema(self) -> None:
-        """Add the optional battle code column and its sequence for old stores."""
+        """Add optional battle metadata columns and the human-readable code sequence."""
         if self._is_postgres:
             self._connection.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS code VARCHAR(16) NULL")
+            self._connection.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS rounds INTEGER NOT NULL DEFAULT 3")
+            self._connection.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS verdict VARCHAR(32) NULL")
             self._connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_battles_code ON battles (code)")
             self._connection.execute("CREATE TABLE IF NOT EXISTS battle_code_sequence (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)")
             self._connection.execute("INSERT INTO battle_code_sequence (id, value) VALUES (1, 0) ON CONFLICT (id) DO NOTHING")
@@ -165,6 +167,11 @@ class BattleStore:
             columns = self._connection.execute("SHOW COLUMNS FROM battles LIKE 'code'").fetchall()
             if not columns:
                 self._connection.execute("ALTER TABLE battles ADD COLUMN code VARCHAR(16) NULL")
+            columns = {row["Field"] for row in self._connection.execute("SHOW COLUMNS FROM battles").fetchall()}
+            if "rounds" not in columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN rounds INTEGER NOT NULL DEFAULT 3")
+            if "verdict" not in columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN verdict VARCHAR(32) NULL")
             indexes = {row["Key_name"] for row in self._connection.execute("SHOW INDEX FROM battles").fetchall()}
             if "uq_battles_code" not in indexes:
                 self._connection.execute("CREATE UNIQUE INDEX uq_battles_code ON battles (code)")
@@ -174,6 +181,10 @@ class BattleStore:
             columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(battles)").fetchall()}
             if "code" not in columns:
                 self._connection.execute("ALTER TABLE battles ADD COLUMN code VARCHAR(16) NULL")
+            if "rounds" not in columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN rounds INTEGER NOT NULL DEFAULT 3")
+            if "verdict" not in columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN verdict VARCHAR(32) NULL")
             self._connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_battles_code ON battles (code)")
             self._connection.execute("CREATE TABLE IF NOT EXISTS battle_code_sequence (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)")
             self._connection.execute("INSERT OR IGNORE INTO battle_code_sequence (id, value) VALUES (1, 0)")
@@ -566,39 +577,42 @@ class BattleStore:
             values = (
                 record["id"], record.get("code"), record["difficulty"], record["topic"], record["status"],
                 record["createdAt"], json.dumps(record["attackerOut"], ensure_ascii=False),
-                json.dumps(record["defenderOut"], ensure_ascii=False),
+                json.dumps(record["defenderOut"], ensure_ascii=False), record.get("rounds", 3), record.get("verdict"),
             )
             if self._is_postgres:
                 self._connection.execute(
                     """
                     INSERT INTO battles
-                    (id, code, difficulty, topic, status, created_at, attacker_out, defender_out)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (id, code, difficulty, topic, status, created_at, attacker_out, defender_out, rounds, verdict)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET difficulty=EXCLUDED.difficulty,
                     topic=EXCLUDED.topic, status=EXCLUDED.status, created_at=EXCLUDED.created_at,
-                    attacker_out=EXCLUDED.attacker_out, defender_out=EXCLUDED.defender_out, code=EXCLUDED.code
+                    attacker_out=EXCLUDED.attacker_out, defender_out=EXCLUDED.defender_out, code=EXCLUDED.code,
+                    rounds=EXCLUDED.rounds, verdict=EXCLUDED.verdict
                     """, values,
                 )
             elif self._is_mysql:
                 self._connection.execute(
                     """
                     INSERT INTO battles
-                    (id, code, difficulty, topic, status, created_at, attacker_out, defender_out)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (id, code, difficulty, topic, status, created_at, attacker_out, defender_out, rounds, verdict)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE difficulty=VALUES(difficulty), topic=VALUES(topic),
                     status=VALUES(status), created_at=VALUES(created_at),
-                    attacker_out=VALUES(attacker_out), defender_out=VALUES(defender_out), code=VALUES(code)
+                    attacker_out=VALUES(attacker_out), defender_out=VALUES(defender_out), code=VALUES(code),
+                    rounds=VALUES(rounds), verdict=VALUES(verdict)
                     """, values,
                 )
             else:
                 self._connection.execute(
                     """
                     INSERT INTO battles
-                    (id, code, difficulty, topic, status, created_at, attacker_out, defender_out)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, code, difficulty, topic, status, created_at, attacker_out, defender_out, rounds, verdict)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET difficulty=excluded.difficulty,
                     topic=excluded.topic, status=excluded.status, created_at=excluded.created_at,
-                    attacker_out=excluded.attacker_out, defender_out=excluded.defender_out, code=excluded.code
+                    attacker_out=excluded.attacker_out, defender_out=excluded.defender_out, code=excluded.code,
+                    rounds=excluded.rounds, verdict=excluded.verdict
                     """, values,
                 )
             self._connection.commit()
@@ -1291,6 +1305,8 @@ class BattleStore:
             "difficulty": row["difficulty"],
             "topic": row["topic"],
             "status": row["status"],
+            "rounds": row["rounds"] if "rounds" in row.keys() else 3,
+            "verdict": row["verdict"] if "verdict" in row.keys() else None,
             "createdAt": row["created_at"],
             "attackerOut": json.loads(row["attacker_out"]),
             "defenderOut": json.loads(row["defender_out"]),

@@ -30,6 +30,16 @@
 .admin3d-final-summary.outcome-failed h3,
 .admin3d-final-summary.outcome-failed strong { color: #ffc0b2; }
 .admin3d-final-summary.outcome-failed p { color: #ead0ca; }
+.admin3d-final-summary.outcome-undetermined { background: #202631; border-color: #556171; border-left-color: #8b9aab; }
+.admin3d-final-summary.outcome-undetermined h3,
+.admin3d-final-summary.outcome-undetermined strong { color: #d2d9e2; }
+.admin3d-final-summary.outcome-attacker-won { background: #2a1c24; border-color: #8d4559; border-left-color: #ff435f; }
+.admin3d-final-summary.outcome-attacker-won h3,
+.admin3d-final-summary.outcome-attacker-won strong { color: #ffb8c4; }
+.admin3d-final-summary.outcome-attacker-won p { color: #f0d1d7; }
+.admin3d-final-summary.outcome-defender-won { background: #1b2926; border-color: #4f8770; border-left-color: #36c98e; }
+.admin3d-final-summary.outcome-defender-won h3,
+.admin3d-final-summary.outcome-defender-won strong { color: #a9e2bd; }
 .admin3d-heading-controls { justify-content: flex-end; }
 .admin3d-battle-select,
 .admin3d-speed { display: flex; align-items: center; gap: 8px; color: #aebdc2; font-size: 12px; }
@@ -91,11 +101,11 @@
 .admin3d-node-label--event { max-width: 240px; color: #fff2c3; border-color: #f2d477; }
 .admin3d-security-barrier-label,
 .admin3d-security-barrier-stat { display: block; width: 96px; padding: 3px 5px; color: var(--barrier-color, #d7e8eb); background: rgb(5 13 20 / 92%); border: 1px solid var(--barrier-color, #64748b); border-radius: 3px; font: 10px/1.25 ui-monospace, Consolas, monospace; text-align: center; white-space: pre-line; text-shadow: 0 0 7px color-mix(in srgb, var(--barrier-color, #9bdcff) 40%, transparent); }
-.admin3d-security-barrier-label--compact { width: auto; min-width: 0; padding: 1px 2px; font-size: 8px; white-space: nowrap; }
-.admin3d-security-barrier-label[data-focused="false"] { opacity: .42 !important; }
+.admin3d-security-barrier-label--readable { width: auto; min-width: 42px; padding: 3px 6px; color: #f8fbff; background: rgb(3 10 18 / 96%); border-width: 2px; font-size: 11px; font-weight: 700; line-height: 1.35; white-space: nowrap; text-shadow: 0 1px 2px #000, 0 0 8px color-mix(in srgb, var(--barrier-color, #9bdcff) 65%, transparent); }
+.admin3d-security-barrier-label[data-focused="false"] { opacity: .72 !important; }
 .admin3d-security-barrier-stat { margin-top: 2px; color: #dbeafe; border-color: #64748b; }
-.admin3d-security-barrier-stat.outcome-intercepted { color: #ffd1d1; border-color: #e74c3c; }
-.admin3d-security-barrier-stat.outcome-penetrated { color: #b6f5d7; border-color: #36c98e; }
+.admin3d-security-barrier-stat.outcome-intercepted { color: #b6f5d7; border-color: #36c98e; }
+.admin3d-security-barrier-stat.outcome-penetrated { color: #ffddb0; border-color: #f39c12; }
 .admin3d-security-theme { position: absolute; top: 10px; right: 10px; display: grid; gap: 3px; min-width: 190px; padding: 8px 10px; color: #c8d9de; background: rgb(7 15 22 / 88%); border: 1px solid #3c5965; border-radius: 4px; font: 11px/1.35 ui-monospace, Consolas, monospace; }
 .admin3d-security-theme strong { color: #e3f1f4; font-size: 11px; font-weight: 600; }
 .admin3d-security-theme small { color: #8ea5ad; font-size: 10px; }
@@ -186,7 +196,7 @@
   .admin3d-event-panel { min-height: 160px; }
   .admin3d-event-panel pre { max-height: 160px; }
   .admin3d-security-theme { top: 8px; right: 8px; min-width: 0; max-width: calc(100% - 16px); font-size: 10px; }
-  .admin3d-security-barrier-label:not(.admin3d-security-barrier-label--compact) { width: 72px; padding: 3px 2px; font-size: 9px; }
+  .admin3d-security-barrier-label:not(.admin3d-security-barrier-label--compact):not(.admin3d-security-barrier-label--readable) { width: 72px; padding: 3px 2px; font-size: 9px; }
   .admin3d-security-barrier-stat { width: 78px; padding: 3px 2px; font-size: 9px; }
   .admin3d-transport { flex-wrap: wrap; }
   .admin3d-progress { order: 3; flex-basis: 100%; }

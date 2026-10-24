@@ -1,7 +1,7 @@
 import { CatmullRomCurve3, CylinderGeometry, Group, Mesh, MeshPhysicalMaterial, SphereGeometry, Vector3 } from 'three'
 import { replayEventCue, type AdminSceneModel, type AdminSceneNode } from './sceneModel'
 
-export type PacketVisualState = 'attack' | 'intercepted' | 'penetrated'
+export type PacketVisualState = 'attack' | 'intercepted' | 'penetrated' | 'compromised'
 
 export class PacketPlayer {
   readonly marker = new Group()
@@ -49,12 +49,12 @@ export class PacketPlayer {
   setTheme(node: AdminSceneNode): void {
     const source = node.source as { eventType?: string; type?: string; data?: Record<string, unknown> } | null
     const cue = source ? replayEventCue(source) : undefined
-    this.setVisualState(cue?.kind === 'compromised' ? 'penetrated' : 'attack')
+    this.setVisualState(cue?.kind === 'compromised' && source?.data?.targetVerified === true ? 'compromised' : 'attack')
   }
 
   setVisualState(state: PacketVisualState): void {
     this.visualState = state
-    const color = state === 'intercepted' ? '#E74C3C' : '#4A9EFF'
+    const color = state === 'intercepted' ? '#36C98E' : state === 'penetrated' ? '#F39C12' : state === 'compromised' ? '#ff435f' : '#4A9EFF'
     this.units.forEach((unit) => unit.traverse((object) => {
       if (!(object instanceof Mesh)) return
       const materials = Array.isArray(object.material) ? object.material : [object.material]

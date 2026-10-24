@@ -86,7 +86,7 @@ export function createSecurityBarriers(scene: Scene, model: AdminSceneModel): Se
     scene.add(group)
 
     const element = document.createElement('div')
-    element.className = 'admin3d-security-barrier-label admin3d-security-barrier-label--compact'
+    element.className = 'admin3d-security-barrier-label admin3d-security-barrier-label--readable'
     element.dataset.sceneNodeId = barrierNode?.id ?? `security:barrier:${index + 1}`
     element.style.setProperty('--barrier-color', color)
     element.textContent = SECURITY_BARRIER_SHORT_LABELS[index]
@@ -166,7 +166,7 @@ export class BarrierFeedbackPlayer {
     const group = collection.groups.get(index)
     if (!group) return
     const pulse = group.userData.pulse as Mesh | undefined
-    const feedbackColor = outcome === 'intercepted' ? '#E74C3C' : '#4A9EFF'
+    const feedbackColor = outcome === 'intercepted' ? '#36C98E' : '#F39C12'
     const materials = (group.userData.materials as MeshPhysicalMaterial[] | undefined) ?? []
     const burst = group.userData.burst as Group | undefined
     showBarrierStat(scene, collection, index, outcome, intercepted, total)

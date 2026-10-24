@@ -14,6 +14,7 @@ from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES, classify_owasp_ll
 class AttackRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
+    rounds: int = Field(default=3, ge=1, le=10)
 
     @field_validator("topic")
     @classmethod
@@ -33,7 +34,10 @@ def local_rule_case_count() -> int:
     return len({
         sample["testCaseId"]
         for difficulty in ("low", "mid", "high")
-        for sample in attack(AttackRequest(difficulty=difficulty))["samples"]
+        for sample in attack(AttackRequest(
+            difficulty=difficulty,
+            rounds={"low": 1, "mid": 2, "high": 3}[difficulty],
+        ))["samples"]
         if sample.get("simulation") is True
     })
 
@@ -322,15 +326,22 @@ def attack(payload: AttackRequest) -> dict[str, Any]:
                 "simulation": True,
             })
 
-    sample_count = {"low": 1, "mid": 2, "high": 3}[payload.difficulty]
+    sample_count = payload.rounds
     depth = {"low": "基础边界探测", "mid": "上下文与变体检查", "high": "组合条件与绕过检查"}[payload.difficulty]
-    selected = samples[:sample_count]
+    selected = [dict(sample) for sample in samples[:sample_count]]
+    while len(selected) < sample_count and samples:
+        round_number = len(selected) + 1
+        variant = dict(samples[(round_number - 1) % len(samples)])
+        variant["testCaseId"] = f"{variant['testCaseId']}-R{round_number}"
+        variant["round"] = round_number
+        selected.append(variant)
     variation = {
         "low": "单一请求与基准身份；只观察一个授权边界。",
         "mid": "更换目标对象或凭据状态，并对比授权前后的响应差异。",
         "high": "组合身份、资源状态与重复请求等条件；只在隔离环境检查边界交互。",
     }[payload.difficulty]
-    for sample in selected:
+    for index, sample in enumerate(selected, start=1):
+        sample["round"] = index
         sample["attackDepth"] = depth
         sample["difficulty"] = payload.difficulty
         sample["testVariation"] = variation

@@ -9,6 +9,9 @@ import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js'
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
+import type { Pass } from 'three/addons/postprocessing/Pass.js'
 import { replayEventCue, securityPathTheme, type AdminSceneModel, type AdminSceneNode } from './sceneModel'
 import { createFiberLink, createTopologyNode, disposeSceneObject, isExplicitlyCompromised, nodeDisplayIp, nodeStatusLabel, nodeTypeLabel, setFiberProgressState, setFiberState, setTopologyNodeState, statusFromNode } from './sceneHardware'
 import { attackRouteFiberIds, createSecurityRoute, routeProgressAtPoint, routeProgressBoundaries, selectEventFiberRoute } from './NetworkLayout'
@@ -22,6 +25,16 @@ export function getReplayBloomProfile(denseScene: boolean): { strength: number; 
   return denseScene
     ? { strength: 0.24, radius: 0.22, threshold: 0.34 }
     : { strength: 0.4, radius: 0.32, threshold: 0.34 }
+}
+
+export function getReplayPostprocessingPasses(scene: Scene, camera: PerspectiveCamera, width: number, height: number, denseScene: boolean): Pass[] {
+  const profile = getReplayBloomProfile(denseScene)
+  return [
+    new RenderPass(scene, camera),
+    new UnrealBloomPass(new Vector2(width, height), profile.strength, profile.radius, profile.threshold),
+    new SMAAPass(),
+    new OutputPass(),
+  ]
 }
 
 export class WebGLUnavailableError extends Error {
@@ -99,7 +112,7 @@ export class ThreeScene {
   private focusedFiberIds = new Set<string>()
   private activeAttackRouteIds: string[] = []
   private activeAttackRouteBoundaries: number[] = []
-  private playbackOutcome?: { status: 'intercepted' | 'penetrated'; barrierIndex: number; intercepted?: number; total?: number; targetAssetId: string; triggerProgress: number }
+  private playbackOutcome?: { status: 'intercepted' | 'penetrated' | 'compromised'; barrierIndex: number; intercepted?: number; total?: number; targetAssetId: string; triggerProgress: number }
   private barrierFeedbackTriggered = false
   private securityTheme = securityPathTheme()
   private nodeQuery = ''
@@ -497,10 +510,9 @@ export class ThreeScene {
     if (!this.renderer || !this.scene || !this.camera) return
     try {
       this.composer = new EffectComposer(this.renderer)
-      this.composer.addPass(new RenderPass(this.scene, this.camera))
-      const profile = getReplayBloomProfile(this.denseScene)
-      this.bloomPass = new UnrealBloomPass(new Vector2(width, height), profile.strength, profile.radius, profile.threshold)
-      this.composer.addPass(this.bloomPass)
+      const passes = getReplayPostprocessingPasses(this.scene, this.camera, width, height, this.denseScene)
+      this.bloomPass = passes[1] as UnrealBloomPass
+      passes.forEach((pass) => this.composer?.addPass(pass))
     } catch {
       this.composer?.dispose()
       this.composer = undefined
@@ -569,7 +581,8 @@ export class ThreeScene {
     const barrierIndex = typeof configuredLayer === 'number'
       ? Math.max(0, Math.min(3, configuredLayer > 0 ? configuredLayer - 1 : configuredLayer))
       : undefined
-    const penetrated = cue.kind === 'compromised' || data.targetVerified === true || data.penetrated === true
+    const verifiedCompromise = cue.kind === 'compromised' && data.targetVerified === true
+    const penetrated = data.penetrated === true
     const interceptedValue = selectedLayer?.blocked ?? data.interceptedCount
     const intercepted = typeof interceptedValue === 'number' && Number.isFinite(interceptedValue) ? Math.max(0, interceptedValue) : undefined
     const reachedValue = selectedLayer?.reached ?? selectedLayer?.total
@@ -586,11 +599,16 @@ export class ThreeScene {
       return group ? [group.position.clone().add(new Vector3(0, 0.68, 0))] : []
     }))
     this.activeAttackRouteIds.forEach((id) => this.focusedFiberIds.add(id))
+    const target = this.hardwareGroups.get(targetAssetId)
+    const targetProgress = target ? routeProgressAtPoint(this.playbackRoute, target.position) : undefined
+    if (verifiedCompromise) {
+      if (targetProgress === undefined) return
+      this.playbackOutcome = { status: 'compromised', barrierIndex: barrierIndex ?? 3, targetAssetId, triggerProgress: targetProgress }
+      return
+    }
     if (barrierIndex === undefined || intercepted === undefined || total === undefined || (!penetrated && intercepted <= 0)) return
     const barrier = this.securityBarriers.get(barrierIndex)
     const barrierProgress = barrier ? routeProgressAtPoint(this.playbackRoute, barrier.position) : undefined
-    const target = this.hardwareGroups.get(targetAssetId)
-    const targetProgress = target ? routeProgressAtPoint(this.playbackRoute, target.position) : undefined
     const triggerProgress = penetrated ? targetProgress : barrierProgress
     if (triggerProgress === undefined) return
     this.playbackOutcome = { status: penetrated ? 'penetrated' : 'intercepted', barrierIndex, intercepted: Math.min(total, intercepted), total, targetAssetId, triggerProgress }
@@ -618,10 +636,13 @@ export class ThreeScene {
       this.packetPlayer?.setVisualState('intercepted')
       this.startBarrierPulse(outcome.barrierIndex, outcome.status, outcome.intercepted, outcome.total)
       this.packetPlayer?.position(this.playbackRoute, outcome.triggerProgress, new Vector3(), this.playbackReversed)
-    } else {
+    } else if (outcome.status === 'penetrated') {
       this.packetPlayer?.setVisualState('penetrated')
       this.startBarrierPulse(outcome.barrierIndex, outcome.status, outcome.intercepted, outcome.total)
       this.startIndicatorPulse([{ id: outcome.targetAssetId, compromised: false }])
+    } else {
+      this.packetPlayer?.setVisualState('compromised')
+      this.startIndicatorPulse([{ id: outcome.targetAssetId, compromised: true }])
     }
   }
 

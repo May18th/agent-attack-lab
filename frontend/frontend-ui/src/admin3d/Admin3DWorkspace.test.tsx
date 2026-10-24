@@ -190,12 +190,12 @@ describe('Admin3DWorkspace', () => {
     const events: AdminBattleEvent[] = [
       { sequence: 1, type: 'attack.probe.started' },
       { sequence: 2, type: 'attack.started' },
-      { sequence: 3, type: 'attack.compromised' },
+      { sequence: 3, type: 'attack.compromised', data: { targetVerified: true } },
     ]
     renderWorkspace({ selectedBattle: battle, events })
     const marks = screen.getAllByTestId('replay-event-marker')
     expect(marks.map(mark => mark.textContent)).toEqual(['扫描探测', '', ''])
-    expect(marks.map(mark => (mark as HTMLElement).style.getPropertyValue('--marker-color'))).toEqual(['#00dfdc', '#ff9b56', '#ff4e64'])
+    expect(marks.map(mark => (mark as HTMLElement).style.getPropertyValue('--marker-color'))).toEqual(['#00dfdc', '#ff9b56', '#ff435f'])
     expect(screen.getByText('攻击跳板')).toBeInTheDocument()
     expect(screen.getByText('防守内网')).toBeInTheDocument()
     expect(screen.getByText('正常守护')).toBeInTheDocument()
@@ -265,6 +265,23 @@ describe('Admin3DWorkspace', () => {
     expect(summary).toHaveClass('admin3d-final-summary')
   })
 
+  it('shows evidence-aware verdicts and labels simulated compromise instead of claiming real compromise', () => {
+    const compromised = { ...battle, status: 'completed', verdict: 'attacker_won' as const }
+    renderWorkspace({ selectedBattle: compromised, events: [
+      { sequence: 1, type: 'attack.compromised', data: { round: 1, targetVerified: true, verificationMode: 'simulated', simulated: true, evidence: [{ kind: 'simulated_detection' }] } },
+      { sequence: 2, type: 'battle.completed', data: { verdict: 'attacker_won', compromisedRounds: 1, interceptedRounds: 0, verificationMode: 'simulated' } },
+    ] })
+    expect(screen.getByRole('status', { name: '战局最终总结' })).toHaveTextContent('模拟验证')
+    expect(screen.getByRole('status', { name: '战局最终总结' })).toHaveClass('outcome-attacker-won')
+
+    cleanup()
+    renderWorkspace({ selectedBattle: { ...battle, status: 'completed', verdict: 'undetermined' }, events: [
+      { sequence: 1, type: 'battle.completed', data: { verdict: 'undetermined', compromisedRounds: 0, interceptedRounds: 0, verificationMode: 'off' } },
+    ] })
+    expect(screen.getByRole('status', { name: '战局最终总结' })).toHaveTextContent('结果未判定')
+    expect(screen.getByRole('status', { name: '战局最终总结' })).not.toHaveClass('outcome-attacker-won')
+  })
+
   it('shows a recorded failure reason and does not invent one when evidence is missing', () => {
     renderWorkspace({ selectedBattle: battle, events: [
       { sequence: 1, type: 'agent.call.failed', data: { agentRole: 'attacker', error: '攻击调用超时' } },
@@ -279,16 +296,16 @@ describe('Admin3DWorkspace', () => {
     expect(screen.getByText(/无法确定具体中断环节/)).toBeInTheDocument()
   })
 
-  it('labels actual high-difficulty rounds as one of three without synthesizing missing rounds', () => {
+  it('labels the selected battle round total instead of inferring it from difficulty', () => {
     const events: AdminBattleEvent[] = [
       { sequence: 1, type: 'round.completed', data: { round: 1, caught: [], risks: [], fixed: [] } },
       { sequence: 2, type: 'round.completed', data: { round: 2, caught: [], risks: [], fixed: [] } },
       { sequence: 3, type: 'round.completed', data: { round: 3, caught: [], risks: [], fixed: [] } },
     ]
-    renderWorkspace({ selectedBattle: { ...battle, difficulty: 'high' }, events })
+    renderWorkspace({ selectedBattle: { ...battle, difficulty: 'low', rounds: 5 }, events })
     fireEvent.change(screen.getByRole('slider', { name: '回放进度' }), { target: { value: '1' } })
 
-    expect(screen.getByText('第 2 / 3 轮')).toBeInTheDocument()
+    expect(screen.getByText('第 2 / 5 轮')).toBeInTheDocument()
   })
 
   it('selects a battle through the native selector', () => {

@@ -13,7 +13,10 @@ import {
 export { apiErrorMessage } from './api'
 
 export type AdminSession = BrowserSession
-export type AdminBattle = Battle
+export type AdminBattle = Battle & {
+  rounds?: number
+  verdict?: 'attacker_won' | 'defender_won' | 'undetermined' | null
+}
 export type AdminBattleListFilters = {
   limit?: number
   offset?: number
@@ -78,7 +81,7 @@ export function listAdminBattles(filters: AdminBattleListFilters = {}): Promise<
   return apiPage<AdminBattle>(`/battles${queryString(filters)}`)
 }
 
-export function createAdminBattle(payload: { topic: string; difficulty: 'low' | 'mid' | 'high' }): Promise<AdminBattle> {
+export function createAdminBattle(payload: { topic: string; difficulty: 'low' | 'mid' | 'high'; rounds: number }): Promise<AdminBattle> {
   return api<AdminBattle>(`/battles?background=true`, { method: 'POST', body: JSON.stringify(payload) })
 }
 

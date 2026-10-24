@@ -54,6 +54,7 @@ from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 from agent_attack_lab.scoring import SCORING_VERSION, score_battle
 from agent_attack_lab.storage import BattleStore
+from agent_attack_lab.target_verify import aggregate_verdict, configured_verify_mode, verify_round
 
 
 logger = logging.getLogger("agent_attack_lab")
@@ -126,6 +127,7 @@ class JsonRpcRequest(BaseModel):
 class BattleRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
+    rounds: int = Field(default=3, ge=1, le=10)
 
     @field_validator("topic")
     @classmethod
@@ -158,6 +160,8 @@ class BattleRecord(BaseModel):
     difficulty: Literal["low", "mid", "high"]
     topic: str
     status: Literal["pending", "running", "completed", "failed"]
+    rounds: int = 3
+    verdict: Literal["attacker_won", "defender_won", "undetermined"] | None = None
     createdAt: str
     attackerOut: dict[str, Any]
     defenderOut: list[dict[str, Any]]
@@ -897,6 +901,8 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         return
     events = await asyncio.to_thread(_battle_store.list_events, battle_id)
     sequence = max((event["sequence"] for event in events), default=0) + 1
+    verification_mode = configured_verify_mode()
+    verifications: list[dict[str, Any]] = []
 
     def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
         nonlocal sequence
@@ -986,6 +992,18 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     "correlationId": defense_call_id,
                 },
             )
+            verification = verify_round(sample, defense, mode=verification_mode)
+            verifications.append(verification)
+            if verification["verified"]:
+                add_event("attack.compromised", "completed", {
+                    "round": index,
+                    "targetAssetId": verification.get("targetAssetId"),
+                    "targetVerified": True,
+                    "verificationMode": verification["mode"],
+                    "simulated": verification["simulated"],
+                    "evidence": verification["evidence"],
+                    "correlationId": defense_call_id,
+                })
         add_event(
             "defense.completed",
             "completed",
@@ -995,9 +1013,16 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             },
         )
         record["status"] = "completed"
+        record["verdict"] = aggregate_verdict(verification_mode, verifications, defender_results)
         _battle_store.save(record)
         await asyncio.to_thread(_invalidate_leaderboard_cache)
-        add_event("battle.completed", "completed", {"status": record["status"]})
+        add_event("battle.completed", "completed", {
+            "status": record["status"],
+            "verdict": record["verdict"],
+            "compromisedRounds": sum(1 for item in verifications if item["verified"]),
+            "interceptedRounds": sum(1 for item in defender_results if item.get("caught")),
+            "verificationMode": verification_mode,
+        })
         await asyncio.to_thread(_persist_internal_score, record)
     except Exception as exc:
         logger.exception("Battle %s failed", battle_id)
@@ -1031,7 +1056,7 @@ async def _lifespan(_app: FastAPI):
         if record["id"] in recovered_ids:
             continue
         recovered_ids.add(record["id"])
-        payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
+        payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"], rounds=record.get("rounds", 3))
         task = asyncio.create_task(_run_battle_with_tracking(record["id"], payload))
         _recovery_tasks.add(task)
         task.add_done_callback(_recovery_tasks.discard)
@@ -2585,6 +2610,7 @@ async def create_battle(
             difficulty=payload.difficulty,
             topic=payload.topic,
             status="pending",
+            rounds=payload.rounds,
             createdAt=created_at,
             attackerOut={"samples": []},
             defenderOut=[],
@@ -2609,6 +2635,7 @@ async def create_battle(
                 {
                     "topic": payload.topic,
                     "difficulty": payload.difficulty,
+                    "rounds": payload.rounds,
                     "attackerSource": "acp-pending" if acp_agent_configured("attacker") else "local-rule",
                     "defenderSource": "acp-pending" if acp_agent_configured("defender") else "local-rule",
                 },
@@ -2631,6 +2658,7 @@ async def create_battle(
         {
             "topic": payload.topic,
             "difficulty": payload.difficulty,
+            "rounds": payload.rounds,
             "attackerSource": "acp-pending" if acp_agent_configured("attacker") else "local-rule",
             "defenderSource": "acp-pending" if acp_agent_configured("defender") else "local-rule",
         },
@@ -2646,6 +2674,8 @@ async def create_battle(
     attack_result: dict[str, Any] = {"samples": []}
     defense_results: list[dict[str, Any]] = []
     defense_call_ids: list[str] = []
+    verification_mode = configured_verify_mode()
+    verifications: list[dict[str, Any]] = []
     try:
         attack_result, attacker_source, attack_call_id = await _tracked_agent_call(
             battle_id=battle_id,
@@ -2660,6 +2690,7 @@ async def create_battle(
             "completed",
             {
                 "sampleCount": len(attack_result["samples"]),
+                "rounds": payload.rounds,
                 "attackerSource": attacker_source,
                 "correlationId": attack_call_id,
             },
@@ -2688,6 +2719,7 @@ async def create_battle(
             difficulty=payload.difficulty,
             topic=payload.topic,
             status="failed",
+            rounds=payload.rounds,
             createdAt=created_at,
             attackerOut=attack_result,
             defenderOut=defense_results,
@@ -2723,11 +2755,25 @@ async def create_battle(
                 "correlationId": correlation_id,
             },
         )
+        verification = verify_round(sample, defense, mode=verification_mode)
+        verifications.append(verification)
+        if verification["verified"]:
+            add_event("attack.compromised", "completed", {
+                "round": index,
+                "targetAssetId": verification.get("targetAssetId"),
+                "targetVerified": True,
+                "verificationMode": verification["mode"],
+                "simulated": verification["simulated"],
+                "evidence": verification["evidence"],
+                "correlationId": correlation_id,
+            })
     add_event(
         "defense.completed",
         "completed",
         {
             "roundCount": len(defense_results),
+            "rounds": payload.rounds,
+            "verificationMode": verification_mode,
             "layerInterceptions": derive_layer_interceptions(payload.topic, defense_results),
         },
     )
@@ -2737,13 +2783,21 @@ async def create_battle(
         difficulty=payload.difficulty,
         topic=payload.topic,
         status="completed",
+        rounds=payload.rounds,
+        verdict=aggregate_verdict(verification_mode, verifications, defense_results),
         createdAt=created_at,
         attackerOut=attack_result,
         defenderOut=defense_results,
     )
     _battle_store.save(record.model_dump())
     await asyncio.to_thread(_invalidate_leaderboard_cache)
-    add_event("battle.completed", "completed", {"status": record.status})
+    add_event("battle.completed", "completed", {
+        "status": record.status,
+        "verdict": record.verdict,
+        "compromisedRounds": sum(1 for item in verifications if item["verified"]),
+        "interceptedRounds": sum(1 for item in defense_results if item.get("caught")),
+        "verificationMode": verification_mode,
+    })
     for event in events:
         _battle_store.save_event(event)
     _persist_internal_score(record.model_dump())
@@ -2785,7 +2839,7 @@ def retry_battle(
             {"topic": record["topic"], "difficulty": record["difficulty"]},
         )
     )
-    payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
+    payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"], rounds=record.get("rounds", 3))
     _schedule_battle_task(background_tasks, battle_id, payload)
     return BattleRecord.model_validate(record)
 
@@ -2979,6 +3033,13 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         elif event_type == "attack.sample.generated":
             item["sample"] = data.get("sample")
             item["startedAt"] = item["startedAt"] or event.get("createdAt")
+        elif event_type == "attack.compromised":
+            item["compromised"] = {
+                "targetVerified": data.get("targetVerified") is True,
+                "verificationMode": data.get("verificationMode"),
+                "simulated": data.get("simulated") is True,
+                "evidence": data.get("evidence", []),
+            }
         elif event_type in {"defense.completed", "round.completed"}:
             item["status"] = "completed"
             item["finishedAt"] = event.get("createdAt")
@@ -3026,7 +3087,8 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         item["layerInterceptions"] = derive_layer_interceptions(record["topic"], [defense])
         item["scores"] = score_values
     stats = _battle_stats(record, events)
-    return {"total": len(grouped), "rounds": [grouped[key] for key in sorted(grouped)], "stats": stats}
+    total = max(0, int(record.get("rounds") or len(grouped)))
+    return {"total": total, "rounds": [grouped[key] for key in sorted(grouped)], "stats": stats}
 
 
 def _scores(record: dict[str, Any]) -> tuple[int, int]:

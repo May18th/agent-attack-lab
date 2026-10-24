@@ -27,9 +27,9 @@ type Admin3DWorkspaceProps = {
 
 const statusLabels: Record<string, string> = {
   pending: '等待中', running: '进行中', completed: '已完成', failed: '失败',
+  attacker_won: '攻击得手（目标已验证）', defender_won: '防守成功', undetermined: '结果未判定',
 }
 
-const expectedRounds: Record<string, number> = { low: 1, mid: 2, high: 3 }
 
 function eventLabel(event: AdminBattleEvent): string {
   const type = String(event.eventType ?? event.type ?? '')
@@ -87,14 +87,35 @@ function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.l
     return type === 'battle.completed' || type === 'battle.failed'
   })
   const showFinalSummary = Boolean(finalEvent || selectedBattle?.status === 'completed' || selectedBattle?.status === 'failed')
-  const finalSummary = finalEvent
+  const finalEventData = (finalEvent?.data ?? {}) as Record<string, unknown>
+  const compromiseEvents = orderedEvents.filter((event) => String(event.eventType ?? event.type ?? '') === 'attack.compromised' && event.data?.targetVerified === true)
+  const recordedVerdict = finalEventData.verdict ?? selectedBattle?.verdict
+  const finalVerdict = recordedVerdict === 'attacker_won' && compromiseEvents.length > 0
+    ? 'attacker_won'
+    : recordedVerdict === 'defender_won' ? 'defender_won'
+      : recordedVerdict === 'undetermined' ? 'undetermined'
+        : selectedBattle?.status === 'completed' || String(finalEvent?.eventType ?? finalEvent?.type ?? '') === 'battle.completed' ? 'undetermined' : undefined
+  const finalSummaryBase = finalEvent
     ? replayEventSummary(finalEvent, orderedEvents)
     : selectedBattle?.status === 'failed'
       ? '战局已失败，但记录中缺少终局事件，无法确定中断原因。'
       : '战局已完成，但记录中缺少终局事件，无法汇总逐轮证据。真实目标验证状态无法确认。'
+  const interceptedRounds = typeof finalEventData.interceptedRounds === 'number'
+    ? finalEventData.interceptedRounds
+    : orderedEvents.filter((event) => ['round.completed', 'defense.completed'].includes(String(event.eventType ?? event.type ?? '')) && Array.isArray(event.data?.caught) && event.data.caught.length > 0).length
+  const compromisedRounds = typeof finalEventData.compromisedRounds === 'number' ? finalEventData.compromisedRounds : compromiseEvents.length
+  const verificationMode = finalEventData.verificationMode ?? compromiseEvents[0]?.data?.verificationMode
+  const verdictSummary = finalVerdict === 'attacker_won'
+    ? `目标沦陷：${verificationMode === 'simulated' || compromiseEvents.some((event) => event.data?.simulated === true) ? '模拟验证，非真实目标验证' : '已有验证证据'}；沦陷 ${compromisedRounds} 轮，防守拦截 ${interceptedRounds} 轮。`
+    : finalVerdict === 'defender_won'
+      ? `防守成功：检测到拦截证据且没有已验证沦陷；拦截 ${interceptedRounds} 轮。`
+      : finalVerdict === 'undetermined'
+        ? '结果未判定：验证未启用或证据不足；不能把流程完成或样本穿透等同于目标沦陷。'
+        : ''
+  const finalSummary = [finalSummaryBase, verdictSummary].filter(Boolean).join(' ')
   const finalStatus = finalEvent
-    ? String(finalEvent.eventType ?? finalEvent.type ?? '') === 'battle.failed' ? 'failed' : 'completed'
-    : selectedBattle?.status ?? 'unknown'
+    ? String(finalEvent.eventType ?? finalEvent.type ?? '') === 'battle.failed' ? 'failed' : finalVerdict ?? 'completed'
+    : selectedBattle?.status === 'completed' ? finalVerdict ?? 'undetermined' : selectedBattle?.status ?? 'unknown'
 
   useLayoutEffect(() => {
     modelRef.current = model
@@ -242,7 +263,7 @@ function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.l
       </div>
     </header>
 
-    {showFinalSummary && <section className={`admin3d-final-summary outcome-${finalStatus}`} role="status" aria-label="战局最终总结">
+    {showFinalSummary && <section className={`admin3d-final-summary outcome-${finalStatus.replace('_', '-')}`} role="status" aria-label="战局最终总结">
       <div className="admin3d-final-summary-heading">
         <h3>战局最终总结</h3>
         <strong>{statusLabels[finalStatus] ?? '终局状态待确认'}</strong>
@@ -335,7 +356,7 @@ function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.l
           </div>
           <h3>{eventLabel(currentEvent)}</h3>
           <p className="admin3d-event-meta">序号 {currentEvent.sequence ?? currentIndex + 1} · {currentEvent.timestamp || '未记录时间'}</p>
-          {typeof currentEvent.data?.round === 'number' && <p className="admin3d-round-marker">第 {currentEvent.data.round} / {expectedRounds[selectedBattle?.difficulty ?? ''] ?? '—'} 轮</p>}
+          {typeof currentEvent.data?.round === 'number' && <p className="admin3d-round-marker">第 {currentEvent.data.round} / {selectedBattle?.rounds ?? 3} 轮</p>}
           {currentEvent !== finalEvent && replayEventSummary(currentEvent, orderedEvents) && <p className="admin3d-event-summary" role="status">{replayEventSummary(currentEvent, orderedEvents)}</p>}
           <pre>{eventDetails(currentEvent)}</pre>
         </> : <p className="admin3d-muted">播放或拖动进度后显示对应记录。</p>}

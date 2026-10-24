@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Group, Mesh, MeshPhysicalMaterial } from 'three'
-import { createTopologyNode, setFiberProgressState } from './sceneHardware'
+import { createTopologyNode, isExplicitlyCompromised, setFiberProgressState } from './sceneHardware'
 import type { AdminSceneNode } from './sceneModel'
 
 const node = (kind: AdminSceneNode['kind'], id: string = kind): AdminSceneNode => ({
@@ -36,5 +36,12 @@ describe('sceneHardware', () => {
     setFiberProgressState(fiber, 'pending')
     expect(fiber.userData.pathProgress).toBe('pending')
     expect(inner.color.getHexString()).toBe('71808b')
+  })
+
+  it('does not treat a compromise-shaped event without verification evidence as a compromised node', () => {
+    const unverified = { ...node('timeline-event'), source: { type: 'attack.compromised', data: { targetVerified: false } } }
+    const verified = { ...node('timeline-event'), source: { type: 'attack.compromised', data: { targetVerified: true } } }
+    expect(isExplicitlyCompromised(unverified)).toBe(false)
+    expect(isExplicitlyCompromised(verified)).toBe(true)
   })
 })
