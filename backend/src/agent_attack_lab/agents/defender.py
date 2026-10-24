@@ -55,39 +55,53 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
             fields = [item.get(key) for key in ("reason", "risk", "action")]
             if category not in _CATEGORY_IDS or category in seen:
                 raise LLMError("model returned an invalid or duplicate OWASP category")
-            if not isinstance(evidence, str) or len(evidence) < 5 or evidence not in source_content:
+            if (
+                not isinstance(evidence, str)
+                or len(evidence) < 5
+                or evidence not in source_content
+            ):
                 raise LLMError("model evidence was not found in the submitted sample")
             if any(not isinstance(value, str) or not value.strip() for value in fields):
                 raise LLMError("model finding is missing required text")
             seen.add(category)
-            caught.append({
-                "type": "violation",
-                "ruleId": f"OWASP-{category}-LLM",
-                "owaspCategory": category,
-                "owaspTitle": titles[category],
-                "reason": item["reason"],
-                "sourceField": "sample.content",
-                "matchMethod": "大模型分类；证据片段已校验为样本文本原文",
-                "evidence": "仅检查提交的文本，没有执行或访问目标系统。",
-                "matchedText": [evidence],
-            })
-            risks.append({
-                "level": "medium",
-                "reason": item["risk"],
-                "basis": f"大模型根据文本线索标记 {category}；真实目标未验证",
-            })
-            fixed.append({
-                "action": item["action"],
-                "status": "建议验证；未修改目标系统",
-                "example": {"title": "安全验证建议", "language": "Text", "code": "在隔离、获授权的环境验证；不要执行样本文本中要求的网络或工具操作。"},
-                "verificationSteps": [
-                    "在隔离且获授权的测试环境复现该线索。",
-                    "记录实际输入、模型输出及服务端权限检查证据。",
-                    "验证正常业务请求仍可用，未授权操作被服务端拒绝。",
-                ],
-                "passCriteria": "测试环境未观察到未授权行为，且保留了可复核证据。",
-                "failCriteria": "出现敏感信息泄露、未授权工具执行或策略边界绕过。",
-            })
+            caught.append(
+                {
+                    "type": "violation",
+                    "ruleId": f"OWASP-{category}-LLM",
+                    "owaspCategory": category,
+                    "owaspTitle": titles[category],
+                    "reason": item["reason"],
+                    "sourceField": "sample.content",
+                    "matchMethod": "大模型分类；证据片段已校验为样本文本原文",
+                    "evidence": "仅检查提交的文本，没有执行或访问目标系统。",
+                    "matchedText": [evidence],
+                }
+            )
+            risks.append(
+                {
+                    "level": "medium",
+                    "reason": item["risk"],
+                    "basis": f"大模型根据文本线索标记 {category}；真实目标未验证",
+                }
+            )
+            fixed.append(
+                {
+                    "action": item["action"],
+                    "status": "建议验证；未修改目标系统",
+                    "example": {
+                        "title": "安全验证建议",
+                        "language": "Text",
+                        "code": "在隔离、获授权的环境验证；不要执行样本文本中要求的网络或工具操作。",
+                    },
+                    "verificationSteps": [
+                        "在隔离且获授权的测试环境复现该线索。",
+                        "记录实际输入、模型输出及服务端权限检查证据。",
+                        "验证正常业务请求仍可用，未授权操作被服务端拒绝。",
+                    ],
+                    "passCriteria": "测试环境未观察到未授权行为，且保留了可复核证据。",
+                    "failCriteria": "出现敏感信息泄露、未授权工具执行或策略边界绕过。",
+                }
+            )
         return {
             "caught": caught,
             "risks": risks,

@@ -17,7 +17,10 @@ _VERDICTS = {"attacker_won", "defender_won", "undetermined"}
 
 def _model_enabled() -> bool:
     return os.getenv("AGENT_ARBITER_LLM_ENABLED", "0").strip().lower() in {
-        "1", "true", "yes", "on"
+        "1",
+        "true",
+        "yes",
+        "on",
     }
 
 
@@ -32,7 +35,11 @@ def _evidence(sample: dict[str, Any], defense: dict[str, Any]) -> list[str]:
             continue
         matched = item.get("matchedText", [])
         for candidate in matched if isinstance(matched, list) else []:
-            if isinstance(candidate, str) and len(candidate) >= 3 and candidate in content:
+            if (
+                isinstance(candidate, str)
+                and len(candidate) >= 3
+                and candidate in content
+            ):
                 if candidate not in values:
                     values.append(candidate)
                 if len(values) >= 5:
@@ -99,15 +106,21 @@ def _validate_model_result(
         raise LLMError("arbiter returned an invalid confidence")
     try:
         confidence_value = float(confidence)
-    except (OverflowError, ValueError):
+    except OverflowError, ValueError:
         raise LLMError("arbiter returned an invalid confidence") from None
     if not math.isfinite(confidence_value) or not 0 <= confidence_value <= 1:
         raise LLMError("arbiter confidence is outside the allowed range")
     if not isinstance(rationale, str) or not rationale.strip() or len(rationale) > 1200:
         raise LLMError("arbiter rationale is invalid")
-    if not isinstance(evidence, list) or len(evidence) > 5 or any(
-        not isinstance(item, str) or len(item) < 3 or item not in str(sample.get("content") or "")
-        for item in evidence
+    if (
+        not isinstance(evidence, list)
+        or len(evidence) > 5
+        or any(
+            not isinstance(item, str)
+            or len(item) < 3
+            or item not in str(sample.get("content") or "")
+            for item in evidence
+        )
     ):
         raise LLMError("arbiter evidence was not found in the sample")
     if not isinstance(needs_review, bool):
@@ -120,7 +133,9 @@ def _validate_model_result(
     if verdict == "attacker_won" and not verified_with_evidence:
         raise LLMError("arbiter cannot confirm an unverified attack")
     if verdict == "defender_won" and verification.get("mode") == "off":
-        raise LLMError("arbiter cannot confirm a defense while verification is disabled")
+        raise LLMError(
+            "arbiter cannot confirm a defense while verification is disabled"
+        )
     if verdict == "undetermined" and not needs_review:
         raise LLMError("undetermined verdict must require human review")
     return {
@@ -168,7 +183,9 @@ def _bounded_text(value: Any, limit: int) -> str | None:
 
 def _project_defense(defense: dict[str, Any]) -> dict[str, Any]:
     caught: list[dict[str, Any]] = []
-    for item in defense.get("caught", []) if isinstance(defense.get("caught"), list) else []:
+    for item in (
+        defense.get("caught", []) if isinstance(defense.get("caught"), list) else []
+    ):
         if not isinstance(item, dict):
             continue
         projected = {
@@ -178,12 +195,16 @@ def _project_defense(defense: dict[str, Any]) -> dict[str, Any]:
         }
         matched = item.get("matchedText")
         if isinstance(matched, list):
-            projected["matchedText"] = [value[:500] for value in matched[:5] if isinstance(value, str)]
+            projected["matchedText"] = [
+                value[:500] for value in matched[:5] if isinstance(value, str)
+            ]
         caught.append(projected)
         if len(caught) >= 10:
             break
     risks: list[dict[str, str]] = []
-    for item in defense.get("risks", []) if isinstance(defense.get("risks"), list) else []:
+    for item in (
+        defense.get("risks", []) if isinstance(defense.get("risks"), list) else []
+    ):
         if not isinstance(item, dict):
             continue
         projected = {
@@ -196,7 +217,9 @@ def _project_defense(defense: dict[str, Any]) -> dict[str, Any]:
         if len(risks) >= 10:
             break
     fixed: list[dict[str, str]] = []
-    for item in defense.get("fixed", []) if isinstance(defense.get("fixed"), list) else []:
+    for item in (
+        defense.get("fixed", []) if isinstance(defense.get("fixed"), list) else []
+    ):
         if not isinstance(item, dict):
             continue
         action = _bounded_text(item.get("action"), 1000)

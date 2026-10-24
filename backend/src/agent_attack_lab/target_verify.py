@@ -11,7 +11,12 @@ import os
 from typing import Any, Literal
 
 VerifyMode = Literal["off", "simulated", "live"]
-_SIMULATABLE_RULES = {"LAB-SQLI-001", "LAB-PROMPT-001", "OWASP-LLM01-LLM", "OWASP-LLM07-LLM"}
+_SIMULATABLE_RULES = {
+    "LAB-SQLI-001",
+    "LAB-PROMPT-001",
+    "OWASP-LLM01-LLM",
+    "OWASP-LLM07-LLM",
+}
 
 
 def _is_simulatable(rule_id: str) -> bool:
@@ -47,20 +52,30 @@ def verify_round(
         return {**base, "reason": "no_live_adapter"}
 
     caught = defense.get("caught") if isinstance(defense, dict) else None
-    matched = sorted({
-        str(item.get("ruleId"))
-        for item in (caught if isinstance(caught, list) else [])
-        if isinstance(item, dict) and _is_simulatable(str(item.get("ruleId")))
-    })
+    matched = sorted(
+        {
+            str(item.get("ruleId"))
+            for item in (caught if isinstance(caught, list) else [])
+            if isinstance(item, dict) and _is_simulatable(str(item.get("ruleId")))
+        }
+    )
     if not matched:
         return {**base, "reason": "no_simulated_exploit_evidence"}
-    evidence = [{
-        "kind": "simulated_detection",
-        "ruleId": rule_id,
-        "testCaseId": sample.get("testCaseId"),
-        "note": "本地规则命中，仅为模拟验证，不代表真实目标已沦陷",
-    } for rule_id in matched]
-    return {**base, "verified": True, "evidence": evidence, "reason": "simulated_rule_match"}
+    evidence = [
+        {
+            "kind": "simulated_detection",
+            "ruleId": rule_id,
+            "testCaseId": sample.get("testCaseId"),
+            "note": "本地规则命中，仅为模拟验证，不代表真实目标已沦陷",
+        }
+        for rule_id in matched
+    ]
+    return {
+        **base,
+        "verified": True,
+        "evidence": evidence,
+        "reason": "simulated_rule_match",
+    }
 
 
 def aggregate_verdict(
@@ -68,10 +83,14 @@ def aggregate_verdict(
     verifications: list[dict[str, Any]],
     defenses: list[dict[str, Any]],
 ) -> str:
-    if any(item.get("verified") is True and item.get("mode") in {"simulated", "live"} for item in verifications):
+    if any(
+        item.get("verified") is True and item.get("mode") in {"simulated", "live"}
+        for item in verifications
+    ):
         return "attacker_won"
     if mode != "off" and any(
-        isinstance(defense, dict) and bool(defense.get("caught")) for defense in defenses
+        isinstance(defense, dict) and bool(defense.get("caught"))
+        for defense in defenses
     ):
         return "defender_won"
     return "undetermined"

@@ -19,15 +19,17 @@ def _catalog(version: str, title: str = "Initial issue") -> dict[str, object]:
     return {
         "catalogVersion": version,
         "dateReleased": "2026-10-11T00:00:00Z",
-        "vulnerabilities": [{
-            "cveID": "CVE-2099-0200",
-            "vendorProject": "Example",
-            "product": "Gateway",
-            "vulnerabilityName": title,
-            "dateAdded": "2026-10-11",
-            "shortDescription": "Documented issue",
-            "requiredAction": "Apply the fix",
-        }],
+        "vulnerabilities": [
+            {
+                "cveID": "CVE-2099-0200",
+                "vendorProject": "Example",
+                "product": "Gateway",
+                "vulnerabilityName": title,
+                "dateAdded": "2026-10-11",
+                "shortDescription": "Documented issue",
+                "requiredAction": "Apply the fix",
+            }
+        ],
     }
 
 
@@ -35,17 +37,24 @@ def test_compare_catalog_reports_changed_and_added_records(tmp_path: Path) -> No
     database = tmp_path / "external.sqlite3"
     first = _catalog("v1")
     payload = json.dumps(first, sort_keys=True).encode()
-    import_catalog(database, payload=payload, catalog=first, source_url="https://example.invalid/feed")
+    import_catalog(
+        database,
+        payload=payload,
+        catalog=first,
+        source_url="https://example.invalid/feed",
+    )
     second = _catalog("v2", title="Updated issue")
-    second["vulnerabilities"].append({
-        "cveID": "CVE-2099-0201",
-        "vendorProject": "Example",
-        "product": "Gateway",
-        "vulnerabilityName": "New issue",
-        "dateAdded": "2026-10-11",
-        "shortDescription": "New documented issue",
-        "requiredAction": "Apply the fix",
-    })
+    second["vulnerabilities"].append(
+        {
+            "cveID": "CVE-2099-0201",
+            "vendorProject": "Example",
+            "product": "Gateway",
+            "vulnerabilityName": "New issue",
+            "dateAdded": "2026-10-11",
+            "shortDescription": "New documented issue",
+            "requiredAction": "Apply the fix",
+        }
+    )
 
     report = compare_catalog(
         database,
@@ -61,14 +70,18 @@ def test_compare_catalog_reports_changed_and_added_records(tmp_path: Path) -> No
     assert report["removed"] == []
 
 
-def test_sensitive_file_guard_allows_examples_and_rejects_material(tmp_path: Path) -> None:
+def test_sensitive_file_guard_allows_examples_and_rejects_material(
+    tmp_path: Path,
+) -> None:
     (tmp_path / ".env.example").write_text("API_KEY=<local-secret>", encoding="utf-8")
     (tmp_path / "safe.py").write_text("print('ok')", encoding="utf-8")
     (tmp_path / "client-key.pem").write_text("placeholder", encoding="utf-8")
     private_marker = "-----BEGIN " + "PRIVATE KEY-----"
     (tmp_path / "private.txt").write_text(private_marker, encoding="utf-8")
 
-    findings = violations([".env.example", "safe.py", "client-key.pem", "private.txt"], tmp_path)
+    findings = violations(
+        [".env.example", "safe.py", "client-key.pem", "private.txt"], tmp_path
+    )
 
     assert {item["path"] for item in findings} == {"client-key.pem", "private.txt"}
 
@@ -79,12 +92,24 @@ def _nvd_record(cve_id: str, *, status: str = "Analyzed") -> dict[str, object]:
             "id": cve_id,
             "vulnStatus": status,
             "published": "2026-10-10T00:00:00.000Z",
-            "descriptions": [{"lang": "en", "value": "A public NVD vulnerability record."}],
+            "descriptions": [
+                {"lang": "en", "value": "A public NVD vulnerability record."}
+            ],
             "weaknesses": [{"description": [{"lang": "en", "value": "CWE-79"}]}],
-            "configurations": [{"nodes": [{"cpeMatch": [{
-                "vulnerable": True,
-                "criteria": "cpe:2.3:a:example:gateway:1.0:*:*:*:*:*:*:*",
-            }]}]}],
+            "configurations": [
+                {
+                    "nodes": [
+                        {
+                            "cpeMatch": [
+                                {
+                                    "vulnerable": True,
+                                    "criteria": "cpe:2.3:a:example:gateway:1.0:*:*:*:*:*:*:*",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
         }
     }
 
@@ -116,7 +141,11 @@ def test_nvd_import_is_idempotent_and_excludes_rejected_records(tmp_path: Path) 
             "FROM external_cases"
         ).fetchone()
     assert row == (
-        "CVE-2099-0300", "example", "gateway", "external_fact", 0,
+        "CVE-2099-0300",
+        "example",
+        "gateway",
+        "external_fact",
+        0,
         "https://nvd.nist.gov/vuln/detail/CVE-2099-0300",
     )
 
@@ -153,9 +182,12 @@ def test_fetch_nvd_catalog_paginates_and_normalizes_dates() -> None:
         urls.append(request.full_url)
         return Response(responses.pop(0))
 
-    with patch.object(external_import.urllib.request, "urlopen", side_effect=open_request), patch.object(
-        external_import.time, "sleep"
-    ) as sleep:
+    with (
+        patch.object(
+            external_import.urllib.request, "urlopen", side_effect=open_request
+        ),
+        patch.object(external_import.time, "sleep") as sleep,
+    ):
         payload, catalog = fetch_nvd_catalog(
             "2026-10-01T00:00:00+08:00", "2026-10-02T00:00:00+08:00"
         )

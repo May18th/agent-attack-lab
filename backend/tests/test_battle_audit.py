@@ -12,7 +12,13 @@ def _record() -> dict[str, object]:
     }
 
 
-def _event(sequence: int, event_type: str, *, battle_id: str = "battle-audit", data: dict | None = None) -> dict:
+def _event(
+    sequence: int,
+    event_type: str,
+    *,
+    battle_id: str = "battle-audit",
+    data: dict | None = None,
+) -> dict:
     return {
         "id": f"event-{sequence}",
         "battleId": battle_id,
@@ -65,4 +71,6 @@ def test_audit_detects_missing_source_trace() -> None:
     result = audit_battle(record, events)
 
     assert result["valid"] is False
-    assert any(issue["code"] == "defender_source_mismatch" for issue in result["issues"])
+    assert any(
+        issue["code"] == "defender_source_mismatch" for issue in result["issues"]
+    )

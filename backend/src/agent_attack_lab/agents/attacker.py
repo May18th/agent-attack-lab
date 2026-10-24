@@ -34,9 +34,14 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         expected_count = request.rounds
-        prompt = _SYSTEM_PROMPT + f"\n本次必须恰好生成 {expected_count} 个样本，不能多也不能少。"
+        prompt = (
+            _SYSTEM_PROMPT
+            + f"\n本次必须恰好生成 {expected_count} 个样本，不能多也不能少。"
+        )
         user_payload = request.model_dump()
-        knowledge = trusted_attacker_context(payload.get("_knowledgeContext"), topic=request.topic)
+        knowledge = trusted_attacker_context(
+            payload.get("_knowledgeContext"), topic=request.topic
+        )
         if knowledge is not None:
             user_payload["knowledgeContext"] = knowledge
         response = await complete_json(prompt, user_payload, role="attacker")
@@ -53,23 +58,34 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
                 raise LLMError("model returned an invalid sample type")
             if severity not in {"low", "medium", "high"}:
                 raise LLMError("model returned an invalid severity")
-            values = {key: item.get(key) for key in ("scenario", "objective", "content")}
-            if any(not isinstance(value, str) or not value.strip() for value in values.values()):
+            values = {
+                key: item.get(key) for key in ("scenario", "objective", "content")
+            }
+            if any(
+                not isinstance(value, str) or not value.strip()
+                for value in values.values()
+            ):
                 raise LLMError("model returned incomplete sample text")
             if len(values["content"]) > 5000:
                 raise LLMError("model sample exceeded the text limit")
-            samples.append({
-                "testCaseId": f"LLM-{request.difficulty.upper()}-{index:03d}",
-                **values,
-                "type": sample_type,
-                "severity": severity,
-                "topic": request.topic,
-                "difficulty": request.difficulty,
-                "round": index,
-                "simulation": True,
-                "attackDepth": {"low": "单轮直接探测", "mid": "业务字段伪装", "high": "多轮渐进与编码变体"}[request.difficulty],
-                "testVariation": _TEST_VARIATIONS[request.difficulty],
-            })
+            samples.append(
+                {
+                    "testCaseId": f"LLM-{request.difficulty.upper()}-{index:03d}",
+                    **values,
+                    "type": sample_type,
+                    "severity": severity,
+                    "topic": request.topic,
+                    "difficulty": request.difficulty,
+                    "round": index,
+                    "simulation": True,
+                    "attackDepth": {
+                        "low": "单轮直接探测",
+                        "mid": "业务字段伪装",
+                        "high": "多轮渐进与编码变体",
+                    }[request.difficulty],
+                    "testVariation": _TEST_VARIATIONS[request.difficulty],
+                }
+            )
         return {"samples": samples, "agentMode": "llm"}
     except LLMError as exc:
         logger.warning("LLM sample generation fell back to local rules (%s)", str(exc))

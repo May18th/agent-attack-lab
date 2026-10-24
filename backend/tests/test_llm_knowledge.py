@@ -9,7 +9,9 @@ from agent_attack_lab.agents.knowledge import (
 )
 
 
-def test_attacker_knowledge_projection_excludes_defender_fields_and_unrelated_topics() -> None:
+def test_attacker_knowledge_projection_excludes_defender_fields_and_unrelated_topics() -> (
+    None
+):
     result = build_attacker_knowledge(
         [
             {
@@ -27,7 +29,9 @@ def test_attacker_knowledge_projection_excludes_defender_fields_and_unrelated_to
 
     assert result == {
         "role": "attacker",
-        "records": [{"id": "sample-1", "topic": "支付越权", "content": "合成支付订单样本"}],
+        "records": [
+            {"id": "sample-1", "topic": "支付越权", "content": "合成支付订单样本"}
+        ],
     }
 
 
@@ -48,13 +52,27 @@ def test_defender_knowledge_projection_excludes_attacker_sample_content() -> Non
 
     assert result == {
         "role": "defender",
-        "records": [{"id": "rule-1", "name": "订单越权", "condition": "tenant_id 不一致", "action": "拦截"}],
+        "records": [
+            {
+                "id": "rule-1",
+                "name": "订单越权",
+                "condition": "tenant_id 不一致",
+                "action": "拦截",
+            }
+        ],
     }
 
 
 def test_topic_scoped_knowledge_does_not_match_when_sample_topic_is_missing() -> None:
     result = build_defender_knowledge(
-        [{"id": "rule-1", "name": "Payment", "condition": "card owner check", "topic": "支付"}],
+        [
+            {
+                "id": "rule-1",
+                "name": "Payment",
+                "condition": "card owner check",
+                "topic": "支付",
+            }
+        ],
         topic="",
     )
 
@@ -63,10 +81,7 @@ def test_topic_scoped_knowledge_does_not_match_when_sample_topic_is_missing() ->
 
 def test_prompt_knowledge_is_bounded_by_record_count_and_text_length() -> None:
     result = build_attacker_knowledge(
-        [
-            {"id": f"sample-{index}", "content": "x" * 1000}
-            for index in range(12)
-        ],
+        [{"id": f"sample-{index}", "content": "x" * 1000} for index in range(12)],
         topic="支付",
     )
 
@@ -81,31 +96,39 @@ def test_attacker_prompt_receives_only_attacker_knowledge(monkeypatch) -> None:
         assert role == "attacker"
         captured.update(user_payload)
         return {
-            "samples": [{
-                "type": "violation",
-                "severity": "low",
-                "scenario": "payment",
-                "objective": "check",
-                "content": "synthetic payment sample",
-            }]
+            "samples": [
+                {
+                    "type": "violation",
+                    "severity": "low",
+                    "scenario": "payment",
+                    "objective": "check",
+                    "content": "synthetic payment sample",
+                }
+            ]
         }
 
     monkeypatch.setattr(attacker, "is_configured", lambda **_kwargs: True)
     monkeypatch.setattr(attacker, "complete_json", fake_complete)
-    result = asyncio.run(attacker.process({
-        "topic": "支付越权",
-        "difficulty": "low",
-        "rounds": 1,
-        "_knowledgeContext": {
-            "role": "attacker",
-            "records": [{
-                "id": "sample-1",
+    result = asyncio.run(
+        attacker.process(
+            {
                 "topic": "支付越权",
-                "content": "合成样本",
-                "condition": "must not reach attacker",
-            }],
-        },
-    }))
+                "difficulty": "low",
+                "rounds": 1,
+                "_knowledgeContext": {
+                    "role": "attacker",
+                    "records": [
+                        {
+                            "id": "sample-1",
+                            "topic": "支付越权",
+                            "content": "合成样本",
+                            "condition": "must not reach attacker",
+                        }
+                    ],
+                },
+            }
+        )
+    )
 
     assert result["agentMode"] == "llm"
     assert captured["knowledgeContext"] == {
@@ -124,13 +147,19 @@ def test_defender_prompt_ignores_forged_attacker_knowledge(monkeypatch) -> None:
 
     monkeypatch.setattr(defender, "is_configured", lambda **_kwargs: True)
     monkeypatch.setattr(defender, "complete_json", fake_complete)
-    result = asyncio.run(defender.process({
-        "sample": {"content": "ordinary safe text"},
-        "_knowledgeContext": {
-            "role": "attacker",
-            "records": [{"id": "sample-1", "content": "hidden attacker sample"}],
-        },
-    }))
+    result = asyncio.run(
+        defender.process(
+            {
+                "sample": {"content": "ordinary safe text"},
+                "_knowledgeContext": {
+                    "role": "attacker",
+                    "records": [
+                        {"id": "sample-1", "content": "hidden attacker sample"}
+                    ],
+                },
+            }
+        )
+    )
 
     assert result["agentMode"] == "llm"
     assert "knowledgeContext" not in captured

@@ -10,37 +10,76 @@ def test_internal_score_awards_full_score_for_traceable_acp_battle() -> None:
     defense_id = "call-defense"
     record = {
         "status": "completed",
-        "attackerOut": {"samples": [{
-            "type": "vuln", "topic": "测试主题", "severity": "high", "scenario": "场景",
-            "objective": "目标", "content": "测试内容", "testCaseId": "CASE-001",
-            "attackDepth": "深度", "difficulty": "high", "testVariation": "变体",
-        }]},
-        "defenderOut": [{
-            "caught": [{"reason": "发现", "evidence": "依据"}],
-            "risks": [{"reason": "风险", "basis": "样本文本"}],
-            "fixed": [{
-                "action": "建议", "verificationSteps": ["验证"],
-                "passCriteria": "通过", "failCriteria": "失败",
-            }],
-            "verificationStatus": "样本已分析，目标未验证",
-        }],
+        "attackerOut": {
+            "samples": [
+                {
+                    "type": "vuln",
+                    "topic": "测试主题",
+                    "severity": "high",
+                    "scenario": "场景",
+                    "objective": "目标",
+                    "content": "测试内容",
+                    "testCaseId": "CASE-001",
+                    "attackDepth": "深度",
+                    "difficulty": "high",
+                    "testVariation": "变体",
+                }
+            ]
+        },
+        "defenderOut": [
+            {
+                "caught": [{"reason": "发现", "evidence": "依据"}],
+                "risks": [{"reason": "风险", "basis": "样本文本"}],
+                "fixed": [
+                    {
+                        "action": "建议",
+                        "verificationSteps": ["验证"],
+                        "passCriteria": "通过",
+                        "failCriteria": "失败",
+                    }
+                ],
+                "verificationStatus": "样本已分析，目标未验证",
+            }
+        ],
     }
     events = [
-        _event("agent.call.started", {
-            "agentRole": "attacker", "correlationId": attack_id, "dispatchMode": "acp",
-        }),
-        _event("agent.call.completed", {
-            "agentRole": "attacker", "correlationId": attack_id,
-            "dispatchMode": "acp", "resultSource": "acp-rule-fallback", "durationMs": 0,
-        }),
+        _event(
+            "agent.call.started",
+            {
+                "agentRole": "attacker",
+                "correlationId": attack_id,
+                "dispatchMode": "acp",
+            },
+        ),
+        _event(
+            "agent.call.completed",
+            {
+                "agentRole": "attacker",
+                "correlationId": attack_id,
+                "dispatchMode": "acp",
+                "resultSource": "acp-rule-fallback",
+                "durationMs": 0,
+            },
+        ),
         _event("attack.sample.generated", {"correlationId": attack_id}),
-        _event("agent.call.started", {
-            "agentRole": "defender", "correlationId": defense_id, "dispatchMode": "acp",
-        }),
-        _event("agent.call.completed", {
-            "agentRole": "defender", "correlationId": defense_id,
-            "dispatchMode": "acp", "resultSource": "acp-rule-fallback", "durationMs": 1600,
-        }),
+        _event(
+            "agent.call.started",
+            {
+                "agentRole": "defender",
+                "correlationId": defense_id,
+                "dispatchMode": "acp",
+            },
+        ),
+        _event(
+            "agent.call.completed",
+            {
+                "agentRole": "defender",
+                "correlationId": defense_id,
+                "dispatchMode": "acp",
+                "resultSource": "acp-rule-fallback",
+                "durationMs": 1600,
+            },
+        ),
         _event("round.completed", {"correlationId": defense_id}),
         _event("battle.completed", {}),
     ]
@@ -49,15 +88,35 @@ def test_internal_score_awards_full_score_for_traceable_acp_battle() -> None:
 
     assert result["status"] == "scored"
     assert result["version"] == SCORING_VERSION == "frontend-v1"
-    assert sum(item["maxScore"] for item in result["attacker"]["categories"] if item["group"] == "process") == 40
-    assert sum(item["maxScore"] for item in result["defender"]["categories"] if item["group"] == "process") == 40
+    assert (
+        sum(
+            item["maxScore"]
+            for item in result["attacker"]["categories"]
+            if item["group"] == "process"
+        )
+        == 40
+    )
+    assert (
+        sum(
+            item["maxScore"]
+            for item in result["defender"]["categories"]
+            if item["group"] == "process"
+        )
+        == 40
+    )
     assert result["attacker"]["summary"] == {
-        "processScore": 40, "effectScore": 0, "responseScore": 100,
-        "baseScore": 40, "finalScore": 43.0,
+        "processScore": 40,
+        "effectScore": 0,
+        "responseScore": 100,
+        "baseScore": 40,
+        "finalScore": 43.0,
     }
     assert result["defender"]["summary"] == {
-        "processScore": 40, "effectScore": 60, "responseScore": 90,
-        "baseScore": 100, "finalScore": 99.5,
+        "processScore": 40,
+        "effectScore": 60,
+        "responseScore": 90,
+        "baseScore": 100,
+        "finalScore": 99.5,
     }
     assert result["attacker"]["score"] == 43.0
     assert result["defender"]["score"] == 99.5
@@ -69,19 +128,31 @@ def test_agent_scores_are_separate_and_missing_source_is_not_awarded() -> None:
     call_id = "local-call"
     record = {"status": "completed", "attackerOut": {"samples": [{}, {}]}}
     events = [
-        _event("agent.call.started", {
-            "agentRole": "attacker", "correlationId": call_id, "dispatchMode": "local",
-        }),
-        _event("agent.call.completed", {
-            "agentRole": "attacker", "correlationId": call_id, "dispatchMode": "local",
-            "durationMs": 16000,
-        }),
+        _event(
+            "agent.call.started",
+            {
+                "agentRole": "attacker",
+                "correlationId": call_id,
+                "dispatchMode": "local",
+            },
+        ),
+        _event(
+            "agent.call.completed",
+            {
+                "agentRole": "attacker",
+                "correlationId": call_id,
+                "dispatchMode": "local",
+                "durationMs": 16000,
+            },
+        ),
         _event("attack.sample.generated", {"correlationId": call_id}),
         _event("battle.completed", {}),
     ]
 
     result = score_battle(record, events)
-    categories = {item["id"]: item["score"] for item in result["attacker"]["categories"]}
+    categories = {
+        item["id"]: item["score"] for item in result["attacker"]["categories"]
+    }
 
     assert categories["A-05"] == 0
     assert categories["A-04"] == 3
@@ -110,18 +181,37 @@ def test_defender_source_disclosure_is_proportional_to_successful_calls() -> Non
     events = []
     for index in range(2):
         call_id = f"defense-{index}"
-        events.append(_event("agent.call.started", {
-            "agentRole": "defender", "correlationId": call_id, "dispatchMode": "acp",
-        }))
-        events.append(_event("agent.call.completed", {
-            "agentRole": "defender", "correlationId": call_id,
-            "durationMs": 1600,
-            **({"dispatchMode": "acp", "resultSource": "acp-rule-fallback"} if index == 0 else {}),
-        }))
+        events.append(
+            _event(
+                "agent.call.started",
+                {
+                    "agentRole": "defender",
+                    "correlationId": call_id,
+                    "dispatchMode": "acp",
+                },
+            )
+        )
+        events.append(
+            _event(
+                "agent.call.completed",
+                {
+                    "agentRole": "defender",
+                    "correlationId": call_id,
+                    "durationMs": 1600,
+                    **(
+                        {"dispatchMode": "acp", "resultSource": "acp-rule-fallback"}
+                        if index == 0
+                        else {}
+                    ),
+                },
+            )
+        )
         events.append(_event("round.completed", {"correlationId": call_id}))
 
     result = score_battle(record, events)
-    categories = {item["id"]: item["score"] for item in result["defender"]["categories"]}
+    categories = {
+        item["id"]: item["score"] for item in result["defender"]["categories"]
+    }
 
     assert categories["D-05"] == 2
 
@@ -134,14 +224,24 @@ def test_frontend_v1_response_score_clamps_duration_and_rounds_final_score() -> 
     }
     events = [
         _event("agent.call.started", {"agentRole": "attacker", "correlationId": "a"}),
-        _event("agent.call.completed", {
-            "agentRole": "attacker", "correlationId": "a", "durationMs": 8000,
-        }),
+        _event(
+            "agent.call.completed",
+            {
+                "agentRole": "attacker",
+                "correlationId": "a",
+                "durationMs": 8000,
+            },
+        ),
         _event("attack.sample.generated", {"correlationId": "a"}),
         _event("agent.call.started", {"agentRole": "defender", "correlationId": "d"}),
-        _event("agent.call.completed", {
-            "agentRole": "defender", "correlationId": "d", "durationMs": 20000,
-        }),
+        _event(
+            "agent.call.completed",
+            {
+                "agentRole": "defender",
+                "correlationId": "d",
+                "durationMs": 20000,
+            },
+        ),
         _event("round.completed", {"round": 1, "correlationId": "d"}),
     ]
 
@@ -157,12 +257,22 @@ def test_effect_score_falls_back_to_round_completed_defense_evidence() -> None:
     result = score_battle(
         {"topic": "通用安全测试", "attackerOut": {"samples": [{}]}, "defenderOut": []},
         [
-            _event("agent.call.started", {"agentRole": "defender", "correlationId": "d"}),
-            _event("agent.call.completed", {"agentRole": "defender", "correlationId": "d"}),
-            _event("round.completed", {
-                "round": 1, "correlationId": "d", "caught": [{"reason": "命中"}],
-                "risks": [], "fixed": [],
-            }),
+            _event(
+                "agent.call.started", {"agentRole": "defender", "correlationId": "d"}
+            ),
+            _event(
+                "agent.call.completed", {"agentRole": "defender", "correlationId": "d"}
+            ),
+            _event(
+                "round.completed",
+                {
+                    "round": 1,
+                    "correlationId": "d",
+                    "caught": [{"reason": "命中"}],
+                    "risks": [],
+                    "fixed": [],
+                },
+            ),
         ],
     )
 

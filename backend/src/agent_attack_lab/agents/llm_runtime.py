@@ -30,7 +30,9 @@ def _role_prefix(role: str | None) -> str | None:
 
 def _selected_prefix(role: str | None) -> str:
     role_prefix = _role_prefix(role)
-    if role_prefix and any(os.getenv(role_prefix + name, "").strip() for name in _REQUIRED_CONFIG):
+    if role_prefix and any(
+        os.getenv(role_prefix + name, "").strip() for name in _REQUIRED_CONFIG
+    ):
         return role_prefix
     return "AGENT_LLM_"
 
@@ -102,7 +104,12 @@ async def complete_json(
                 response.raise_for_status()
                 content = response.json()["choices"][0]["message"]["content"]
             result = json.loads(content)
-            logger.info("model_call_completed role=%s duration_ms=%d attempt=%d", role or "shared", int((time.perf_counter() - started) * 1000), attempt + 1)
+            logger.info(
+                "model_call_completed role=%s duration_ms=%d attempt=%d",
+                role or "shared",
+                int((time.perf_counter() - started) * 1000),
+                attempt + 1,
+            )
             break
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             logger.warning(
@@ -112,7 +119,10 @@ async def complete_json(
                 attempt + 1,
                 type(exc).__name__,
             )
-            retryable = not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code >= 500
+            retryable = (
+                not isinstance(exc, httpx.HTTPStatusError)
+                or exc.response.status_code >= 500
+            )
             if attempt >= retries or not retryable:
                 raise LLMError(f"model request failed ({type(exc).__name__})") from None
     if not isinstance(result, dict):

@@ -73,10 +73,12 @@ def classify_owasp_llm_text(text: str) -> list[dict[str, str]]:
         for pattern in _CATEGORY_PATTERNS[category]:
             match = re.search(pattern, normalized, re.IGNORECASE)
             if match:
-                findings.append({
-                    "id": category,
-                    "title": title,
-                    "evidence": match.group(0),
-                })
+                findings.append(
+                    {
+                        "id": category,
+                        "title": title,
+                        "evidence": match.group(0),
+                    }
+                )
                 break
     return findings

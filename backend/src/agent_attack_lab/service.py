@@ -125,7 +125,9 @@ _cors_origin_regex = os.getenv(
     "AGENT_CORS_ORIGIN_REGEX",
     r"^https://[a-z0-9-]+\.trycloudflare\.com$",
 )
-_cloudflare_access_team_domain = os.getenv("CF_ACCESS_TEAM_DOMAIN", "").strip().rstrip("/")
+_cloudflare_access_team_domain = (
+    os.getenv("CF_ACCESS_TEAM_DOMAIN", "").strip().rstrip("/")
+)
 _cloudflare_access_audience = os.getenv("CF_ACCESS_AUDIENCE", "").strip()
 if bool(_cloudflare_access_team_domain) != bool(_cloudflare_access_audience):
     raise RuntimeError(
@@ -134,7 +136,9 @@ if bool(_cloudflare_access_team_domain) != bool(_cloudflare_access_audience):
 _cloudflare_access_configured = bool(
     _cloudflare_access_team_domain and _cloudflare_access_audience
 )
-_browser_auth_configured = bool(os.getenv("AGENT_BROWSER_PASSWORD", "")) or _cloudflare_access_configured
+_browser_auth_configured = (
+    bool(os.getenv("AGENT_BROWSER_PASSWORD", "")) or _cloudflare_access_configured
+)
 if _browser_auth_configured and "*" in _cors_origins:
     raise RuntimeError("启用浏览器会话时 AGENT_CORS_ORIGINS 必须使用精确来源")
 if (
@@ -150,12 +154,22 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
-    expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID", "X-Has-More", "X-Next-Sequence"],
+    expose_headers=[
+        "X-Total-Count",
+        "X-Request-ID",
+        "X-Battle-ID",
+        "X-Has-More",
+        "X-Next-Sequence",
+    ],
 )
 
-_frontend_dist = Path(__file__).resolve().parents[3] / "frontend" / "frontend-ui" / "dist"
+_frontend_dist = (
+    Path(__file__).resolve().parents[3] / "frontend" / "frontend-ui" / "dist"
+)
 if _frontend_dist.is_dir():
-    app.mount("/ui", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend-ui")
+    app.mount(
+        "/ui", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend-ui"
+    )
 
 
 class JsonRpcRequest(BaseModel):
@@ -243,7 +257,11 @@ _request_total_duration_ms = 0.0
 _request_max_duration_ms = 0.0
 _rate_limited_count = 0
 _api_key = os.getenv("AGENT_API_KEY", "").strip()
-_protect_read_routes = os.getenv("AGENT_PROTECT_READS", "0").strip().lower() in {"1", "true", "yes"}
+_protect_read_routes = os.getenv("AGENT_PROTECT_READS", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 _local_aic = os.getenv("AGENT_LOCAL_AIC", "").strip() or None
 _identity_binding_enabled = os.getenv(
     "AGENT_IDENTITY_BINDING_ENABLED", ""
@@ -292,10 +310,12 @@ _browser_session_ttl_seconds = min(
     86400,
 )
 _browser_cookie_name = "agent_browser_session"
-_browser_cookie_secure = os.getenv("AGENT_BROWSER_COOKIE_SECURE", "1").strip().lower() not in {
-    "0", "false", "no"
-}
-_browser_cookie_samesite = os.getenv("AGENT_BROWSER_COOKIE_SAMESITE", "lax").strip().lower()
+_browser_cookie_secure = os.getenv(
+    "AGENT_BROWSER_COOKIE_SECURE", "1"
+).strip().lower() not in {"0", "false", "no"}
+_browser_cookie_samesite = (
+    os.getenv("AGENT_BROWSER_COOKIE_SAMESITE", "lax").strip().lower()
+)
 if _browser_cookie_samesite not in {"lax", "strict", "none"}:
     _browser_cookie_samesite = "lax"
 if _browser_cookie_samesite == "none" and not _browser_cookie_secure:
@@ -322,8 +342,10 @@ _public_battle_rate_lock = Lock()
 def _request_id(request: Request) -> str:
     """Reuse a safe caller ID when supplied, otherwise create one locally."""
     candidate = request.headers.get("x-request-id", "").strip()
-    if candidate and len(candidate) <= 128 and all(
-        char.isalnum() or char in "-_.:" for char in candidate
+    if (
+        candidate
+        and len(candidate) <= 128
+        and all(char.isalnum() or char in "-_.:" for char in candidate)
     ):
         return candidate
     return f"req-{uuid.uuid4()}"
@@ -347,7 +369,11 @@ def _battle_fingerprint(payload: BattleRequest) -> str:
 
 @app.middleware("http")
 async def collect_request_metrics(request: Request, call_next: Any) -> Any:
-    global _request_count, _request_errors, _request_total_duration_ms, _request_max_duration_ms
+    global \
+        _request_count, \
+        _request_errors, \
+        _request_total_duration_ms, \
+        _request_max_duration_ms
     request_id = _request_id(request)
     request.state.request_id = request_id
     started = time.perf_counter()
@@ -398,7 +424,9 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
 def _check_api_key(request: Request) -> None:
     """Enable a simple deployment-time API key without affecting local development."""
     supplied = request.headers.get("x-api-key", "")
-    if _api_key and not hmac.compare_digest(supplied.encode("utf-8"), _api_key.encode("utf-8")):
+    if _api_key and not hmac.compare_digest(
+        supplied.encode("utf-8"), _api_key.encode("utf-8")
+    ):
         raise HTTPException(status_code=401, detail="缺少或无效的 API 密钥")
     if not _api_key and (_browser_password or _cloudflare_access_configured):
         raise HTTPException(status_code=401, detail="服务端 API 密钥未配置")
@@ -443,9 +471,18 @@ def _browser_origin_allowed(origin: str, request: Request | None = None) -> bool
         return False
     try:
         parsed_origin = urlsplit(origin)
-        if parsed_origin.scheme.lower() not in {"http", "https"} or not parsed_origin.netloc or parsed_origin.path not in ("", "/"):
+        if (
+            parsed_origin.scheme.lower() not in {"http", "https"}
+            or not parsed_origin.netloc
+            or parsed_origin.path not in ("", "/")
+        ):
             return False
-        if parsed_origin.query or parsed_origin.fragment or parsed_origin.username or parsed_origin.password:
+        if (
+            parsed_origin.query
+            or parsed_origin.fragment
+            or parsed_origin.username
+            or parsed_origin.password
+        ):
             return False
         peer_host = request.client.host if request.client else ""
         try:
@@ -455,8 +492,16 @@ def _browser_origin_allowed(origin: str, request: Request | None = None) -> bool
         request_host = request.headers.get("host", "")
         request_scheme = request.url.scheme
         if trusted_proxy:
-            request_host = request.headers.get("x-forwarded-host", request_host).split(",", 1)[0].strip()
-            request_scheme = request.headers.get("x-forwarded-proto", request_scheme).split(",", 1)[0].strip()
+            request_host = (
+                request.headers.get("x-forwarded-host", request_host)
+                .split(",", 1)[0]
+                .strip()
+            )
+            request_scheme = (
+                request.headers.get("x-forwarded-proto", request_scheme)
+                .split(",", 1)[0]
+                .strip()
+            )
         return (
             parsed_origin.scheme.lower() == request_scheme.lower()
             and parsed_origin.netloc.lower() == request_host.lower()
@@ -489,12 +534,16 @@ def _issue_browser_session() -> str:
     token = secrets.token_urlsafe(32)
     now = time.monotonic()
     with _browser_sessions_lock:
-        expired = [key for key, deadline in _browser_sessions.items() if deadline <= now]
+        expired = [
+            key for key, deadline in _browser_sessions.items() if deadline <= now
+        ]
         for key in expired:
             _browser_sessions.pop(key, None)
         if len(_browser_sessions) >= 10000:
             raise HTTPException(status_code=503, detail="浏览器会话容量已满")
-        _browser_sessions[_browser_session_digest(token)] = now + _browser_session_ttl_seconds
+        _browser_sessions[_browser_session_digest(token)] = (
+            now + _browser_session_ttl_seconds
+        )
     return token
 
 
@@ -529,7 +578,10 @@ def _check_browser_or_api_auth(request: Request) -> None:
         return
     if not _api_key and not _browser_password and not _cloudflare_access_configured:
         return
-    raise HTTPException(status_code=401, detail="需要有效的 API 密钥、Cloudflare Access 身份或浏览器登录会话")
+    raise HTTPException(
+        status_code=401,
+        detail="需要有效的 API 密钥、Cloudflare Access 身份或浏览器登录会话",
+    )
 
 
 def _browser_client_ip(request: Request) -> str:
@@ -658,12 +710,16 @@ def _bounded_event_data(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _event(battle_id: str, sequence: int, event_type: str, status: str, data: dict[str, Any]) -> dict[str, Any]:
+def _event(
+    battle_id: str, sequence: int, event_type: str, status: str, data: dict[str, Any]
+) -> dict[str, Any]:
     normalized_data = dict(data)
     normalized_data.setdefault("stageId", _event_stage_id(event_type, normalized_data))
     normalized_data.setdefault("round", normalized_data.get("round"))
     normalized_data.setdefault("layerIndex", normalized_data.get("layerIndex"))
-    normalized_data.setdefault("classification", _event_classification(event_type, normalized_data))
+    normalized_data.setdefault(
+        "classification", _event_classification(event_type, normalized_data)
+    )
     scores = normalized_data.get("scores")
     normalized_data["scores"] = scores if isinstance(scores, dict) else {}
     return {
@@ -739,7 +795,9 @@ def _record_audit_event(
             }
         )
     except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
-        logger.warning("Audit persistence failed event=%s error=%s", event_type, type(exc).__name__)
+        logger.warning(
+            "Audit persistence failed event=%s error=%s", event_type, type(exc).__name__
+        )
 
 
 def _mark_battle_terminal(battle_id: str, event_type: str, reason: str) -> None:
@@ -966,15 +1024,23 @@ def _insufficient_internal_score() -> dict[str, Any]:
     }
 
 
-def _battle_stats(record: dict[str, Any], events: list[dict[str, Any]] | None = None) -> dict[str, int]:
+def _battle_stats(
+    record: dict[str, Any], events: list[dict[str, Any]] | None = None
+) -> dict[str, int]:
     samples = record.get("attackerOut", {}).get("samples", [])
     defenses = record.get("defenderOut", [])
     return {
         "attackGenerated": len(samples),
-        "defenderDetected": sum(len(item.get("caught", [])) for item in defenses if isinstance(item, dict)),
-        "fixesSuggested": sum(len(item.get("fixed", [])) for item in defenses if isinstance(item, dict)),
+        "defenderDetected": sum(
+            len(item.get("caught", [])) for item in defenses if isinstance(item, dict)
+        ),
+        "fixesSuggested": sum(
+            len(item.get("fixed", [])) for item in defenses if isinstance(item, dict)
+        ),
         # TODO 战略检测口径：当前以 round.completed 事件计数。
-        "strategyChecks": sum(1 for event in (events or []) if event.get("type") == "round.completed"),
+        "strategyChecks": sum(
+            1 for event in (events or []) if event.get("type") == "round.completed"
+        ),
     }
 
 
@@ -1034,7 +1100,9 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             "running",
             {
                 "topic": payload.topic,
-                "attackerSource": "acp-pending" if acp_agent_configured("attacker") else "local-rule",
+                "attackerSource": "acp-pending"
+                if acp_agent_configured("attacker")
+                else "local-rule",
             },
         )
         await asyncio.sleep(0.8)
@@ -1077,7 +1145,9 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 "running",
                 {
                     "round": index,
-                    "defenderSource": "acp-pending" if acp_agent_configured("defender") else "local-rule",
+                    "defenderSource": "acp-pending"
+                    if acp_agent_configured("defender")
+                    else "local-rule",
                 },
             )
             await asyncio.sleep(0.8)
@@ -1111,34 +1181,50 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             verification = verify_round(sample, defense, mode=verification_mode)
             verifications.append(verification)
             if verification["verified"]:
-                add_event("attack.compromised", "completed", {
-                    "round": index,
-                    "targetAssetId": verification.get("targetAssetId"),
-                    "targetVerified": True,
-                    "verificationMode": verification["mode"],
-                    "simulated": verification["simulated"],
-                    "evidence": verification["evidence"],
-                    "correlationId": defense_call_id,
-                })
+                add_event(
+                    "attack.compromised",
+                    "completed",
+                    {
+                        "round": index,
+                        "targetAssetId": verification.get("targetAssetId"),
+                        "targetVerified": True,
+                        "verificationMode": verification["mode"],
+                        "simulated": verification["simulated"],
+                        "evidence": verification["evidence"],
+                        "correlationId": defense_call_id,
+                    },
+                )
         add_event(
             "defense.completed",
             "completed",
             {
                 "roundCount": len(defender_results),
-                "layerInterceptions": derive_layer_interceptions(payload.topic, defender_results),
+                "layerInterceptions": derive_layer_interceptions(
+                    payload.topic, defender_results
+                ),
             },
         )
         record["status"] = "completed"
-        record["verdict"] = aggregate_verdict(verification_mode, verifications, defender_results)
+        record["verdict"] = aggregate_verdict(
+            verification_mode, verifications, defender_results
+        )
         _battle_store.save(record)
         await asyncio.to_thread(_invalidate_leaderboard_cache)
-        add_event("battle.completed", "completed", {
-            "status": record["status"],
-            "verdict": record["verdict"],
-            "compromisedRounds": sum(1 for item in verifications if item["verified"]),
-            "interceptedRounds": sum(1 for item in defender_results if item.get("caught")),
-            "verificationMode": verification_mode,
-        })
+        add_event(
+            "battle.completed",
+            "completed",
+            {
+                "status": record["status"],
+                "verdict": record["verdict"],
+                "compromisedRounds": sum(
+                    1 for item in verifications if item["verified"]
+                ),
+                "interceptedRounds": sum(
+                    1 for item in defender_results if item.get("caught")
+                ),
+                "verificationMode": verification_mode,
+            },
+        )
         await asyncio.to_thread(_persist_internal_score, record)
     except Exception as exc:
         logger.exception("Battle %s failed", battle_id)
@@ -1172,7 +1258,11 @@ async def _lifespan(_app: FastAPI):
         if record["id"] in recovered_ids:
             continue
         recovered_ids.add(record["id"])
-        payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"], rounds=record.get("rounds", 3))
+        payload = BattleRequest(
+            difficulty=record["difficulty"],
+            topic=record["topic"],
+            rounds=record.get("rounds", 3),
+        )
         task = asyncio.create_task(_run_battle_with_tracking(record["id"], payload))
         _recovery_tasks.add(task)
         task.add_done_callback(_recovery_tasks.discard)
@@ -1200,9 +1290,16 @@ def index() -> dict[str, Any]:
         "service": "智能体攻防实验室",
         "status": "ok",
         "endpoints": [
-            "/health", "/metrics", "/battles", "/battles/{id}/events",
-            "/battles/{id}/report", "/leaderboard", "/agent/attack",
-            "/agent/defend", "/rpc", "/docs",
+            "/health",
+            "/metrics",
+            "/battles",
+            "/battles/{id}/events",
+            "/battles/{id}/report",
+            "/leaderboard",
+            "/agent/attack",
+            "/agent/defend",
+            "/rpc",
+            "/docs",
             "/external-cases",
             "/battles/{id}/audit",
         ],
@@ -1231,7 +1328,8 @@ def dashboard(
         raise
     topic_value = escape_html(topic or "通用安全测试", quote=True)
     selected_difficulty = difficulty or "mid"
-    return """<!doctype html>
+    return (
+        """<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -2281,7 +2379,20 @@ def dashboard(
     loadDashboardSummary();
   </script>
 </body>
-</html>""".replace('$("result").innerHTML = "', '$("result").innerHTML = \'').replace('</div>";\n', '</div>\';\n').replace('class="battle-head"', 'class=\\"battle-head\\"').replace('class="flow"', 'class=\\"flow\\"').replace('class="flow-step"', 'class=\\"flow-step\\"').replace('class="battle-summary"', 'class=\\"battle-summary\\"').replace('class="summary-item"', 'class=\\"summary-item\\"').replace('class="round-list"', 'class=\\"round-list\\"').replace(',""":"&quot;",', ',\\"":"&quot;",').replace("__INITIAL_TOPIC__", topic_value).replace("__LOW_CHECKED__", "checked" if selected_difficulty == "low" else "").replace("__MID_CHECKED__", "checked" if selected_difficulty == "mid" else "").replace("__HIGH_CHECKED__", "checked" if selected_difficulty == "high" else "")
+</html>""".replace('$("result").innerHTML = "', '$("result").innerHTML = \'')
+        .replace('</div>";\n', "</div>';\n")
+        .replace('class="battle-head"', 'class=\\"battle-head\\"')
+        .replace('class="flow"', 'class=\\"flow\\"')
+        .replace('class="flow-step"', 'class=\\"flow-step\\"')
+        .replace('class="battle-summary"', 'class=\\"battle-summary\\"')
+        .replace('class="summary-item"', 'class=\\"summary-item\\"')
+        .replace('class="round-list"', 'class=\\"round-list\\"')
+        .replace(',""":"&quot;",', ',\\"":"&quot;",')
+        .replace("__INITIAL_TOPIC__", topic_value)
+        .replace("__LOW_CHECKED__", "checked" if selected_difficulty == "low" else "")
+        .replace("__MID_CHECKED__", "checked" if selected_difficulty == "mid" else "")
+        .replace("__HIGH_CHECKED__", "checked" if selected_difficulty == "high" else "")
+    )
 
 
 @app.get("/health", summary="服务健康检查", tags=["核心接口"])
@@ -2315,7 +2426,9 @@ def browser_login_page(
     ):
         destination = "/dashboard"
     if _browser_password and _has_browser_session(request):
-        return RedirectResponse(destination, status_code=303, headers={"Cache-Control": "no-store"})
+        return RedirectResponse(
+            destination, status_code=303, headers={"Cache-Control": "no-store"}
+        )
     login_enabled = bool(_browser_password)
     disabled_message = (
         "浏览器密码登录尚未启用，请联系服务管理员配置。"
@@ -2399,14 +2512,18 @@ def browser_login_page(
     page = page.replace("__NEXT__", escape_html(destination, quote=True))
     page = page.replace("__MESSAGE__", escape_html(disabled_message))
     page = page.replace("__FORM_CONTENT__", form_content)
-    return HTMLResponse(page, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    return HTMLResponse(
+        page, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+    )
 
 
 @app.get("/auth/session", summary="查询浏览器登录状态", tags=["浏览器鉴权"])
 def browser_session_status(request: Request, response: Response) -> dict[str, bool]:
     response.headers["Cache-Control"] = "no-store"
     authenticated = bool(_browser_password) and _has_browser_session(request)
-    if _verify_cloudflare_access_jwt(request.headers.get("cf-access-jwt-assertion", "")):
+    if _verify_cloudflare_access_jwt(
+        request.headers.get("cf-access-jwt-assertion", "")
+    ):
         authenticated = True
     return {
         "enabled": bool(_browser_password) or _cloudflare_access_configured,
@@ -2465,9 +2582,15 @@ def delete_browser_session(request: Request, response: Response) -> dict[str, bo
     return {"authenticated": False}
 
 
-@app.get("/metrics", include_in_schema=False, dependencies=[Depends(_metrics_auth_dependency)])
+@app.get(
+    "/metrics",
+    include_in_schema=False,
+    dependencies=[Depends(_metrics_auth_dependency)],
+)
 def metrics() -> dict[str, Any]:
-    average_latency = _request_total_duration_ms / _request_count if _request_count else 0
+    average_latency = (
+        _request_total_duration_ms / _request_count if _request_count else 0
+    )
     acp = rpc_metrics()
     return {
         "service": "智能体攻防实验室",
@@ -2511,21 +2634,35 @@ def list_admin_samples(
     offset: int = Query(default=0, ge=0),
 ) -> list[dict[str, Any]]:
     _check_browser_or_api_auth(request)
-    items = _battle_store.list_admin_samples(query=q.strip() if q else None, limit=limit, offset=offset)
+    items = _battle_store.list_admin_samples(
+        query=q.strip() if q else None, limit=limit, offset=offset
+    )
     response.headers["X-Total-Count"] = str(len(items))
     return items
 
 
-@app.post("/admin/samples", status_code=201, summary="新增管理员攻击样本", tags=["管理员资源"])
-def create_admin_sample(payload: AdminSampleRequest, request: Request) -> dict[str, Any]:
+@app.post(
+    "/admin/samples", status_code=201, summary="新增管理员攻击样本", tags=["管理员资源"]
+)
+def create_admin_sample(
+    payload: AdminSampleRequest, request: Request
+) -> dict[str, Any]:
     _check_browser_or_api_auth(request)
     item = _battle_store.save_admin_sample(payload.model_dump())
-    _admin_write_audit(request, "admin.sample.created", {"sampleId": item["id"], "topic": item["topic"]})
+    _admin_write_audit(
+        request,
+        "admin.sample.created",
+        {"sampleId": item["id"], "topic": item["topic"]},
+    )
     return item
 
 
-@app.patch("/admin/samples/{sample_id}", summary="编辑管理员攻击样本", tags=["管理员资源"])
-def update_admin_sample(sample_id: str, payload: AdminSampleRequest, request: Request) -> dict[str, Any]:
+@app.patch(
+    "/admin/samples/{sample_id}", summary="编辑管理员攻击样本", tags=["管理员资源"]
+)
+def update_admin_sample(
+    sample_id: str, payload: AdminSampleRequest, request: Request
+) -> dict[str, Any]:
     _check_browser_or_api_auth(request)
     item = _battle_store.update_admin_sample(sample_id, payload.model_dump())
     if item is None:
@@ -2534,7 +2671,12 @@ def update_admin_sample(sample_id: str, payload: AdminSampleRequest, request: Re
     return item
 
 
-@app.delete("/admin/samples/{sample_id}", status_code=204, summary="删除管理员攻击样本", tags=["管理员资源"])
+@app.delete(
+    "/admin/samples/{sample_id}",
+    status_code=204,
+    summary="删除管理员攻击样本",
+    tags=["管理员资源"],
+)
 def delete_admin_sample(sample_id: str, request: Request) -> Response:
     _check_browser_or_api_auth(request)
     if not _battle_store.delete_admin_sample(sample_id):
@@ -2552,16 +2694,22 @@ def list_admin_rules(
     offset: int = Query(default=0, ge=0),
 ) -> list[dict[str, Any]]:
     _check_browser_or_api_auth(request)
-    items = _battle_store.list_admin_rules(query=q.strip() if q else None, limit=limit, offset=offset)
+    items = _battle_store.list_admin_rules(
+        query=q.strip() if q else None, limit=limit, offset=offset
+    )
     response.headers["X-Total-Count"] = str(len(items))
     return items
 
 
-@app.post("/admin/rules", status_code=201, summary="新增管理员防守规则", tags=["管理员资源"])
+@app.post(
+    "/admin/rules", status_code=201, summary="新增管理员防守规则", tags=["管理员资源"]
+)
 def create_admin_rule(payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
     _check_browser_or_api_auth(request)
     item = _battle_store.save_admin_rule(payload.model_dump())
-    _admin_write_audit(request, "admin.rule.created", {"ruleId": item["id"], "name": item["name"]})
+    _admin_write_audit(
+        request, "admin.rule.created", {"ruleId": item["id"], "name": item["name"]}
+    )
     return item
 
 
@@ -2590,7 +2738,9 @@ async def propose_admin_rule_candidate(
 
 
 @app.patch("/admin/rules/{rule_id}", summary="编辑管理员防守规则", tags=["管理员资源"])
-def update_admin_rule(rule_id: str, payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
+def update_admin_rule(
+    rule_id: str, payload: AdminRuleRequest, request: Request
+) -> dict[str, Any]:
     _check_browser_or_api_auth(request)
     item = _battle_store.update_admin_rule(rule_id, payload.model_dump())
     if item is None:
@@ -2599,7 +2749,12 @@ def update_admin_rule(rule_id: str, payload: AdminRuleRequest, request: Request)
     return item
 
 
-@app.delete("/admin/rules/{rule_id}", status_code=204, summary="删除管理员防守规则", tags=["管理员资源"])
+@app.delete(
+    "/admin/rules/{rule_id}",
+    status_code=204,
+    summary="删除管理员防守规则",
+    tags=["管理员资源"],
+)
 def delete_admin_rule(rule_id: str, request: Request) -> Response:
     _check_browser_or_api_auth(request)
     if not _battle_store.delete_admin_rule(rule_id):
@@ -2619,7 +2774,11 @@ def list_admin_audit_logs(
 ) -> list[dict[str, Any]]:
     _check_browser_or_api_auth(request)
     return _battle_store.list_audit_events_filtered(
-        from_time=from_time, to_time=to_time, actor_role=user, event_type=operation, limit=limit,
+        from_time=from_time,
+        to_time=to_time,
+        actor_role=user,
+        event_type=operation,
+        limit=limit,
     )
 
 
@@ -2657,7 +2816,9 @@ def dashboard_summary() -> dict[str, int]:
     tags=["外部案例"],
 )
 def list_external_cases(
-    q: str | None = Query(default=None, max_length=200, description="按 CVE、标题、厂商或产品检索"),
+    q: str | None = Query(
+        default=None, max_length=200, description="按 CVE、标题、厂商或产品检索"
+    ),
     vendor: str | None = Query(default=None, max_length=200),
     product: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=50, ge=1, le=200),
@@ -2670,9 +2831,12 @@ def list_external_cases(
         "limit": limit,
         "offset": offset,
     }
-    cache_key = "agent-attack-lab:v1:external-cases:" + hashlib.sha256(
-        json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    cache_key = (
+        "agent-attack-lab:v1:external-cases:"
+        + hashlib.sha256(
+            json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+    )
     cached = _redis_cache.get_json(cache_key)
     if isinstance(cached, dict):
         return cached
@@ -2726,10 +2890,14 @@ async def create_battle(
             existing = _battle_store.get_idempotency(idempotency_key)
             if existing is not None:
                 if existing["fingerprint"] != fingerprint:
-                    raise HTTPException(status_code=409, detail="Idempotency-Key 已用于不同请求")
+                    raise HTTPException(
+                        status_code=409, detail="Idempotency-Key 已用于不同请求"
+                    )
                 existing_record = _battle_store.get(existing["battleId"])
                 if existing_record is None:
-                    raise HTTPException(status_code=409, detail="幂等记录对应的战局已不存在")
+                    raise HTTPException(
+                        status_code=409, detail="幂等记录对应的战局已不存在"
+                    )
                 _record_audit_event(
                     "battle.idempotency.reused",
                     status="reused",
@@ -2763,7 +2931,10 @@ async def create_battle(
             request_id=request.state.request_id,
             battle_id=battle_id,
             actor_role="public",
-            data={"difficulty": payload.difficulty, "idempotencyKeyPresent": bool(idempotency_key)},
+            data={
+                "difficulty": payload.difficulty,
+                "idempotencyKeyPresent": bool(idempotency_key),
+            },
         )
         _battle_store.save_event(
             _event(
@@ -2775,8 +2946,12 @@ async def create_battle(
                     "topic": payload.topic,
                     "difficulty": payload.difficulty,
                     "rounds": payload.rounds,
-                    "attackerSource": "acp-pending" if acp_agent_configured("attacker") else "local-rule",
-                    "defenderSource": "acp-pending" if acp_agent_configured("defender") else "local-rule",
+                    "attackerSource": "acp-pending"
+                    if acp_agent_configured("attacker")
+                    else "local-rule",
+                    "defenderSource": "acp-pending"
+                    if acp_agent_configured("defender")
+                    else "local-rule",
                 },
             )
         )
@@ -2798,8 +2973,12 @@ async def create_battle(
             "topic": payload.topic,
             "difficulty": payload.difficulty,
             "rounds": payload.rounds,
-            "attackerSource": "acp-pending" if acp_agent_configured("attacker") else "local-rule",
-            "defenderSource": "acp-pending" if acp_agent_configured("defender") else "local-rule",
+            "attackerSource": "acp-pending"
+            if acp_agent_configured("attacker")
+            else "local-rule",
+            "defenderSource": "acp-pending"
+            if acp_agent_configured("defender")
+            else "local-rule",
         },
     )
     add_event(
@@ -2807,7 +2986,9 @@ async def create_battle(
         "completed",
         {
             "topic": payload.topic,
-            "attackerSource": "acp-pending" if acp_agent_configured("attacker") else "local-rule",
+            "attackerSource": "acp-pending"
+            if acp_agent_configured("attacker")
+            else "local-rule",
         },
     )
     attack_result: dict[str, Any] = {"samples": []}
@@ -2900,15 +3081,19 @@ async def create_battle(
             },
         )
         if verification["verified"]:
-            add_event("attack.compromised", "completed", {
-                "round": index,
-                "targetAssetId": verification.get("targetAssetId"),
-                "targetVerified": True,
-                "verificationMode": verification["mode"],
-                "simulated": verification["simulated"],
-                "evidence": verification["evidence"],
-                "correlationId": correlation_id,
-            })
+            add_event(
+                "attack.compromised",
+                "completed",
+                {
+                    "round": index,
+                    "targetAssetId": verification.get("targetAssetId"),
+                    "targetVerified": True,
+                    "verificationMode": verification["mode"],
+                    "simulated": verification["simulated"],
+                    "evidence": verification["evidence"],
+                    "correlationId": correlation_id,
+                },
+            )
     add_event(
         "defense.completed",
         "completed",
@@ -2916,7 +3101,9 @@ async def create_battle(
             "roundCount": len(defense_results),
             "rounds": payload.rounds,
             "verificationMode": verification_mode,
-            "layerInterceptions": derive_layer_interceptions(payload.topic, defense_results),
+            "layerInterceptions": derive_layer_interceptions(
+                payload.topic, defense_results
+            ),
         },
     )
     record = BattleRecord(
@@ -2933,13 +3120,19 @@ async def create_battle(
     )
     _battle_store.save(record.model_dump())
     await asyncio.to_thread(_invalidate_leaderboard_cache)
-    add_event("battle.completed", "completed", {
-        "status": record.status,
-        "verdict": record.verdict,
-        "compromisedRounds": sum(1 for item in verifications if item["verified"]),
-        "interceptedRounds": sum(1 for item in defense_results if item.get("caught")),
-        "verificationMode": verification_mode,
-    })
+    add_event(
+        "battle.completed",
+        "completed",
+        {
+            "status": record.status,
+            "verdict": record.verdict,
+            "compromisedRounds": sum(1 for item in verifications if item["verified"]),
+            "interceptedRounds": sum(
+                1 for item in defense_results if item.get("caught")
+            ),
+            "verificationMode": verification_mode,
+        },
+    )
     for event in events:
         _battle_store.save_event(event)
     _persist_internal_score(record.model_dump())
@@ -2981,7 +3174,11 @@ def retry_battle(
             {"topic": record["topic"], "difficulty": record["difficulty"]},
         )
     )
-    payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"], rounds=record.get("rounds", 3))
+    payload = BattleRequest(
+        difficulty=record["difficulty"],
+        topic=record["topic"],
+        rounds=record.get("rounds", 3),
+    )
     _schedule_battle_task(background_tasks, battle_id, payload)
     return BattleRecord.model_validate(record)
 
@@ -3079,16 +3276,23 @@ def get_battle_events(
     limit: int = Query(default=200, ge=1, le=1000, description="每页最多返回 1000 条"),
     after_sequence: int = Query(default=0, ge=0, description="返回序号大于此值的事件"),
     event_type: str | None = Query(default=None, min_length=1, max_length=64),
-    from_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),  # noqa: B008
-    to_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),  # noqa: B008
-    q: str | None = Query(default=None, max_length=200, description="搜索事件类型和原始事件数据"),
+    from_time: datetime | None = Query(
+        default=None, description="包含此时刻，ISO 8601"
+    ),
+    to_time: datetime | None = Query(default=None, description="包含此时刻，ISO 8601"),
+    q: str | None = Query(
+        default=None, max_length=200, description="搜索事件类型和原始事件数据"
+    ),
 ) -> list[BattleEvent]:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
+
     def utc_iso(value: datetime | None) -> str | None:
         if value is None:
             return None
-        normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        normalized = (
+            value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        )
         return normalized.isoformat()
 
     normalized_from = utc_iso(from_time)
@@ -3114,11 +3318,19 @@ def get_battle_events(
     return [BattleEvent.model_validate(item) for item in page]
 
 
-@app.get("/battles/{battle_id}/replay", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
+@app.get(
+    "/battles/{battle_id}/replay",
+    include_in_schema=False,
+    dependencies=[Depends(_read_auth_dependency)],
+)
 def replay_battle(battle_id: str) -> dict[str, Any]:
     if _battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    return {"battleId": battle_id, "events": _battle_store.list_events(battle_id), "mode": "replay"}
+    return {
+        "battleId": battle_id,
+        "events": _battle_store.list_events(battle_id),
+        "mode": "replay",
+    }
 
 
 @app.get(
@@ -3147,7 +3359,9 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
     events = _battle_store.list_events(battle_id)
     grouped: dict[int, dict[str, Any]] = {}
     call_durations = {
-        (event.get("data") or {}).get("correlationId"): (event.get("data") or {}).get("durationMs")
+        (event.get("data") or {}).get("correlationId"): (event.get("data") or {}).get(
+            "durationMs"
+        )
         for event in events
         if event.get("type") in {"agent.call.completed", "agent.call.failed"}
         and isinstance((event.get("data") or {}).get("correlationId"), str)
@@ -3158,7 +3372,7 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         value = event.get("data", {}).get("round")
         try:
             number = int(value)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
         return number if number > 0 else None
 
@@ -3166,7 +3380,20 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         number = round_number(event)
         if number is None:
             continue
-        item = grouped.setdefault(number, {"round": number, "status": "running", "sample": None, "caught": [], "risks": [], "fixed": [], "startedAt": None, "finishedAt": None, "durationMs": None})
+        item = grouped.setdefault(
+            number,
+            {
+                "round": number,
+                "status": "running",
+                "sample": None,
+                "caught": [],
+                "risks": [],
+                "fixed": [],
+                "startedAt": None,
+                "finishedAt": None,
+                "durationMs": None,
+            },
+        )
         event_type = event.get("type")
         data = event.get("data") or {}
         if event_type == "round.started":
@@ -3194,40 +3421,62 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
                 item["arbiterReview"] = data["arbiterReview"]
             if isinstance(data.get("durationMs"), (int, float)):
                 item["durationMs"] = round(data["durationMs"])
-            elif isinstance(call_durations.get(data.get("correlationId")), (int, float)):
+            elif isinstance(
+                call_durations.get(data.get("correlationId")), (int, float)
+            ):
                 item["durationMs"] = round(call_durations[data["correlationId"]])
 
     samples = record.get("attackerOut", {}).get("samples", [])
     defenses = record.get("defenderOut", [])
     for index, sample in enumerate(samples, start=1):
-        item = grouped.setdefault(index, {"round": index, "status": "completed" if index <= len(defenses) else "pending", "sample": None, "caught": [], "risks": [], "fixed": [], "startedAt": None, "finishedAt": None, "durationMs": None})
+        item = grouped.setdefault(
+            index,
+            {
+                "round": index,
+                "status": "completed" if index <= len(defenses) else "pending",
+                "sample": None,
+                "caught": [],
+                "risks": [],
+                "fixed": [],
+                "startedAt": None,
+                "finishedAt": None,
+                "durationMs": None,
+            },
+        )
         item["sample"] = item["sample"] if item["sample"] is not None else sample
         if index <= len(defenses):
             defense = defenses[index - 1] or {}
             for key in ("caught", "risks", "fixed"):
                 if not item[key] and isinstance(defense.get(key), list):
                     item[key] = defense[key]
-            if "arbiterReview" not in item and isinstance(defense.get("arbiterReview"), dict):
+            if "arbiterReview" not in item and isinstance(
+                defense.get("arbiterReview"), dict
+            ):
                 item["arbiterReview"] = defense["arbiterReview"]
 
     def duration_from_timestamps(item: dict[str, Any]) -> None:
-        if item["durationMs"] is not None or not item["startedAt"] or not item["finishedAt"]:
+        if (
+            item["durationMs"] is not None
+            or not item["startedAt"]
+            or not item["finishedAt"]
+        ):
             return
         try:
             started = datetime.fromisoformat(str(item["startedAt"]))
             finished = datetime.fromisoformat(str(item["finishedAt"]))
-            item["durationMs"] = max(0, round((finished - started).total_seconds() * 1000))
-        except (TypeError, ValueError):
+            item["durationMs"] = max(
+                0, round((finished - started).total_seconds() * 1000)
+            )
+        except TypeError, ValueError:
             item["durationMs"] = None
 
-    round_scores = {
-        item["round"]: item
-        for item in score_battle_rounds(record, events)
-    }
+    round_scores = {item["round"]: item for item in score_battle_rounds(record, events)}
     for item in grouped.values():
         duration_from_timestamps(item)
         defense = {key: item[key] for key in ("caught", "risks", "fixed")}
-        item["layerInterceptions"] = derive_layer_interceptions(record["topic"], [defense])
+        item["layerInterceptions"] = derive_layer_interceptions(
+            record["topic"], [defense]
+        )
         scored_round = round_scores.get(item["round"])
         if scored_round is None:
             item["attacker"] = _insufficient_internal_score()["attacker"]
@@ -3254,7 +3503,9 @@ def _scores(record: dict[str, Any]) -> tuple[int, int]:
     samples = record["attackerOut"].get("samples", [])
     defenses = record.get("defenderOut", [])
     severity_points = {"low": 10, "medium": 20, "high": 30}
-    attacker_score = sum(severity_points.get(sample.get("severity", "low"), 10) for sample in samples)
+    attacker_score = sum(
+        severity_points.get(sample.get("severity", "low"), 10) for sample in samples
+    )
     defender_score = sum(
         len(item.get("caught", [])) * 10 + len(item.get("fixed", [])) * 5
         for item in defenses
@@ -3300,18 +3551,23 @@ def _markdown_report(
         "",
     ]
     if report_summary is not None:
-        lines.extend([
-            "## LLM 战报总结",
-            "",
-            str(report_summary.get("summary", "")),
-            "",
-            f"- 结果来源：{report_summary.get('agentSource', 'unknown')}",
-            f"- 需要人工复核：{'是' if report_summary.get('needsHumanReview') else '否'}",
-            *[f"- 风险：{item}" for item in report_summary.get("keyRisks", [])],
-            *[f"- 证据：`{item}`" for item in report_summary.get("evidence", [])],
-            *[f"- 建议：{item}" for item in report_summary.get("recommendations", [])],
-            "",
-        ])
+        lines.extend(
+            [
+                "## LLM 战报总结",
+                "",
+                str(report_summary.get("summary", "")),
+                "",
+                f"- 结果来源：{report_summary.get('agentSource', 'unknown')}",
+                f"- 需要人工复核：{'是' if report_summary.get('needsHumanReview') else '否'}",
+                *[f"- 风险：{item}" for item in report_summary.get("keyRisks", [])],
+                *[f"- 证据：`{item}`" for item in report_summary.get("evidence", [])],
+                *[
+                    f"- 建议：{item}"
+                    for item in report_summary.get("recommendations", [])
+                ],
+                "",
+            ]
+        )
     lines.extend(["## 对抗过程", ""])
     samples = record["attackerOut"].get("samples", [])
     defenses = record.get("defenderOut", [])
@@ -3375,7 +3631,11 @@ async def _report_summary_for(
     return summary
 
 
-@app.get("/battles/{battle_id}/report", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
+@app.get(
+    "/battles/{battle_id}/report",
+    include_in_schema=False,
+    dependencies=[Depends(_read_auth_dependency)],
+)
 @app.get(
     "/reports/{battle_id}",
     summary="查看或下载战报",
@@ -3398,7 +3658,9 @@ async def battle_report(
             _markdown_report(
                 record,
                 events,
-                stored_internal_score if stored_internal_score is not None else _insufficient_internal_score(),
+                stored_internal_score
+                if stored_internal_score is not None
+                else _insufficient_internal_score(),
                 report_summary,
             ),
             media_type="text/markdown; charset=utf-8",
@@ -3410,7 +3672,9 @@ async def battle_report(
         "battle": record,
         "events": events,
         "scores": {"attacker": attacker_score, "defender": defender_score},
-        "internalScore": stored_internal_score if stored_internal_score is not None else _insufficient_internal_score(),
+        "internalScore": stored_internal_score
+        if stored_internal_score is not None
+        else _insufficient_internal_score(),
         "summary": report_summary,
     }
 
@@ -3443,20 +3707,24 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
     stored_scores = _battle_store.list_scores([record["id"] for record in records])
     for record in records:
         score = stored_scores.get(record["id"]) or _insufficient_internal_score()
-        items.append({
-            "battleId": record["id"],
-            "topic": record["topic"],
-            "difficulty": record["difficulty"],
-            "status": record["status"],
-            "createdAt": record["createdAt"],
-            **score,
-        })
+        items.append(
+            {
+                "battleId": record["id"],
+                "topic": record["topic"],
+                "difficulty": record["difficulty"],
+                "status": record["status"],
+                "createdAt": record["createdAt"],
+                **score,
+            }
+        )
     attacker_scores = [
-        item["attacker"]["score"] for item in items
+        item["attacker"]["score"]
+        for item in items
         if isinstance(item["attacker"]["score"], (int, float))
     ]
     defender_scores = [
-        item["defender"]["score"] for item in items
+        item["defender"]["score"]
+        for item in items
         if isinstance(item["defender"]["score"], (int, float))
     ]
     return {
@@ -3464,12 +3732,16 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
         "attacker": {
             "scoredBattleCount": len(attacker_scores),
             "insufficientEvidenceCount": len(items) - len(attacker_scores),
-            "averageScore": round(sum(attacker_scores) / len(attacker_scores), 1) if attacker_scores else None,
+            "averageScore": round(sum(attacker_scores) / len(attacker_scores), 1)
+            if attacker_scores
+            else None,
         },
         "defender": {
             "scoredBattleCount": len(defender_scores),
             "insufficientEvidenceCount": len(items) - len(defender_scores),
-            "averageScore": round(sum(defender_scores) / len(defender_scores), 1) if defender_scores else None,
+            "averageScore": round(sum(defender_scores) / len(defender_scores), 1)
+            if defender_scores
+            else None,
         },
         "items": items,
     }
@@ -3509,8 +3781,14 @@ def leaderboard() -> dict[str, Any]:
     return result
 
 
-@app.get("/battles/{battle_id}/events/stream", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
-async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> StreamingResponse:
+@app.get(
+    "/battles/{battle_id}/events/stream",
+    include_in_schema=False,
+    dependencies=[Depends(_read_auth_dependency)],
+)
+async def event_stream(
+    battle_id: str, follow: bool = Query(default=False)
+) -> StreamingResponse:
     if await asyncio.to_thread(_battle_store.get, battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
 
@@ -3525,7 +3803,10 @@ async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> S
             for event in events:
                 yield f"id: {event['id']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
                 after_sequence = event["sequence"]
-            terminal = any(event["type"] in {"battle.completed", "battle.failed"} for event in events)
+            terminal = any(
+                event["type"] in {"battle.completed", "battle.failed"}
+                for event in events
+            )
             if not follow or terminal:
                 break
             attempts += 1
@@ -3538,7 +3819,9 @@ async def event_stream(battle_id: str, follow: bool = Query(default=False)) -> S
 @app.websocket("/ws/battles/{battle_id}")
 async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
     if _protect_read_routes and _api_key:
-        supplied_key = websocket.headers.get("x-api-key") or websocket.query_params.get("api_key")
+        supplied_key = websocket.headers.get("x-api-key") or websocket.query_params.get(
+            "api_key"
+        )
         if supplied_key != _api_key:
             await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
             return
@@ -3549,12 +3832,19 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
     sent = 0
     try:
         for _ in range(60):
-            events = await asyncio.to_thread(_battle_store.list_events_after, battle_id, sent)
+            events = await asyncio.to_thread(
+                _battle_store.list_events_after, battle_id, sent
+            )
             for event in events:
                 await websocket.send_json(event)
                 sent = event["sequence"]
-            if any(event["type"] in {"battle.completed", "battle.failed"} for event in events):
-                await websocket.send_json({"type": "stream.completed", "battleId": battle_id})
+            if any(
+                event["type"] in {"battle.completed", "battle.failed"}
+                for event in events
+            ):
+                await websocket.send_json(
+                    {"type": "stream.completed", "battleId": battle_id}
+                )
                 break
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
@@ -3599,7 +3889,7 @@ async def _aip_start(command: TaskCommand, task: TaskResult | None) -> TaskResul
             parsed = json.loads(_command_text(command))
             if isinstance(parsed, dict):
                 payload = parsed
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             payload = {"topic": _command_text(command)}
 
     action = command_params.get("action")
@@ -3638,7 +3928,9 @@ async def rpc(request: Request) -> dict[str, Any]:
     """JSON-RPC endpoint supporting both AIP ``rpc`` and simple agent methods."""
     body = await request.json()
     if body.get("method") == "rpc":
-        response = await handle_rpc_request(request, _aip_handlers, **_aip_server_options)
+        response = await handle_rpc_request(
+            request, _aip_handlers, **_aip_server_options
+        )
         return response.model_dump(by_alias=True, exclude_none=True)
 
     parsed_request = JsonRpcRequest.model_validate(body)
@@ -3661,4 +3953,3 @@ async def rpc(request: Request) -> dict[str, Any]:
             "error": {"code": -32602, "message": "Invalid params", "data": str(exc)},
         }
     return {"jsonrpc": "2.0", "id": parsed_request.id, "result": result}
-

@@ -69,7 +69,9 @@ def build_defender_knowledge(
             continue
         item: dict[str, str] = {}
         for key in ("id", "name", "condition", "action"):
-            value = _text(record.get(key), limit=200 if key != "condition" else _MAX_TEXT)
+            value = _text(
+                record.get(key), limit=200 if key != "condition" else _MAX_TEXT
+            )
             if value is not None:
                 item[key] = value
         if item.get("condition"):

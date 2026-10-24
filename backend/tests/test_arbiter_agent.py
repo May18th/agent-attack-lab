@@ -23,11 +23,13 @@ def _defense() -> dict[str, object]:
 
 
 def test_local_arbiter_is_evidence_gated() -> None:
-    result = asyncio.run(arbiter.review_round(
-        _sample(),
-        _defense(),
-        {"verified": False, "mode": "off", "evidence": []},
-    ))
+    result = asyncio.run(
+        arbiter.review_round(
+            _sample(),
+            _defense(),
+            {"verified": False, "mode": "off", "evidence": []},
+        )
+    )
 
     assert result == {
         "verdict": "undetermined",
@@ -54,11 +56,13 @@ def test_arbiter_model_result_requires_exact_sample_evidence(monkeypatch) -> Non
     monkeypatch.setenv("AGENT_ARBITER_LLM_ENABLED", "1")
     monkeypatch.setattr(arbiter, "is_configured", lambda **_kwargs: True)
     monkeypatch.setattr(arbiter, "complete_json", fake_complete)
-    result = asyncio.run(arbiter.review_round(
-        _sample(),
-        _defense(),
-        {"verified": False, "mode": "simulated", "evidence": []},
-    ))
+    result = asyncio.run(
+        arbiter.review_round(
+            _sample(),
+            _defense(),
+            {"verified": False, "mode": "simulated", "evidence": []},
+        )
+    )
 
     assert result["verdict"] == "defender_won"
     assert result["agentMode"] == "llm"
@@ -73,11 +77,17 @@ def test_arbiter_invalid_model_evidence_falls_back(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_ARBITER_LLM_ENABLED", "1")
     monkeypatch.setattr(arbiter, "is_configured", lambda **_kwargs: True)
     monkeypatch.setattr(arbiter, "complete_json", invalid)
-    result = asyncio.run(arbiter.review_round(
-        _sample(),
-        _defense(),
-        {"verified": True, "mode": "simulated", "evidence": [{"ruleId": "OWASP-LLM01-LLM"}]},
-    ))
+    result = asyncio.run(
+        arbiter.review_round(
+            _sample(),
+            _defense(),
+            {
+                "verified": True,
+                "mode": "simulated",
+                "evidence": [{"ruleId": "OWASP-LLM01-LLM"}],
+            },
+        )
+    )
 
     assert result["verdict"] == "attacker_won"
     assert result["agentMode"] == "local-rule-fallback"

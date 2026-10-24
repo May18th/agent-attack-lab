@@ -41,3 +41,9 @@ build-backend = "uv_build"
 dev = [
     "ruff>=0.17.2",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI declares Query/Depends as parameter defaults by design, so B008
+# would fire on nearly every route; an inline noqa breaks as soon as the
+# formatter re-wraps the call, so ignore it for the router module instead.
+"src/agent_attack_lab/service.py" = ["B008"]

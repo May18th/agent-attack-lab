@@ -28,8 +28,18 @@ def test_import_preserves_primary_provenance_and_is_idempotent(tmp_path: Path) -
     database = tmp_path / "external.sqlite3"
     payload = json.dumps(catalog, sort_keys=True).encode()
 
-    first = import_catalog(database, payload=payload, catalog=catalog, source_url="https://example.invalid/feed.json")
-    second = import_catalog(database, payload=payload, catalog=catalog, source_url="https://example.invalid/feed.json")
+    first = import_catalog(
+        database,
+        payload=payload,
+        catalog=catalog,
+        source_url="https://example.invalid/feed.json",
+    )
+    second = import_catalog(
+        database,
+        payload=payload,
+        catalog=catalog,
+        source_url="https://example.invalid/feed.json",
+    )
 
     assert first["imported"] == 1
     assert second["totalCases"] == 1
@@ -68,7 +78,12 @@ def test_validation_rejects_provenance_mismatch(tmp_path: Path) -> None:
     }
     database = tmp_path / "external.sqlite3"
     payload = json.dumps(catalog, sort_keys=True).encode()
-    import_catalog(database, payload=payload, catalog=catalog, source_url="https://example.invalid/feed.json")
+    import_catalog(
+        database,
+        payload=payload,
+        catalog=catalog,
+        source_url="https://example.invalid/feed.json",
+    )
 
     import sqlite3
 

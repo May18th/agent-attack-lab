@@ -43,27 +43,46 @@ def task_result(data: dict[str, object]) -> TaskResult:
     )
 
 
-def test_attacker_uses_aip_start_and_parses_product(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_client = FakeAipClient(task_result({"samples": [{"type": "defect", "content": "x"}], "agentMode": "llm"}))
+def test_attacker_uses_aip_start_and_parses_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = FakeAipClient(
+        task_result(
+            {"samples": [{"type": "defect", "content": "x"}], "agentMode": "llm"}
+        )
+    )
     monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
     monkeypatch.setattr(acp_agents, "AipRpcClient", lambda **_: fake_client)
 
-    result = asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "test"}))
+    result = asyncio.run(
+        acp_agents.call_attacker({"difficulty": "low", "topic": "test"})
+    )
 
-    assert result == {"samples": [{"type": "defect", "content": "x"}], "agentMode": "llm", "agentSource": "acp-llm"}
-    assert json.loads(fake_client.request["user_input"]) == {"difficulty": "low", "topic": "test"}
+    assert result == {
+        "samples": [{"type": "defect", "content": "x"}],
+        "agentMode": "llm",
+        "agentSource": "acp-llm",
+    }
+    assert json.loads(fake_client.request["user_input"]) == {
+        "difficulty": "low",
+        "topic": "test",
+    }
     assert fake_client.request["session_id"].startswith("session-")
     assert fake_client.closed
 
 
-def test_task_polling_uses_capped_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_task_polling_uses_capped_exponential_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     completed = task_result({"samples": []})
-    working = completed.model_copy(update={
-        "status": TaskStatus(
-            state=TaskState.Working,
-            stateChangedAt="2026-10-07T00:00:00+00:00",
-        )
-    })
+    working = completed.model_copy(
+        update={
+            "status": TaskStatus(
+                state=TaskState.Working,
+                stateChangedAt="2026-10-07T00:00:00+00:00",
+            )
+        }
+    )
 
     class PollingClient(FakeAipClient):
         def __init__(self) -> None:
@@ -87,7 +106,9 @@ def test_task_polling_uses_capped_exponential_backoff(monkeypatch: pytest.Monkey
     monkeypatch.setattr(acp_agents, "AipRpcClient", lambda **_: fake_client)
     monkeypatch.setattr(acp_agents.asyncio, "sleep", fake_sleep)
 
-    assert asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "poll"})) == {
+    assert asyncio.run(
+        acp_agents.call_attacker({"difficulty": "low", "topic": "poll"})
+    ) == {
         "samples": [],
         "agentSource": "acp-rule-fallback",
     }
@@ -132,7 +153,9 @@ def test_sdk_posts_aip_v2_start_command(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
     monkeypatch.setenv("AGENT_AIP_LEADER_ID", "agent-lab-test")
     monkeypatch.delenv("AGENT_RPC_API_KEY", raising=False)
-    monkeypatch.setattr(aip_rpc_client.httpx, "AsyncClient", lambda **_kwargs: FakeHttpClient())
+    monkeypatch.setattr(
+        aip_rpc_client.httpx, "AsyncClient", lambda **_kwargs: FakeHttpClient()
+    )
 
     result = asyncio.run(
         acp_agents.call_attacker(
@@ -158,7 +181,9 @@ def test_remote_call_tolerates_semicolon_no_proxy_during_sdk_init(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class ProxySensitiveClient(FakeAipClient):
-        def __init__(self, *, partner_url: str, leader_id: str, ssl_context=None) -> None:
+        def __init__(
+            self, *, partner_url: str, leader_id: str, ssl_context=None
+        ) -> None:
             self.http_client = acp_agents.httpx.AsyncClient()
             super().__init__(task_result({"samples": []}))
 
@@ -179,13 +204,17 @@ def test_remote_call_tolerates_semicolon_no_proxy_during_sdk_init(
 
 
 def test_defender_requires_complete_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_client = FakeAipClient(task_result({
-        "caught": [],
-        "risks": [],
-        "fixed": [],
-        "analysisMode": "本地模拟分析",
-        "agentSource": "acp-rule-fallback",
-    }))
+    fake_client = FakeAipClient(
+        task_result(
+            {
+                "caught": [],
+                "risks": [],
+                "fixed": [],
+                "analysisMode": "本地模拟分析",
+                "agentSource": "acp-rule-fallback",
+            }
+        )
+    )
     monkeypatch.setenv("AGENT_DEFENDER_RPC_URL", "https://defender.example/rpc")
     monkeypatch.setattr(acp_agents, "AipRpcClient", lambda **_: fake_client)
 
@@ -198,35 +227,48 @@ def test_defender_requires_complete_contract(monkeypatch: pytest.MonkeyPatch) ->
         "analysisMode": "本地模拟分析",
         "agentSource": "acp-rule-fallback",
     }
-    assert json.loads(fake_client.request["user_input"]) == {"sample": {"content": "test"}}
+    assert json.loads(fake_client.request["user_input"]) == {
+        "sample": {"content": "test"}
+    }
 
 
 def test_unknown_agent_source_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
     source = "partner-agent-v3"
-    fake_client = FakeAipClient(task_result({
-        "samples": [],
-        "agentMode": "experimental",
-        "agentSource": source,
-    }))
+    fake_client = FakeAipClient(
+        task_result(
+            {
+                "samples": [],
+                "agentMode": "experimental",
+                "agentSource": source,
+            }
+        )
+    )
     monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
     monkeypatch.setattr(acp_agents, "AipRpcClient", lambda **_: fake_client)
 
-    result = asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "test"}))
+    result = asyncio.run(
+        acp_agents.call_attacker({"difficulty": "low", "topic": "test"})
+    )
 
     assert result is not None
     assert result["agentSource"] == source
 
 
 def test_unknown_agent_mode_is_not_reported_as_rule_fallback() -> None:
-    result = acp_agents._validate_result("attacker", {
-        "samples": [],
-        "agentMode": "experimental",
-    })
+    result = acp_agents._validate_result(
+        "attacker",
+        {
+            "samples": [],
+            "agentMode": "experimental",
+        },
+    )
 
     assert result["agentSource"] == "acp-unknown:experimental"
 
 
-def test_remote_failure_does_not_fall_back_to_local(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remote_failure_does_not_fall_back_to_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class BrokenClient(FakeAipClient):
         async def start_task(self, *, session_id: str, user_input: str) -> TaskResult:
             raise OSError("connection refused")
@@ -240,7 +282,9 @@ def test_remote_failure_does_not_fall_back_to_local(monkeypatch: pytest.MonkeyPa
     assert fake_client.closed
 
 
-def test_remote_transient_failure_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remote_transient_failure_retries_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FlakyClient(FakeAipClient):
         def __init__(self) -> None:
             super().__init__(task_result({"samples": []}))
@@ -250,7 +294,9 @@ def test_remote_transient_failure_retries_then_succeeds(monkeypatch: pytest.Monk
             self.attempts += 1
             if self.attempts == 1:
                 raise OSError("connection reset")
-            return await super().start_task(session_id=session_id, user_input=user_input)
+            return await super().start_task(
+                session_id=session_id, user_input=user_input
+            )
 
     fake_client = FlakyClient()
     monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
@@ -263,7 +309,9 @@ def test_remote_transient_failure_retries_then_succeeds(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(acp_agents.asyncio, "sleep", no_sleep)
 
-    result = asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "retry"}))
+    result = asyncio.run(
+        acp_agents.call_attacker({"difficulty": "low", "topic": "retry"})
+    )
 
     assert result == {"samples": [], "agentSource": "acp-rule-fallback"}
     assert fake_client.attempts == 2
@@ -271,10 +319,15 @@ def test_remote_transient_failure_retries_then_succeeds(monkeypatch: pytest.Monk
 
 def test_unconfigured_role_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_ATTACKER_RPC_URL", raising=False)
-    assert asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "test"})) is None
+    assert (
+        asyncio.run(acp_agents.call_attacker({"difficulty": "low", "topic": "test"}))
+        is None
+    )
 
 
-def test_local_rpc_disables_sdk_identity_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_local_rpc_disables_sdk_identity_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("AGENT_ATTACKER_EXPECTED_AIC", raising=False)
     monkeypatch.delenv("AGENT_AIP_EXPECTED_PARTNER_AIC", raising=False)
     assert acp_agents._identity_binding_options("attacker", None) == {
@@ -282,7 +335,9 @@ def test_local_rpc_disables_sdk_identity_binding(monkeypatch: pytest.MonkeyPatch
     }
 
 
-def test_remote_identity_binding_requires_peer_aic_and_mtls(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remote_identity_binding_requires_peer_aic_and_mtls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("AGENT_ATTACKER_EXPECTED_AIC", "acps://peer")
     with pytest.raises(acp_agents.ACPAgentError, match="未配置 mTLS"):
         acp_agents._identity_binding_options("attacker", None)

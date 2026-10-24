@@ -19,7 +19,7 @@ def _connect_read_only(database: Path) -> sqlite3.Connection:
 def _case_from_row(row: sqlite3.Row) -> dict[str, Any]:
     try:
         cwes = json.loads(row["cwes_json"])
-    except (TypeError, json.JSONDecodeError):
+    except TypeError, json.JSONDecodeError:
         cwes = []
     if not isinstance(cwes, list):
         cwes = []

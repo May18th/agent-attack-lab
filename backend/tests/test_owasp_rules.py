@@ -4,8 +4,16 @@ from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES, classify_owasp_ll
 
 def test_catalog_contains_all_ten_owasp_llm_categories() -> None:
     assert [category for category, _title in OWASP_LLM_CATEGORIES] == [
-        "LLM01", "LLM02", "LLM03", "LLM04", "LLM05",
-        "LLM06", "LLM07", "LLM08", "LLM09", "LLM10",
+        "LLM01",
+        "LLM02",
+        "LLM03",
+        "LLM04",
+        "LLM05",
+        "LLM06",
+        "LLM07",
+        "LLM08",
+        "LLM09",
+        "LLM10",
     ]
 
 

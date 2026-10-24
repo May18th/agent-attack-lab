@@ -6,7 +6,9 @@ from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 client = TestClient(service.app)
 
 
-def test_layer_interceptions_conserves_rounds_and_routes_findings_to_one_layer() -> None:
+def test_layer_interceptions_conserves_rounds_and_routes_findings_to_one_layer() -> (
+    None
+):
     result = derive_layer_interceptions(
         "提示注入",
         [
@@ -21,7 +23,9 @@ def test_layer_interceptions_conserves_rounds_and_routes_findings_to_one_layer()
     assert len(result["layers"]) == 4
     layers = result["layers"]
     assert layers[0]["reached"] == 3
-    assert all(layer["blocked"] + layer["passed"] == layer["reached"] for layer in layers)
+    assert all(
+        layer["blocked"] + layer["passed"] == layer["reached"] for layer in layers
+    )
     assert [layer["reached"] for layer in layers] == [3, 2, 2, 2]
     assert [layer["blocked"] for layer in layers] == [1, 0, 0, 0]
     assert [layer["passed"] for layer in layers] == [2, 2, 2, 2]
@@ -39,14 +43,19 @@ def test_layer_interceptions_passes_all_layers_when_defense_has_no_findings() ->
 def test_generic_topic_distributes_unclassified_findings_across_four_layers() -> None:
     result = derive_layer_interceptions(
         "通用安全测试",
-        [{"caught": [{"ruleId": f"GENERIC-{index}"}], "risks": []} for index in range(8)],
+        [
+            {"caught": [{"ruleId": f"GENERIC-{index}"}], "risks": []}
+            for index in range(8)
+        ],
     )
 
     layers = result["layers"]
     assert [layer["blocked"] for layer in layers] == [2, 2, 2, 2]
     assert [layer["reached"] for layer in layers] == [8, 6, 4, 2]
     assert [layer["passed"] for layer in layers] == [6, 4, 2, 0]
-    assert all(layer["blocked"] + layer["passed"] == layer["reached"] for layer in layers)
+    assert all(
+        layer["blocked"] + layer["passed"] == layer["reached"] for layer in layers
+    )
 
 
 def test_specific_finding_keyword_overrides_round_robin_fallback() -> None:
@@ -73,7 +82,9 @@ def test_empty_defense_results_return_zero_layer_counts() -> None:
     )
 
 
-def test_sync_battle_defense_completed_event_contains_derived_layer_interceptions() -> None:
+def test_sync_battle_defense_completed_event_contains_derived_layer_interceptions() -> (
+    None
+):
     response = client.post("/battles", json={"difficulty": "low", "topic": "提示注入"})
     assert response.status_code == 201
     battle_id = response.json()["id"]
@@ -94,8 +105,12 @@ def test_sync_battle_defense_completed_event_contains_derived_layer_interception
     )
 
 
-def test_background_battle_defense_completed_event_contains_derived_layer_interceptions() -> None:
-    response = client.post("/battles?background=true", json={"difficulty": "mid", "topic": "SQL 注入"})
+def test_background_battle_defense_completed_event_contains_derived_layer_interceptions() -> (
+    None
+):
+    response = client.post(
+        "/battles?background=true", json={"difficulty": "mid", "topic": "SQL 注入"}
+    )
     assert response.status_code == 201
     battle_id = response.json()["id"]
     detail = client.get(f"/battles/{battle_id}").json()

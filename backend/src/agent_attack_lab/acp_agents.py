@@ -84,11 +84,13 @@ def _ssl_context() -> ssl.SSLContext | None:
         if cert_file:
             context.load_cert_chain(certfile=cert_file, keyfile=key_file)
         return context
-    except (OSError, ssl.SSLError, ValueError):
+    except OSError, ssl.SSLError, ValueError:
         raise ACPAgentError("ACP mTLS 证书配置无效") from None
 
 
-def _identity_binding_options(role: Role, ssl_context: ssl.SSLContext | None) -> dict[str, Any]:
+def _identity_binding_options(
+    role: Role, ssl_context: ssl.SSLContext | None
+) -> dict[str, Any]:
     """Configure AIP identity checks without breaking local loopback agents.
 
     The current SDK requires ``expected_partner_aic`` whenever identity binding
@@ -155,7 +157,7 @@ def _task_data(task: TaskResult) -> dict[str, Any]:
         if isinstance(item, TextDataItem):
             try:
                 data = json.loads(item.text)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
             if isinstance(data, dict):
                 return data
@@ -166,8 +168,12 @@ def _validate_result(role: Role, data: dict[str, Any]) -> dict[str, Any]:
     expected = ("samples",) if role == "attacker" else ("caught", "risks", "fixed")
     for field in expected:
         values = data.get(field)
-        if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
-            raise ACPAgentError(f"远端 {role} Agent 响应格式无效：{field} 必须是对象数组")
+        if not isinstance(values, list) or any(
+            not isinstance(item, dict) for item in values
+        ):
+            raise ACPAgentError(
+                f"远端 {role} Agent 响应格式无效：{field} 必须是对象数组"
+            )
     result = {field: data[field] for field in expected}
     if isinstance(data.get("agentMode"), str):
         result["agentMode"] = data["agentMode"]
@@ -214,7 +220,9 @@ async def _invoke(
         )
         client_options = {
             "partner_url": endpoint,
-            "leader_id": os.getenv("AGENT_AIP_LEADER_ID", "agent-attack-lab-dev").strip()
+            "leader_id": os.getenv(
+                "AGENT_AIP_LEADER_ID", "agent-attack-lab-dev"
+            ).strip()
             or "agent-attack-lab-dev",
             "ssl_context": ssl_context,
             "transport": transport,
@@ -222,12 +230,9 @@ async def _invoke(
         }
         client_parameters = inspect.signature(AipRpcClient).parameters
         client = _construct_aip_client(_supported_options(AipRpcClient, client_options))
-        if (
-            "transport" not in client_parameters
-            and not any(
-                parameter.kind is inspect.Parameter.VAR_KEYWORD
-                for parameter in client_parameters.values()
-            )
+        if "transport" not in client_parameters and not any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in client_parameters.values()
         ):
             # acps-sdk 2.1.0 has no transport constructor argument. Replace its
             # default client so loopback calls still ignore ambient proxy settings.
@@ -254,7 +259,9 @@ async def _invoke(
         async def start_and_wait() -> TaskResult:
             task = await client.start_task(
                 session_id=session_id,
-                user_input=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                user_input=json.dumps(
+                    payload, ensure_ascii=False, separators=(",", ":")
+                ),
             )
             deadline = time.monotonic() + timeout_seconds - 1
             poll_interval = 0.1
