@@ -71,6 +71,21 @@ def insufficient_internal_score() -> dict[str, Any]:
     }
 
 
+def role_scores(record: dict[str, Any]) -> tuple[int, int]:
+    """Legacy per-role tallies shown by the report and leaderboard views."""
+    samples = record["attackerOut"].get("samples", [])
+    defenses = record.get("defenderOut", [])
+    severity_points = {"low": 10, "medium": 20, "high": 30}
+    attacker_score = sum(
+        severity_points.get(sample.get("severity", "low"), 10) for sample in samples
+    )
+    defender_score = sum(
+        len(item.get("caught", [])) * 10 + len(item.get("fixed", [])) * 5
+        for item in defenses
+    )
+    return attacker_score, defender_score
+
+
 def battle_stats(
     record: dict[str, Any], events: list[dict[str, Any]] | None = None
 ) -> dict[str, int]:

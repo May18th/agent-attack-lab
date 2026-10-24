@@ -131,11 +131,6 @@ if config.frontend_dist.is_dir():
     )
 
 
-_started_at = time.monotonic()
-_request_count = 0
-_request_errors = 0
-_request_total_duration_ms = 0.0
-_request_max_duration_ms = 0.0
 _aip_server_options = server_identity_options(
     handle_rpc_request,
     local_aic=config.local_aic,
@@ -174,22 +169,17 @@ def _battle_fingerprint(payload: BattleRequest) -> str:
 
 @app.middleware("http")
 async def collect_request_metrics(request: Request, call_next: Any) -> Any:
-    global \
-        _request_count, \
-        _request_errors, \
-        _request_total_duration_ms, \
-        _request_max_duration_ms
     request_id = _request_id(request)
     request.state.request_id = request_id
     started = time.perf_counter()
-    _request_count += 1
+    state.request_count += 1
     try:
         response = await call_next(request)
     except Exception:
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
-        _request_total_duration_ms += duration_ms
-        _request_max_duration_ms = max(_request_max_duration_ms, duration_ms)
-        _request_errors += 1
+        state.request_total_duration_ms += duration_ms
+        state.request_max_duration_ms = max(state.request_max_duration_ms, duration_ms)
+        state.request_errors += 1
         logger.exception(
             "request_failed request_id=%s method=%s path=%s",
             request_id,
@@ -198,10 +188,10 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
         )
         raise
     if response.status_code >= 400:
-        _request_errors += 1
+        state.request_errors += 1
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
-    _request_total_duration_ms += duration_ms
-    _request_max_duration_ms = max(_request_max_duration_ms, duration_ms)
+    state.request_total_duration_ms += duration_ms
+    state.request_max_duration_ms = max(state.request_max_duration_ms, duration_ms)
     response.headers["X-Request-ID"] = request_id
     logger.info(
         "request_completed request_id=%s method=%s path=%s status=%s duration_ms=%s",
@@ -1396,7 +1386,7 @@ def health(request: Request) -> dict[str, Any]:
         "status": "ok" if storage_status == "ok" else "degraded",
         "service": "智能体攻防实验室",
         "version": app.version,
-        "uptimeSeconds": round(time.monotonic() - _started_at, 2),
+        "uptimeSeconds": round(time.monotonic() - state.started_at, 2),
         "storage": storage_status,
         "requestId": request.state.request_id,
     }
@@ -1584,16 +1574,18 @@ def delete_browser_session(request: Request, response: Response) -> dict[str, bo
 )
 def metrics() -> dict[str, Any]:
     average_latency = (
-        _request_total_duration_ms / _request_count if _request_count else 0
+        state.request_total_duration_ms / state.request_count
+        if state.request_count
+        else 0
     )
     acp = rpc_metrics()
     return {
         "service": "智能体攻防实验室",
-        "uptimeSeconds": round(time.monotonic() - _started_at, 2),
-        "requests": _request_count,
-        "errors": _request_errors,
+        "uptimeSeconds": round(time.monotonic() - state.started_at, 2),
+        "requests": state.request_count,
+        "errors": state.request_errors,
         "averageLatencyMs": round(average_latency, 2),
-        "maxLatencyMs": round(_request_max_duration_ms, 2),
+        "maxLatencyMs": round(state.request_max_duration_ms, 2),
         "rateLimited": state.rate_limited_count,
         "rateLimitPerMinute": config.rate_limit_per_minute,
         "protectReadRoutes": config.protect_read_routes,
@@ -2503,20 +2495,6 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
     }
 
 
-def _scores(record: dict[str, Any]) -> tuple[int, int]:
-    samples = record["attackerOut"].get("samples", [])
-    defenses = record.get("defenderOut", [])
-    severity_points = {"low": 10, "medium": 20, "high": 30}
-    attacker_score = sum(
-        severity_points.get(sample.get("severity", "low"), 10) for sample in samples
-    )
-    defender_score = sum(
-        len(item.get("caught", [])) * 10 + len(item.get("fixed", [])) * 5
-        for item in defenses
-    )
-    return attacker_score, defender_score
-
-
 def _report_summary_key(
     battle_id: str, record: dict[str, Any], events: list[dict[str, Any]]
 ) -> tuple[str, int, str]:
@@ -2586,13 +2564,13 @@ async def battle_report(
                 stored_internal_score
                 if stored_internal_score is not None
                 else scoring_glue.insufficient_internal_score(),
-                _scores(record),
+                scoring_glue.role_scores(record),
                 report_summary,
             ),
             media_type="text/markdown; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{battle_id}.md"'},
         )
-    attacker_score, defender_score = _scores(record)
+    attacker_score, defender_score = scoring_glue.role_scores(record)
     stored_internal_score = state.battle_store.get_score(battle_id)
     return {
         "battle": record,
@@ -2694,7 +2672,7 @@ def leaderboard() -> dict[str, Any]:
     attacker_score = defender_score = 0
     rounds = 0
     for record in state.battle_store.list(limit=100000):
-        attack_points, defend_points = _scores(record)
+        attack_points, defend_points = scoring_glue.role_scores(record)
         attacker_score += attack_points
         defender_score += defend_points
         rounds += len(record["attackerOut"].get("samples", []))
