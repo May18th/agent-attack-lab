@@ -1285,17 +1285,24 @@ class BattleStore:
         return summary
 
     def close(self) -> None:
-        if self._closed:
-            return
-        if self._pool is not None:
-            self._pool.close()
-            self._pool = None
-        if self._engine is not None:
-            self._engine.dispose()
-            self._engine = None
-        if not self._is_postgres and not self._is_mysql:
-            self._connection.close()
-        self._closed = True
+        # Serialize shutdown with every store operation. Background workers run
+        # queries through asyncio.to_thread(); closing the SQLite connection
+        # while one of them is mid-execute causes a native access violation on
+        # Windows, which no Python-level guard can catch. Holding the same lock
+        # used by the operations guarantees we only close when the connection
+        # is idle.
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._pool is not None:
+                self._pool.close()
+                self._pool = None
+            if self._engine is not None:
+                self._engine.dispose()
+                self._engine = None
+            if not self._is_postgres and not self._is_mysql:
+                self._connection.close()
 
     @staticmethod
     def _to_record(row: Any) -> dict[str, Any]:

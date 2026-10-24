@@ -3087,8 +3087,16 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         item["layerInterceptions"] = derive_layer_interceptions(record["topic"], [defense])
         item["scores"] = score_values
     stats = _battle_stats(record, events)
-    total = max(0, int(record.get("rounds") or len(grouped)))
-    return {"total": total, "rounds": [grouped[key] for key in sorted(grouped)], "stats": stats}
+    # `total` reflects what was actually produced so callers never see a
+    # mismatch (for example "5 of 5" while only three rounds exist). The
+    # requested count is kept separately for diagnostics.
+    requested_rounds = max(0, int(record.get("rounds") or len(grouped)))
+    return {
+        "total": len(grouped),
+        "requestedRounds": requested_rounds,
+        "rounds": [grouped[key] for key in sorted(grouped)],
+        "stats": stats,
+    }
 
 
 def _scores(record: dict[str, Any]) -> tuple[int, int]:

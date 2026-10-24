@@ -12,7 +12,13 @@ from typing import Any, Literal
 
 
 VerifyMode = Literal["off", "simulated", "live"]
-_SIMULATABLE_RULES = {"LAB-SQLI-001", "LAB-PROMPT-001"}
+_SIMULATABLE_RULES = {"LAB-SQLI-001", "LAB-PROMPT-001", "OWASP-LLM01-LLM", "OWASP-LLM07-LLM"}
+
+
+def _is_simulatable(rule_id: str) -> bool:
+    # LLM-backed defenders report OWASP taxonomy ids (``OWASP-LLMxx-LLM``)
+    # rather than the local ``LAB-*`` ids, so accept both families.
+    return rule_id in _SIMULATABLE_RULES or rule_id.startswith("OWASP-LLM")
 
 
 def configured_verify_mode() -> VerifyMode:
@@ -45,7 +51,7 @@ def verify_round(
     matched = sorted({
         str(item.get("ruleId"))
         for item in (caught if isinstance(caught, list) else [])
-        if isinstance(item, dict) and item.get("ruleId") in _SIMULATABLE_RULES
+        if isinstance(item, dict) and _is_simulatable(str(item.get("ruleId")))
     })
     if not matched:
         return {**base, "reason": "no_simulated_exploit_evidence"}
