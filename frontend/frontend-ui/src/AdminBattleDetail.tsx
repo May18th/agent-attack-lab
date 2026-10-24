@@ -27,6 +27,21 @@ const asRecord = (value: unknown): Record<string, unknown> => (value && typeof v
 const eventType = (event: AdminBattleEvent) => String(event.eventType ?? event.type ?? '')
 const eventData = (event?: AdminBattleEvent) => asRecord(event?.data)
 
+function arbiterOutcome(round: AdminBattleRounds['rounds'][number]): Outcome | null {
+  const review = round.arbiterReview
+  const verdict = typeof review?.verdict === 'string' ? review.verdict : ''
+  if (!verdict) return null
+  const tone: Tone = verdict === 'attacker_won' ? 'red' : verdict === 'defender_won' ? 'green' : 'gray'
+  const base = labelOf(verdict, VERDICT_LABELS)
+  return { label: review?.needsHumanReview ? `${base} · 需复核` : base, tone }
+}
+
+function arbiterTitle(round: AdminBattleRounds['rounds'][number]): string {
+  const review = round.arbiterReview
+  if (!review) return ''
+  return [review.rationale, review.agentSource ? `来源 ${review.agentSource}` : ''].filter(Boolean).join(' · ')
+}
+
 function roundOutcome(round: AdminBattleRounds['rounds'][number]): Outcome {
   if (round.compromised?.targetVerified) {
     return round.compromised.simulated
@@ -128,9 +143,10 @@ export function AdminBattleDetail(props: Props) {
       </header>
       {roundList.length ? <div className="readable-table-wrap">
         <table className="readable-table">
-          <thead><tr><th scope="col">回合</th><th scope="col">状态</th><th scope="col">攻击样本</th><th scope="col">命中</th><th scope="col">风险</th><th scope="col">修复建议</th><th scope="col">耗时</th><th scope="col">本轮结果</th></tr></thead>
+          <thead><tr><th scope="col">回合</th><th scope="col">状态</th><th scope="col">攻击样本</th><th scope="col">命中</th><th scope="col">风险</th><th scope="col">修复建议</th><th scope="col">耗时</th><th scope="col">本轮结果</th><th scope="col">独立裁决</th></tr></thead>
           <tbody>{roundList.map((round) => {
             const outcome = roundOutcome(round)
+            const arbiter = arbiterOutcome(round)
             const sample = asRecord(round.sample)
             const sampleText = String(sample.type ?? sample.topic ?? '未记录')
             const severity = labelOf(sample.severity, SEVERITY_LABELS, '')
@@ -143,10 +159,12 @@ export function AdminBattleDetail(props: Props) {
               <td>{asArray(round.fixed).length}</td>
               <td>{formatDuration(round.durationMs)}</td>
               <td><span className={`outcome-pill tone-${outcome.tone}`}>{outcome.label}</span></td>
+              <td>{arbiter ? <span className={`outcome-pill tone-${arbiter.tone}`} title={arbiterTitle(round)}>{arbiter.label}</span> : <span className="readable-hint">未记录</span>}</td>
             </tr>
           })}</tbody>
         </table>
       </div> : <p className="empty">暂无回合记录，可能是战局尚未开始或事件未落库。</p>}
+      {roundList.some((round) => round.arbiterReview) && <p className="readable-hint">独立裁决由 arbiter 单独复核本轮，不改变“本轮结果”；来源标注为 arbiter-rule-fallback 时未调用模型，只按证据规则判定。</p>}
     </section>
 
     <section className="readable-card" aria-label="评分">

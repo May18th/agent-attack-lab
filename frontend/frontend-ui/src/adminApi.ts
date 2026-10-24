@@ -56,6 +56,16 @@ export type AdminBattleRound = {
   layerInterceptions?: Record<string, unknown>
   scores?: { attacker: number | null; defender: number | null }
   compromised?: { targetVerified: boolean; verificationMode?: string; simulated?: boolean; evidence?: unknown[] }
+  arbiterReview?: AdminArbiterReview | null
+}
+export type AdminArbiterReview = {
+  verdict?: string
+  confidence?: number
+  rationale?: string
+  evidence?: string[]
+  needsHumanReview?: boolean
+  agentSource?: string
+  agentMode?: string
 }
 export type AdminBattleRounds = {
   total: number

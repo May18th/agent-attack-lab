@@ -333,8 +333,8 @@ describe('AdminApp', () => {
   const readableRounds = {
     total: 2, requestedRounds: 3,
     rounds: [
-      { round: 1, status: 'completed', sample: { type: '提示注入', severity: 'high' }, caught: [{ ruleId: 'LAB-SQLI-001' }], risks: [], fixed: [], durationMs: 1500 },
-      { round: 2, status: 'completed', sample: { type: 'SQL 注入', severity: 'medium' }, caught: [], risks: [], fixed: [], durationMs: 800, compromised: { targetVerified: true, simulated: true } },
+      { round: 1, status: 'completed', sample: { type: '提示注入', severity: 'high' }, caught: [{ ruleId: 'LAB-SQLI-001' }], risks: [], fixed: [], durationMs: 1500, arbiterReview: { verdict: 'undetermined', needsHumanReview: true, agentSource: 'arbiter-rule-fallback', rationale: '无验证证据，需人工复核' } },
+      { round: 2, status: 'completed', sample: { type: 'SQL 注入', severity: 'medium' }, caught: [], risks: [], fixed: [], durationMs: 800, compromised: { targetVerified: true, simulated: true }, arbiterReview: { verdict: 'defender_won', needsHumanReview: false, agentSource: 'arbiter-llm' } },
     ],
     stats: { attackGenerated: 2, defenderDetected: 1, fixesSuggested: 0, strategyChecks: 2 },
   }
@@ -367,6 +367,9 @@ describe('AdminApp', () => {
     expect(screen.getAllByText('穿透（模拟验证）').length).toBeGreaterThan(0)
     expect(screen.getAllByText('证据不足').length).toBeGreaterThan(0)
     expect(screen.getAllByText('事件 ID 重复').length).toBeGreaterThan(0)
+    expect(screen.getByText('结果未判定 · 需复核')).toBeInTheDocument()
+    expect(screen.getByText('防守成功')).toBeInTheDocument()
+    expect(screen.getByText(/独立裁决由 arbiter 单独复核/)).toBeInTheDocument()
     expect(screen.queryByText('原始数据（排查用）')).not.toBeInTheDocument()
   })
 

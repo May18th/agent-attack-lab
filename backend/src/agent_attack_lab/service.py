@@ -3190,6 +3190,8 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
             for key in ("caught", "risks", "fixed"):
                 if isinstance(data.get(key), list):
                     item[key] = data[key]
+            if isinstance(data.get("arbiterReview"), dict):
+                item["arbiterReview"] = data["arbiterReview"]
             if isinstance(data.get("durationMs"), (int, float)):
                 item["durationMs"] = round(data["durationMs"])
             elif isinstance(call_durations.get(data.get("correlationId")), (int, float)):
@@ -3205,6 +3207,8 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
             for key in ("caught", "risks", "fixed"):
                 if not item[key] and isinstance(defense.get(key), list):
                     item[key] = defense[key]
+            if "arbiterReview" not in item and isinstance(defense.get("arbiterReview"), dict):
+                item["arbiterReview"] = defense["arbiterReview"]
 
     def duration_from_timestamps(item: dict[str, Any]) -> None:
         if item["durationMs"] is not None or not item["startedAt"] or not item["finishedAt"]:

@@ -1207,7 +1207,7 @@ def test_rounds_endpoint_exposes_role_scores_per_round(tmp_path, monkeypatch) ->
         {"id": "e3", "battleId": "battle-round-scores", "sequence": 3, "type": "attack.sample.generated", "status": "completed", "createdAt": "2026-10-24T00:00:02+00:00", "data": {"round": 1, "correlationId": "a", "sample": {"content": "c"}}},
         {"id": "e4", "battleId": "battle-round-scores", "sequence": 4, "type": "agent.call.started", "status": "running", "createdAt": "2026-10-24T00:00:03+00:00", "data": {"agentRole": "defender", "correlationId": "d"}},
         {"id": "e5", "battleId": "battle-round-scores", "sequence": 5, "type": "agent.call.completed", "status": "completed", "createdAt": "2026-10-24T00:00:04+00:00", "data": {"agentRole": "defender", "correlationId": "d", "durationMs": 1000, "dispatchMode": "local", "resultSource": "local-rule"}},
-        {"id": "e6", "battleId": "battle-round-scores", "sequence": 6, "type": "round.completed", "status": "completed", "createdAt": "2026-10-24T00:00:05+00:00", "data": {"round": 1, "correlationId": "d", "caught": [], "risks": [], "fixed": []}},
+        {"id": "e6", "battleId": "battle-round-scores", "sequence": 6, "type": "round.completed", "status": "completed", "createdAt": "2026-10-24T00:00:05+00:00", "data": {"round": 1, "correlationId": "d", "caught": [], "risks": [], "fixed": [], "arbiterReview": {"verdict": "undetermined", "agentSource": "arbiter-rule-fallback", "needsHumanReview": True}}},
     ]
     for event in events:
         store.save_event(event)
@@ -1218,6 +1218,34 @@ def test_rounds_endpoint_exposes_role_scores_per_round(tmp_path, monkeypatch) ->
     assert round_item["attacker"]["status"] == "scored"
     assert round_item["defender"]["status"] == "scored"
     assert round_item["scores"] == {"attacker": round_item["attacker"]["score"], "defender": round_item["defender"]["score"]}
+    assert round_item["arbiterReview"]["verdict"] == "undetermined"
+    assert round_item["arbiterReview"]["agentSource"] == "arbiter-rule-fallback"
+    store.close()
+
+
+def test_rounds_falls_back_to_defender_out_arbiter_review(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "round-arbiter-fallback.sqlite3"))
+    store.save({
+        "id": "battle-arbiter-fallback",
+        "difficulty": "low",
+        "topic": "通用安全测试",
+        "status": "completed",
+        "rounds": 1,
+        "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": [{"type": "x", "topic": "通用安全测试", "content": "c"}]},
+        "defenderOut": [{
+            "caught": [],
+            "risks": [],
+            "fixed": [],
+            "arbiterReview": {"verdict": "defender_won", "agentSource": "arbiter-llm", "needsHumanReview": False},
+        }],
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+    response = client.get("/battles/battle-arbiter-fallback/rounds")
+    assert response.status_code == 200
+    round_item = response.json()["rounds"][0]
+    assert round_item["arbiterReview"]["verdict"] == "defender_won"
+    assert round_item["arbiterReview"]["agentSource"] == "arbiter-llm"
     store.close()
 
 

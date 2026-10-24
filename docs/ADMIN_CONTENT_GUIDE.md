@@ -48,7 +48,7 @@ flowchart LR
 | 页面模块 | 接口 | 关键字段 |
 |---|---|---|
 | 战局结论卡 | `GET /battles/{id}` + `battle.completed` 事件 + `GET /battles/{id}/rounds` | `verdict`、`compromisedRounds`、`interceptedRounds`、`verificationMode`、`stats` |
-| 回合明细表 | `GET /battles/{id}/rounds` | `rounds[].round/status/sample/caught/risks/fixed/durationMs/compromised` |
+| 回合明细表 | `GET /battles/{id}/rounds` | `rounds[].round/status/sample/caught/risks/fixed/durationMs/compromised/arbiterReview` |
 | 评分卡 | `GET /battles/{id}/score` | `attacker/defender.score`、`categories[].label/score/maxScore` |
 | 事件时间线 | `GET /battles/{id}/events` | `sequence`、`type`、`data.round`、`data.durationMs` |
 | 事件链完整性 | `GET /battles/{id}/audit` | `valid`、`issueCount`、`issues[].code` |
@@ -57,6 +57,17 @@ flowchart LR
 | 外部案例 | `GET /external-cases` | CVE / 厂商 / 产品（只读） |
 
 `/rounds` 里 `total` 是**实际产出**轮数，`requestedRounds` 是**请求**轮数，两者可能不等（例如中途失败）。页面上会明确分开显示。
+
+回合明细表最后一列是**独立裁决**（`arbiterReview`），它是 arbiter 在目标验证之后对本轮做的第二意见，**不改变**「本轮结果」列：
+
+| 字段 | 含义 |
+|---|---|
+| `verdict` | `attacker_won` / `defender_won` / `undetermined` |
+| `agentSource` | `arbiter-llm`（调用了模型）或 `arbiter-rule-fallback`（未开模型，纯规则） |
+| `needsHumanReview` | 为 true 时页面显示「· 需复核」 |
+| `rationale` / `evidence` | 悬停可见；`evidence` 必须是样本原文片段 |
+
+没有验证证据时 arbiter 只会给 `undetermined`，这是设计上的保守约束，不是异常。
 
 ---
 
