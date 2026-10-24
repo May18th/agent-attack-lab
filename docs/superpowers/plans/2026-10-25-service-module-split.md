@@ -25,21 +25,23 @@
 
 ```
 agent_attack_lab/
-  service.py            # ~250 行：app 装配、lifespan、中间件、include_router
+  service.py            # 186 行：app 装配、CORS、/ui 挂载、中间件、lifespan、include_router
   models.py             # 8 个 Pydantic 模型（S7 的前置：response_model 是运行时实参）
   config.py             # _env_int、路径、超时、开关常量
-  state.py              # 单例：battle_store / redis_cache / 限流窗口 / 各类内存缓存
+  state.py              # 单例：battle_store / redis_cache / 限流窗口 / 计数器 / 各类内存缓存
   security.py           # Cloudflare JWT、browser session、登录限流、鉴权依赖
-  events.py             # _event、_bounded_event_data、stageId/classification、审计事件
-  battle_runner.py      # 战局执行管线：_run_battle_async / _battle_attack / _battle_defend
-  scoring_glue.py       # 分数持久化、补算、_battle_stats、排行榜失效
-  reports.py            # _markdown_report（纯渲染，无 I/O）
+  events.py             # build_event、bounded_event_data、stageId/classification、审计事件
+  battle_runner.py      # 战局执行管线：run_battle_async / battle_attack / battle_defend
+  scoring_glue.py       # 分数持久化、补算、battle_stats、role_scores、排行榜失效
+  reports.py            # build_markdown_report（纯渲染，无 I/O）
+  pages.py              # 后台页面 HTML 模板（纯字符串）
   routers/
-    meta.py             # /, /dashboard, /metrics, /health
-    auth.py             # /login, /auth/session
-    battles.py          # /battles/**（创建/查询/事件/回合/评分/重试/取消/删除/SSE）
+    meta.py             # /, /dashboard, /dashboard/summary, /health, /metrics, /external-cases
+    auth.py             # /login, /auth/session ×3
+    admin.py            # /admin/**（样本、规则、规则候选、审计日志）
+    battles.py          # /battles/**（创建/重试/取消/删除/查询/事件/回合/SSE/WS/replay/audit）
     reports.py          # /reports/{id}, /battles/{id}/report
-    admin.py            # /admin/**（样本、规则、审计日志、规则候选）
+    scores.py           # /battles/{id}/score, /internal-scores, /leaderboard
     rpc.py              # /rpc, /agent/**
 ```
 
@@ -127,25 +129,86 @@ agent_attack_lab/
 - 搬 `_markdown_report`（纯渲染，入参 record/events/score/summary）。
 - 验收：markdown 报告 3 个用例全绿（含今晚新增的 LLM 总结段用例）。
 
-### S7 抽 `routers/`（按域拆 6 个文件）
+### S7 抽 `routers/`（实际拆成 7 个文件）
 
 **前置 S7a：先抽 `models.py`。** 路由函数用 `BattleRecord` / `BattleRequest` 等模型做 `response_model=` 和参数注解；`response_model=` 是**运行时实参，必须真求值**，`from __future__ import annotations` 只让注解变成字符串，救不了它。若 router 直接 `from service import BattleRecord`，而 service 又要 import routers 做 `include_router`，就成环了。所以 `models.py` 必须先存在（S7a 已落地：8 个模型 / 89 行，`service.py` 减 68 行，3 处测试打桩迁移）。
 
-- 每次只搬一个 router，搬完立刻跑全量：`meta → auth → admin → reports → battles → rpc`。
-- 顺序按依赖从少到多，`battles.py` 最大放最后。
-- `service.py` 只留：`app = FastAPI(...)`、`_lifespan`、中间件、`include_router`。
-- 验收：每搬一个 router，`openapi()` 的 paths 必须仍等于基准。
-- 已知需要迁移的打桩：`service.summarize_report`（3 处，随 `battle_report` 进 `routers/reports.py`）、`service.suggest_rule_candidate`（1 处，随 admin 路由进 `routers/admin.py`）。**`configured_verify_mode` 的 2 处打桩在 S7 之后要重新看**：`create_battle` 搬进 `routers/battles.py` 后，它的全局名查找从 service 换到了 router 模块，打桩目标必须跟着改成 `routers.battles.configured_verify_mode`。
+**S7-0（前置，方案原文漏了）：把路由要读的名字下沉。**
+
+路由处理器依赖几个还留在 service 的模块级变量，不先搬走，router 就得 import service。实测要下沉的是：
+
+- `state.started_at` + 4 个请求计数器（中间件写、`/health` 与 `/metrics` 读）
+- `scoring_glue.role_scores`（原 `service._scores`，报表与排行榜共用）
+- `_admin_write_audit` 不单独下沉，直接随 admin 路由搬进 `routers/admin.py`（它是那批接口的审计前置，不是通用工具）
+
+**S7-1…S7-7：一次一个 router，每次搬完跑全量。**
+
+顺序与实测行数：
+
+| 步骤 | 模块 | 行数 | 端点 |
+|---|---|---|---|
+| S7-1 | `pages.py` + `routers/meta.py` | 1075 + 197 | 6 |
+| S7-2 | `routers/auth.py` | 194 | 4 |
+| S7-3 | `routers/admin.py` | 191 | 10 |
+| S7-4 | `routers/reports.py` | 109 | 2 |
+| S7-5 | `routers/scores.py` | 124 | 3 |
+| S7-6 | `routers/battles.py` | 795 | 12 |
+| S7-7 | `routers/rpc.py` | 153 | 3 |
+
+与方案原文的差异，都是实测后改的：
+
+1. **多了 `pages.py`。** `/dashboard` 是一个 1065 行的 HTML 模板，塞进 `meta.py` 会让那个文件同样不可读。模板单独成模块，路由只保留鉴权与 303 跳转。
+2. **多了 `routers/scores.py`。** `/internal-scores` 与 `/leaderboard` 既不属于战局也不属于报表，硬塞会让文件名不副实。
+3. **`config.service_version`。** `/health` 原来读 `app.version`，而 app 只在 `service.py` 里；router 去 import 会成环。
+
+已知需要迁移的打桩，全部已迁并断言新位置生效：
+
+- `service.summarize_report`（3 处）→ `routers.reports`
+- `service.suggest_rule_candidate`（1 处）→ `routers.admin`
+- `service.configured_verify_mode`（2 处）→ `routers.battles`（S5 记下的「同步路径读 service 全局名」分叉在这里引爆）
+
+搬走后 service 不再导入这些名字，测试里另外两处**借 service 命名空间**的写法也一并修掉：`service.ACPAgentError` → 直接 import `acp_agents`，`service.asyncio` → 测试自己 import。
 
 ### S8 对比与收尾
 
-```bash
-uv run python -c "import json; from agent_attack_lab.service import app; print(json.dumps(sorted(app.openapi()['paths']), ensure_ascii=False, indent=0))" > /tmp/paths-after.json
-diff /tmp/paths-before.json /tmp/paths-after.json   # 必须为空
-```
+不能只看 `openapi()`：**29 个端点里有 10 个是 `include_in_schema=False`**（首页、`/login`、`/metrics`、`/rpc`、`/agent/*`、SSE、replay、report），契约快照根本看不到它们。
 
-- 检查每个文件行数 ≤ 600。
-- 更新 `backend/README.md` 的目录结构说明。
+三层验证：
+
+1. **契约**：拆分前后各导出 `app.openapi()["paths"]`，md5 必须相同（本次全程 `12465f27…`，21 path / 29 endpoint）。
+2. **路由表**：展开 `app.routes`（这版 Starlette 把 `include_router` 存成 `_IncludedRouter`，要走 `original_router.routes` 递归），逐项比对 path / methods / 函数名 / tags / summary / response_model / 依赖数。拆分前后都是 **39 APIRoute + 1 WebSocket + 4 内建 Route**，其中 29 个进 schema、19 个带鉴权依赖。
+3. **运行时等价**：把基线版本的 `service.py` 单独加载成 `old_service` 模块，两套 app 并行驱动，逐字节比对响应。每个 router 的用例数：meta 7、auth 13、admin 20、reports 7、scores 7、battles 25 + WebSocket 14 帧、rpc 11。
+
+对拍脚本必须处理**两套 app 共享同一份 `state`** 这件事，否则会把共用状态的副作用误判成回归（已踩三次）：
+
+- `state.browser_login_attempts` 被第一轮填满 → 第二轮登录 429
+- `state.public_battle_rate_windows` 同上
+- `state.report_summary_cache` / `leaderboard_cache` / `battle_store` 必须每轮重建，否则第二次不调摘要函数
+- 耗时类字段（`durationMs`）与随机 id 要归一化；注意 SSE 里是带空格的 `": "`，紧格式正则匹配不到
+
+- 检查每个文件行数（结果见下）。
+- `backend/README.md` 增加「代码结构」一节。
+
+## 九、S8 验收结果
+
+| 文件 | 行数 |
+|---|---|
+| `service.py` | **186**（原 3664，−95%） |
+| `pages.py` | 1075（HTML 模板） |
+| `routers/battles.py` | 795 |
+| `routers/meta.py` | 197 |
+| `routers/auth.py` | 194 |
+| `routers/admin.py` | 191 |
+| `routers/rpc.py` | 153 |
+| `routers/scores.py` | 124 |
+| `routers/reports.py` | 109 |
+| `config.py` / `security.py` / `events.py` / `battle_runner.py` / `scoring_glue.py` / `models.py` / `reports.py` / `state.py` | 150 / 290 / 139 / 394 / 140 / 89 / 89 / 65 |
+
+`service.py` 现在只剩：`app = FastAPI(...)`、CORS、`/ui` 静态挂载、`_request_id`、请求指标中间件、`_lifespan`、7 个 `include_router`。
+
+唯一超过 600 行的业务文件是 `routers/battles.py`（795）：里面是 12 个端点，其中 `create_battle` 一个函数就含同步与异步两条执行路径。再拆会让「创建战局」这条主线跨文件，收益不抵成本，本次不动。
+
+依赖方向已实证：`routers/*` 七个模块逐个独立 import，`agent_attack_lab.service` 都不在 `sys.modules` 里。
 
 ## 六、风险与应对
 

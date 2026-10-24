@@ -5,6 +5,37 @@
 
 前后端协作请先阅读 [TEAM_HANDOFF.md](TEAM_HANDOFF.md)。
 
+## 代码结构
+
+`service.py` 只做装配（约 190 行）：`app = FastAPI(...)`、CORS、`/ui` 静态挂载、请求指标中间件、`lifespan`、以及把七个 router 挂上去。业务代码按职责分层，**依赖方向单向**：`routers/* → battle_runner / events / security / scoring_glue → state / config`，任何下层模块都不 import `service`。
+
+```
+src/agent_attack_lab/
+  service.py          app 装配：CORS、/ui 挂载、请求指标中间件、lifespan、include_router
+  config.py           环境变量派生的配置（改完读 config.<name>，不要 from ... import 别名）
+  state.py            进程级单例与计数器（BattleStore、Redis 缓存、限流窗口、请求计数）
+  models.py           对外请求/响应模型
+  security.py         API Key、Cloudflare Access JWT、浏览器会话、登录与请求限流
+  events.py           事件构造与审计事件落库（含体积上限截断）
+  battle_runner.py    战局执行管线：按阶段推进并逐步落事件，供 SSE / WebSocket 跟随
+  scoring_glue.py     分数快照持久化、补算、排行榜失效
+  reports.py          Markdown 报告渲染（纯字符串，无 I/O）
+  pages.py            后台页面 HTML 模板（纯字符串）
+  routers/
+    meta.py           /、/dashboard、/health、/metrics、/external-cases
+    auth.py           /login、/auth/session
+    admin.py          /admin/**（样本、规则、规则候选、审计日志）
+    battles.py        /battles/**（创建、重试、取消、删除、事件、回合、SSE、WebSocket、replay、audit）
+    reports.py        /reports/{id}、/battles/{id}/report
+    scores.py         /battles/{id}/score、/internal-scores、/leaderboard
+    rpc.py            /rpc、/agent/attack、/agent/defend
+```
+
+两条容易踩的约定：
+
+- **读配置和状态一律走模块属性**（`config.api_key`、`state.battle_store`），不要 `from .config import api_key`。测试用 `monkeypatch.setattr(config, "api_key", ...)` 打桩，静态绑定的别名会让打桩失效而测试照样通过。
+- **router 不许 import `service`**。路由要用的辅助函数要么已经在下层模块里，要么就放进同一个 router 文件；确实需要反向依赖时，说明分层划错了。
+
 ## 本地启动（Windows PowerShell）
 
 在后端目录 `D:\梧桐\backend` 执行：
