@@ -34,6 +34,9 @@ backend/.env.bak*
 /yuanyi_home.html
 /yuanyiagentzhandui_巡检报告_*.md
 
+# Node dependencies (root and nested)
+node_modules/
+
 # Codex local handoff state
 codex/
 
