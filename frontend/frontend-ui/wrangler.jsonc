@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "agent-attack-lab",
+  "account_id": "5ae15bce614603a1748af32e96515395",
   "compatibility_date": "2026-10-09",
   "assets": {
     "directory": "./dist",
