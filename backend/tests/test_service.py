@@ -3,10 +3,11 @@ import sqlite3
 import time
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import service, state
+from agent_attack_lab import config, service, state
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
@@ -247,7 +248,7 @@ def test_dashboard_prefills_query_params_and_escapes_topic() -> None:
 def test_browser_login_page_redirects_to_safe_dashboard_destination(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_browser_password", "browser-secret")
+    monkeypatch.setattr(config, "browser_password", "browser-secret")
     browser = TestClient(
         service.app, follow_redirects=False, base_url="https://api.example.test"
     )
@@ -276,10 +277,10 @@ def test_browser_login_page_redirects_to_safe_dashboard_destination(
 def test_same_origin_browser_login_authenticates_dashboard_and_mutations(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_api_key", "server-only-secret")
-    monkeypatch.setattr(service, "_browser_password", "browser-secret")
-    monkeypatch.setattr(service, "_browser_cookie_secure", False)
-    monkeypatch.setattr(service, "_protect_read_routes", False)
+    monkeypatch.setattr(config, "api_key", "server-only-secret")
+    monkeypatch.setattr(config, "browser_password", "browser-secret")
+    monkeypatch.setattr(config, "browser_cookie_secure", False)
+    monkeypatch.setattr(config, "protect_read_routes", False)
     monkeypatch.setattr(service, "_browser_sessions", {})
     monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
     browser = TestClient(service.app, base_url="https://api.example.test")
@@ -563,7 +564,7 @@ def test_battle_persists_independent_arbiter_review(monkeypatch) -> None:
 def test_rule_candidate_route_never_saves_candidate_without_manual_approval(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_api_key", "admin-test-key")
+    monkeypatch.setattr(config, "api_key", "admin-test-key")
     created: list[dict[str, object]] = []
     monkeypatch.setattr(
         state.battle_store, "save_admin_rule", lambda value: created.append(value)
@@ -707,7 +708,7 @@ def test_external_case_route_is_read_only_and_keeps_provenance(
         catalog=catalog,
         source_url="https://example.invalid/catalog.json",
     )
-    monkeypatch.setattr(service, "_external_cases_database", database)
+    monkeypatch.setattr(config, "external_cases_database", database)
 
     response = client.get("/external-cases", params={"q": "CVE-2099", "limit": 1})
 
@@ -839,8 +840,8 @@ def test_existing_team_routes_are_exposed_and_protected_when_reads_are_enabled(
 ) -> None:
     store = BattleStore(str(tmp_path / "team-contract.sqlite3"))
     monkeypatch.setattr(state, "battle_store", store)
-    monkeypatch.setattr(service, "_protect_read_routes", True)
-    monkeypatch.setattr(service, "_api_key", "team-secret")
+    monkeypatch.setattr(config, "protect_read_routes", True)
+    monkeypatch.setattr(config, "api_key", "team-secret")
     created = client.post(
         "/battles",
         headers={"X-API-Key": "team-secret"},
@@ -1506,9 +1507,9 @@ def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(
     database = tmp_path / "migrated.sqlite3"
     BattleStore(str(database))
     monkeypatch.setenv("AGENT_BATTLE_DATABASE_URL", "sqlite:///" + database.as_posix())
-    config = Config(str(service.Path(__file__).parents[1] / "alembic.ini"))
-    command.upgrade(config, "head")
-    command.upgrade(config, "head")
+    alembic_config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "head")
 
     import sqlite3
 
@@ -1551,7 +1552,7 @@ def test_sqlite_store_handles_concurrent_writes(tmp_path) -> None:
 
 
 def test_event_payload_is_bounded(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_event_data_max_bytes", 1024)
+    monkeypatch.setattr(config, "event_data_max_bytes", 1024)
     event = service._event(
         "battle-large",
         1,
@@ -1779,8 +1780,8 @@ def test_retry_failed_battle() -> None:
 
 
 def test_read_routes_can_be_protected_together(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_protect_read_routes", True)
-    monkeypatch.setattr(service, "_api_key", "read-secret")
+    monkeypatch.setattr(config, "protect_read_routes", True)
+    monkeypatch.setattr(config, "api_key", "read-secret")
     response = client.post(
         "/battles",
         json={"difficulty": "low", "topic": "鉴权测试"},
@@ -1814,11 +1815,11 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(
 ) -> None:
     from fastapi.testclient import TestClient
 
-    monkeypatch.setattr(service, "_api_key", "server-only-secret")
+    monkeypatch.setattr(config, "api_key", "server-only-secret")
     browser_password = "一段足够长的登录密码"
-    monkeypatch.setattr(service, "_browser_password", browser_password)
-    monkeypatch.setattr(service, "_browser_cookie_secure", False)
-    monkeypatch.setattr(service, "_protect_read_routes", False)
+    monkeypatch.setattr(config, "browser_password", browser_password)
+    monkeypatch.setattr(config, "browser_cookie_secure", False)
+    monkeypatch.setattr(config, "protect_read_routes", False)
     monkeypatch.setattr(service, "_browser_sessions", {})
     monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
     browser = TestClient(service.app, follow_redirects=False)
@@ -1875,7 +1876,7 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(
 def test_browser_login_requires_configured_password_and_trusted_origin(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_browser_password", "browser-secret")
+    monkeypatch.setattr(config, "browser_password", "browser-secret")
     monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
     untrusted = client.post(
         "/auth/session",
@@ -1887,13 +1888,13 @@ def test_browser_login_requires_configured_password_and_trusted_origin(
         "https://demo-front-end.trycloudflare.com"
     )
 
-    monkeypatch.setattr(service, "_browser_password", "")
+    monkeypatch.setattr(config, "browser_password", "")
     disabled = client.post("/auth/session", json={"password": "anything"})
     assert disabled.status_code == 503
 
 
 def test_browser_login_rate_limit_returns_retry_after(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_browser_password", "browser-secret")
+    monkeypatch.setattr(config, "browser_password", "browser-secret")
     monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
     browser = TestClient(service.app)
     for _ in range(5):
@@ -1907,9 +1908,9 @@ def test_browser_login_rate_limit_returns_retry_after(monkeypatch) -> None:
 def test_cloudflare_access_jwt_authenticates_without_browser_password(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_api_key", "")
-    monkeypatch.setattr(service, "_browser_password", "")
-    monkeypatch.setattr(service, "_cloudflare_access_configured", True)
+    monkeypatch.setattr(config, "api_key", "")
+    monkeypatch.setattr(config, "browser_password", "")
+    monkeypatch.setattr(config, "cloudflare_access_configured", True)
     monkeypatch.setattr(
         service,
         "_verify_cloudflare_access_jwt",
@@ -1955,7 +1956,7 @@ def test_cloudflare_access_jwt_authenticates_without_browser_password(
 
 
 def test_public_battle_creation_has_separate_rate_limit(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_public_battle_limit_per_minute", 1)
+    monkeypatch.setattr(config, "public_battle_limit_per_minute", 1)
     state.public_battle_rate_windows.clear()
 
     first = client.post("/battles", json={"topic": "公开限流测试"})
@@ -1979,13 +1980,13 @@ def test_cloudflare_access_jwt_verifies_signature_claims_and_expiry(
         def get_signing_key_from_jwt(self, token: str):
             return type("SigningKey", (), {"key": public_key})()
 
-    monkeypatch.setattr(service, "_cloudflare_access_configured", True)
+    monkeypatch.setattr(config, "cloudflare_access_configured", True)
     monkeypatch.setattr(
-        service,
-        "_cloudflare_access_team_domain",
+        config,
+        "cloudflare_access_team_domain",
         "https://team.example.cloudflareaccess.com",
     )
-    monkeypatch.setattr(service, "_cloudflare_access_audience", "audience-1")
+    monkeypatch.setattr(config, "cloudflare_access_audience", "audience-1")
     monkeypatch.setattr(service, "_cloudflare_jwk_client", FakeJwkClient())
     now = int(time.time())
 
@@ -2380,7 +2381,7 @@ def test_aip_rpc_start_returns_task_result() -> None:
 
 
 def test_api_key_protects_agent_routes(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_api_key", "test-secret")
+    monkeypatch.setattr(config, "api_key", "test-secret")
     without_key = client.post(
         "/agent/attack", json={"difficulty": "low", "topic": "安全测试"}
     )
@@ -2407,7 +2408,7 @@ def test_api_key_protects_agent_routes(monkeypatch) -> None:
 
 
 def test_api_key_protects_metrics(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_api_key", "test-secret")
+    monkeypatch.setattr(config, "api_key", "test-secret")
     assert client.get("/metrics").status_code == 401
     response = client.get("/metrics", headers={"X-API-Key": "test-secret"})
     assert response.status_code == 200
@@ -2482,7 +2483,7 @@ def test_cors_preflight_allows_production_frontend_with_credentials() -> None:
 
 def test_rate_limit_returns_retry_after(monkeypatch) -> None:
     state.rate_windows.clear()
-    monkeypatch.setattr(service, "_rate_limit_per_minute", 1)
+    monkeypatch.setattr(config, "rate_limit_per_minute", 1)
     first = client.post(
         "/agent/attack", json={"difficulty": "low", "topic": "限流测试"}
     )

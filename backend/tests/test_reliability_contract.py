@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import service, state
+from agent_attack_lab import config, service, state
 
 
 def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> None:
@@ -99,7 +99,7 @@ def test_battle_timeout_is_persisted_as_failed(monkeypatch) -> None:
         }
     )
     monkeypatch.setattr(service, "_run_battle_async", stuck_battle)
-    monkeypatch.setattr(service, "_battle_timeout_seconds", 0.01)
+    monkeypatch.setattr(config, "battle_timeout_seconds", 0.01)
 
     import asyncio
 

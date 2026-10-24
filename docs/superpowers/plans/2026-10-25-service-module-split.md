@@ -55,7 +55,7 @@ agent_attack_lab/
 | `service._lifespan` | 4 | `service.py`（不变） |
 | `service._verify_cloudflare_access_jwt` | 3 | `security.verify_cloudflare_access_jwt` |
 | `service.BattleRequest` | 3 | `models.py` |
-| `service._event` | 2 | `events.build_event` |
+| `service._event` | 0（实测） | `events.build_event` |
 | `service._browser_client_ip` / `_rate_windows` / `_public_battle_rate_windows` | 各 1-2 | `security.*` / `state.*` |
 
 **注意**：不能靠 `service.py` 里写 `_battle_store = state.battle_store` 这种别名兼容，因为别名是导入时静态绑定，`monkeypatch.setattr(service, "_battle_store", store)` 只改 service 模块上的名字，内部代码读 `state.battle_store` 仍拿旧值。
@@ -84,8 +84,12 @@ agent_attack_lab/
 
 ### S2 抽 `config.py`
 
-- 搬 `_env_int` 与全部 `AGENT_*` 常量、默认值。
-- 此步纯搬运，测试无 patch 点，风险最低。
+- 搬 `_env_int` 与全部 `AGENT_*` / `CF_ACCESS_*` 常量、CORS 来源、静态资源路径、超时、开关。
+- 同步改 **29 处**打桩目标（实测，不是方案最初说的"无 patch 点"）：`_api_key` 8、`_browser_password` 7、`_protect_read_routes` 4、`_cloudflare_access_configured` 2、`_browser_cookie_secure` 2、`_cloudflare_access_audience` / `_rate_limit_per_minute` / `_public_battle_limit_per_minute` / `_external_cases_database` / `_event_data_max_bytes` / `_battle_timeout_seconds` / `_cloudflare_access_team_domain` 各 1。
+- 常量在 `config.py` 里去掉前导下划线（`config.api_key` 而不是 `config._api_key`），因为拆分后它是模块的公开接口。
+- 验收：193 绿 + `app.openapi()["paths"]` 与 S0 基准一致 + 一次「打桩是否真的生效」的实证（改 `config.*` 后请求行为必须跟着变，否则就是 alias 造成的假绿）。
+- 注意：`_aip_server_options` **不能**搬，它依赖后面才定义的 `handle_rpc_request`；`_browser_sessions` / `_browser_login_attempts` / `_cloudflare_jwk_client` 是运行时状态，留给 S3。
+- 注意：删掉 `_frontend_dist` 后 `service.py` 里的 `Path` 变为未使用，`ruff --fix` 会删掉它——而 `test_service.py` 曾经用 `service.Path` 借这个副作用，需要改成测试自己 import `pathlib.Path`。
 
 ### S3 抽 `security.py`
 
@@ -96,7 +100,8 @@ agent_attack_lab/
 ### S4 抽 `events.py`
 
 - 搬 `_event`、`_bounded_event_data`、`_event_stage_id`、`_event_classification`、`_record_audit_event`。
-- 同步改 2 处 `service._event`。
+- 实测 **0 处** `service._event` 打桩（方案最初写的 2 处在当前代码里已不存在；`test_battle_audit.py` 里的 `_event` 是该文件自己的本地 helper，首参是 sequence，与 service 无关）。
+- 唯一的耦合是 `_event_data_max_bytes`，它在 S2 之后已经变成 `config.event_data_max_bytes`，所以本步必须在 S2 之后做，否则该常量会被切碎成两处配置。
 - 验收：`test_event_contract.py` 与 replay 相关用例全绿。
 
 ### S5 抽 `battle_runner.py` + `scoring_glue.py`

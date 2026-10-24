@@ -15,7 +15,6 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from html import escape as escape_html
-from pathlib import Path
 from threading import Lock
 from typing import Any, Literal
 from urllib.parse import quote, urlsplit
@@ -55,7 +54,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from agent_attack_lab import state
+from agent_attack_lab import config, state
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
     call_attacker,
@@ -108,49 +107,12 @@ app = FastAPI(
     },
 )
 
-_default_origins = {
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://yuanyiagentzhandui.cn",
-}
-_configured_origins = {
-    origin.strip()
-    for origin in os.getenv("AGENT_CORS_ORIGINS", "").split(",")
-    if origin.strip()
-}
-_cors_origins = _configured_origins or _default_origins
-_cors_origin_regex = os.getenv(
-    "AGENT_CORS_ORIGIN_REGEX",
-    r"^https://[a-z0-9-]+\.trycloudflare\.com$",
-)
-_cloudflare_access_team_domain = (
-    os.getenv("CF_ACCESS_TEAM_DOMAIN", "").strip().rstrip("/")
-)
-_cloudflare_access_audience = os.getenv("CF_ACCESS_AUDIENCE", "").strip()
-if bool(_cloudflare_access_team_domain) != bool(_cloudflare_access_audience):
-    raise RuntimeError(
-        "Cloudflare Access 鉴权必须同时配置 CF_ACCESS_TEAM_DOMAIN 和 CF_ACCESS_AUDIENCE"
-    )
-_cloudflare_access_configured = bool(
-    _cloudflare_access_team_domain and _cloudflare_access_audience
-)
-_browser_auth_configured = (
-    bool(os.getenv("AGENT_BROWSER_PASSWORD", "")) or _cloudflare_access_configured
-)
-if _browser_auth_configured and "*" in _cors_origins:
-    raise RuntimeError("启用浏览器会话时 AGENT_CORS_ORIGINS 必须使用精确来源")
-if (
-    _browser_auth_configured
-    and not os.getenv("AGENT_API_KEY", "").strip()
-    and bool(os.getenv("AGENT_BROWSER_PASSWORD", ""))
-):
-    raise RuntimeError("启用浏览器会话时必须同时配置服务端 AGENT_API_KEY")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=sorted(_cors_origins),
-    allow_origin_regex=None if _browser_auth_configured else _cors_origin_regex,
+    allow_origins=sorted(config.cors_origins),
+    allow_origin_regex=None
+    if config.browser_auth_configured
+    else config.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
@@ -163,12 +125,11 @@ app.add_middleware(
     ],
 )
 
-_frontend_dist = (
-    Path(__file__).resolve().parents[3] / "frontend" / "frontend-ui" / "dist"
-)
-if _frontend_dist.is_dir():
+if config.frontend_dist.is_dir():
     app.mount(
-        "/ui", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend-ui"
+        "/ui",
+        StaticFiles(directory=str(config.frontend_dist), html=True),
+        name="frontend-ui",
     )
 
 
@@ -255,77 +216,22 @@ _request_errors = 0
 _request_total_duration_ms = 0.0
 _request_max_duration_ms = 0.0
 _rate_limited_count = 0
-_api_key = os.getenv("AGENT_API_KEY", "").strip()
-_protect_read_routes = os.getenv("AGENT_PROTECT_READS", "0").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
-_local_aic = os.getenv("AGENT_LOCAL_AIC", "").strip() or None
-_identity_binding_enabled = os.getenv(
-    "AGENT_IDENTITY_BINDING_ENABLED", ""
-).strip().lower() in {"1", "true", "yes", "on"}
-if _identity_binding_enabled and not _local_aic:
-    raise RuntimeError(
-        "AGENT_IDENTITY_BINDING_ENABLED 已开启，但未配置 AGENT_LOCAL_AIC"
-    )
 _aip_server_options = server_identity_options(
     handle_rpc_request,
-    local_aic=_local_aic,
-    enabled=_identity_binding_enabled,
+    local_aic=config.local_aic,
+    enabled=config.identity_binding_enabled,
     setting_name="AGENT_IDENTITY_BINDING_ENABLED",
 )
-_event_data_max_bytes = 32768
 _battle_timeout_count = 0
 _battle_cancel_count = 0
 
 
-def _env_int(name: str, default: int, minimum: int = 0) -> int:
-    try:
-        return max(minimum, int(os.getenv(name, str(default))))
-    except ValueError:
-        return default
-
-
-_battle_timeout_seconds = min(
-    max(_env_int("AGENT_BATTLE_TIMEOUT_SECONDS", 300, minimum=5), 5),
-    3600,
-)
-_score_backfill_batch_size = min(
-    _env_int("AGENT_SCORE_BACKFILL_BATCH_SIZE", 100, minimum=1),
-    1000,
-)
-
-
-_browser_password = os.getenv("AGENT_BROWSER_PASSWORD", "")
-_browser_session_ttl_seconds = min(
-    max(_env_int("AGENT_BROWSER_SESSION_TTL_SECONDS", 28800, minimum=300), 300),
-    86400,
-)
-_browser_cookie_name = "agent_browser_session"
-_browser_cookie_secure = os.getenv(
-    "AGENT_BROWSER_COOKIE_SECURE", "1"
-).strip().lower() not in {"0", "false", "no"}
-_browser_cookie_samesite = (
-    os.getenv("AGENT_BROWSER_COOKIE_SAMESITE", "lax").strip().lower()
-)
-if _browser_cookie_samesite not in {"lax", "strict", "none"}:
-    _browser_cookie_samesite = "lax"
-if _browser_cookie_samesite == "none" and not _browser_cookie_secure:
-    raise RuntimeError("SameSite=None 浏览器会话 Cookie 必须启用 Secure")
 _browser_sessions: dict[str, float] = {}
 _browser_sessions_lock = Lock()
 _browser_login_attempts: dict[str, deque[float]] = defaultdict(deque)
 _browser_login_lock = Lock()
 _cloudflare_jwk_client: Any | None = None
 _cloudflare_jwk_lock = Lock()
-
-_rate_limit_per_minute = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 60)
-_public_battle_limit_per_minute = _env_int("AGENT_PUBLIC_BATTLE_LIMIT_PER_MINUTE", 10)
-_event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=1024)
-_external_cases_database = Path(
-    os.getenv("AGENT_EXTERNAL_CASE_DB", ".data/external_security_cases.sqlite3")
-)
 
 
 def _request_id(request: Request) -> str:
@@ -413,17 +319,19 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
 def _check_api_key(request: Request) -> None:
     """Enable a simple deployment-time API key without affecting local development."""
     supplied = request.headers.get("x-api-key", "")
-    if _api_key and not hmac.compare_digest(
-        supplied.encode("utf-8"), _api_key.encode("utf-8")
+    if config.api_key and not hmac.compare_digest(
+        supplied.encode("utf-8"), config.api_key.encode("utf-8")
     ):
         raise HTTPException(status_code=401, detail="缺少或无效的 API 密钥")
-    if not _api_key and (_browser_password or _cloudflare_access_configured):
+    if not config.api_key and (
+        config.browser_password or config.cloudflare_access_configured
+    ):
         raise HTTPException(status_code=401, detail="服务端 API 密钥未配置")
 
 
 def _verify_cloudflare_access_jwt(token: str) -> bool:
     """Verify the Access assertion against the configured team JWKS and audience."""
-    if not _cloudflare_access_configured or not token:
+    if not config.cloudflare_access_configured or not token:
         return False
     try:
         import jwt
@@ -433,7 +341,7 @@ def _verify_cloudflare_access_jwt(token: str) -> bool:
         with _cloudflare_jwk_lock:
             if _cloudflare_jwk_client is None:
                 _cloudflare_jwk_client = PyJWKClient(
-                    f"{_cloudflare_access_team_domain}/cdn-cgi/access/certs",
+                    f"{config.cloudflare_access_team_domain}/cdn-cgi/access/certs",
                     cache_jwk_set=True,
                     lifespan=300,
                 )
@@ -443,8 +351,8 @@ def _verify_cloudflare_access_jwt(token: str) -> bool:
             token,
             signing_key,
             algorithms=["RS256"],
-            audience=_cloudflare_access_audience,
-            issuer=_cloudflare_access_team_domain,
+            audience=config.cloudflare_access_audience,
+            issuer=config.cloudflare_access_team_domain,
             options={"require": ["exp", "iat", "iss", "aud"]},
         )
         return True
@@ -454,7 +362,7 @@ def _verify_cloudflare_access_jwt(token: str) -> bool:
 
 
 def _browser_origin_allowed(origin: str, request: Request | None = None) -> bool:
-    if origin in _cors_origins:
+    if origin in config.cors_origins:
         return True
     if request is None:
         return False
@@ -504,7 +412,7 @@ def _browser_session_digest(token: str) -> str:
 
 
 def _has_browser_session(request: Request) -> bool:
-    token = request.cookies.get(_browser_cookie_name, "")
+    token = request.cookies.get(config.browser_cookie_name, "")
     if not token:
         return False
     digest = _browser_session_digest(token)
@@ -531,13 +439,13 @@ def _issue_browser_session() -> str:
         if len(_browser_sessions) >= 10000:
             raise HTTPException(status_code=503, detail="浏览器会话容量已满")
         _browser_sessions[_browser_session_digest(token)] = (
-            now + _browser_session_ttl_seconds
+            now + config.browser_session_ttl_seconds
         )
     return token
 
 
 def _revoke_browser_session(request: Request) -> None:
-    token = request.cookies.get(_browser_cookie_name, "")
+    token = request.cookies.get(config.browser_cookie_name, "")
     if token:
         with _browser_sessions_lock:
             _browser_sessions.pop(_browser_session_digest(token), None)
@@ -553,8 +461,8 @@ def _check_browser_session_origin(request: Request) -> None:
 
 def _check_browser_or_api_auth(request: Request) -> None:
     supplied_api_key = request.headers.get("x-api-key", "")
-    if _api_key and hmac.compare_digest(
-        supplied_api_key.encode("utf-8"), _api_key.encode("utf-8")
+    if config.api_key and hmac.compare_digest(
+        supplied_api_key.encode("utf-8"), config.api_key.encode("utf-8")
     ):
         return
     access_token = request.headers.get("cf-access-jwt-assertion", "")
@@ -562,10 +470,14 @@ def _check_browser_or_api_auth(request: Request) -> None:
         if request.headers.get("origin"):
             _check_browser_session_origin(request)
         return
-    if _browser_password and _has_browser_session(request):
+    if config.browser_password and _has_browser_session(request):
         _check_browser_session_origin(request)
         return
-    if not _api_key and not _browser_password and not _cloudflare_access_configured:
+    if (
+        not config.api_key
+        and not config.browser_password
+        and not config.cloudflare_access_configured
+    ):
         return
     raise HTTPException(
         status_code=401,
@@ -617,13 +529,17 @@ def _metrics_auth_dependency(request: Request) -> None:
 
 
 def _read_auth_dependency(request: Request) -> None:
-    if _protect_read_routes or _browser_password or _cloudflare_access_configured:
+    if (
+        config.protect_read_routes
+        or config.browser_password
+        or config.cloudflare_access_configured
+    ):
         _check_browser_or_api_auth(request)
 
 
 def _public_battle_rate_limit_dependency(request: Request) -> None:
     """Limit anonymous battle creation separately from internal agent traffic."""
-    if _public_battle_limit_per_minute <= 0:
+    if config.public_battle_limit_per_minute <= 0:
         return
     client_key = _browser_client_ip(request)
     now = time.monotonic()
@@ -632,7 +548,7 @@ def _public_battle_rate_limit_dependency(request: Request) -> None:
         window = state.public_battle_rate_windows[client_key]
         while window and window[0] <= cutoff:
             window.popleft()
-        if len(window) >= _public_battle_limit_per_minute:
+        if len(window) >= config.public_battle_limit_per_minute:
             retry_after = max(1, int(60 - (now - window[0])))
             raise HTTPException(
                 status_code=429,
@@ -645,7 +561,7 @@ def _public_battle_rate_limit_dependency(request: Request) -> None:
 def _rate_limit_dependency(request: Request) -> None:
     """Apply a small in-process window limit to mutating agent endpoints."""
     global _rate_limited_count
-    if _rate_limit_per_minute <= 0:
+    if config.rate_limit_per_minute <= 0:
         return
     client_key = request.client.host if request.client else "unknown"
     now = time.monotonic()
@@ -654,7 +570,7 @@ def _rate_limit_dependency(request: Request) -> None:
         window = state.rate_windows[client_key]
         while window and window[0] <= cutoff:
             window.popleft()
-        if len(window) >= _rate_limit_per_minute:
+        if len(window) >= config.rate_limit_per_minute:
             _rate_limited_count += 1
             retry_after = max(1, int(60 - (now - window[0])))
             raise HTTPException(
@@ -676,7 +592,7 @@ def _invalidate_leaderboard_cache() -> None:
 
 def _bounded_event_data(data: dict[str, Any]) -> dict[str, Any]:
     serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    if len(serialized.encode("utf-8")) <= _event_data_max_bytes:
+    if len(serialized.encode("utf-8")) <= config.event_data_max_bytes:
         return data
     compact = dict(data)
     sample = compact.get("sample")
@@ -689,12 +605,12 @@ def _bounded_event_data(data: dict[str, Any]) -> dict[str, Any]:
     compact["dataTruncated"] = True
     compact["originalBytes"] = len(serialized.encode("utf-8"))
     compact_serialized = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
-    if len(compact_serialized.encode("utf-8")) <= _event_data_max_bytes:
+    if len(compact_serialized.encode("utf-8")) <= config.event_data_max_bytes:
         return compact
     return {
         "dataTruncated": True,
         "originalBytes": len(serialized.encode("utf-8")),
-        "preview": serialized[: max(1, _event_data_max_bytes // 8)],
+        "preview": serialized[: max(1, config.event_data_max_bytes // 8)],
     }
 
 
@@ -822,7 +738,7 @@ async def _run_battle_with_tracking(battle_id: str, payload: BattleRequest) -> N
         state.battle_tasks[battle_id] = current
     try:
         await asyncio.wait_for(
-            _run_battle_async(battle_id, payload), timeout=_battle_timeout_seconds
+            _run_battle_async(battle_id, payload), timeout=config.battle_timeout_seconds
         )
     except TimeoutError:
         _battle_timeout_count += 1
@@ -1032,7 +948,9 @@ def _battle_stats(
     }
 
 
-def _backfill_missing_internal_scores(limit: int = _score_backfill_batch_size) -> int:
+def _backfill_missing_internal_scores(
+    limit: int = config.score_backfill_batch_size,
+) -> int:
     """Backfill a bounded batch of terminal battles without replacing snapshots."""
     list_records = getattr(state.battle_store, "list", None)
     list_scores = getattr(state.battle_store, "list_scores", None)
@@ -1306,7 +1224,7 @@ def dashboard(
     try:
         _check_browser_or_api_auth(request)
     except HTTPException as exc:
-        if exc.status_code == 401 and _browser_password:
+        if exc.status_code == 401 and config.browser_password:
             destination = request.url.path
             if request.url.query:
                 destination += "?" + request.url.query
@@ -2415,11 +2333,11 @@ def browser_login_page(
         or any(ord(char) < 32 for char in destination)
     ):
         destination = "/dashboard"
-    if _browser_password and _has_browser_session(request):
+    if config.browser_password and _has_browser_session(request):
         return RedirectResponse(
             destination, status_code=303, headers={"Cache-Control": "no-store"}
         )
-    login_enabled = bool(_browser_password)
+    login_enabled = bool(config.browser_password)
     disabled_message = (
         "浏览器密码登录尚未启用，请联系服务管理员配置。"
         if not login_enabled
@@ -2510,13 +2428,13 @@ def browser_login_page(
 @app.get("/auth/session", summary="查询浏览器登录状态", tags=["浏览器鉴权"])
 def browser_session_status(request: Request, response: Response) -> dict[str, bool]:
     response.headers["Cache-Control"] = "no-store"
-    authenticated = bool(_browser_password) and _has_browser_session(request)
+    authenticated = bool(config.browser_password) and _has_browser_session(request)
     if _verify_cloudflare_access_jwt(
         request.headers.get("cf-access-jwt-assertion", "")
     ):
         authenticated = True
     return {
-        "enabled": bool(_browser_password) or _cloudflare_access_configured,
+        "enabled": bool(config.browser_password) or config.cloudflare_access_configured,
         "authenticated": authenticated,
     }
 
@@ -2532,27 +2450,30 @@ def create_browser_session(
     request: Request,
     response: Response,
 ) -> dict[str, Any]:
-    if not _browser_password:
+    if not config.browser_password:
         raise HTTPException(status_code=503, detail="浏览器登录尚未启用")
     origin = request.headers.get("origin", "")
     if origin and not _browser_origin_allowed(origin, request):
         raise HTTPException(status_code=403, detail="浏览器来源未获允许")
     if not hmac.compare_digest(
-        payload.password.encode("utf-8"), _browser_password.encode("utf-8")
+        payload.password.encode("utf-8"), config.browser_password.encode("utf-8")
     ):
         raise HTTPException(status_code=401, detail="登录密码错误")
     token = _issue_browser_session()
     response.set_cookie(
-        key=_browser_cookie_name,
+        key=config.browser_cookie_name,
         value=token,
-        max_age=_browser_session_ttl_seconds,
+        max_age=config.browser_session_ttl_seconds,
         httponly=True,
-        secure=_browser_cookie_secure,
-        samesite=_browser_cookie_samesite,
+        secure=config.browser_cookie_secure,
+        samesite=config.browser_cookie_samesite,
         path="/",
     )
     response.headers["Cache-Control"] = "no-store"
-    return {"authenticated": True, "expiresInSeconds": _browser_session_ttl_seconds}
+    return {
+        "authenticated": True,
+        "expiresInSeconds": config.browser_session_ttl_seconds,
+    }
 
 
 @app.delete("/auth/session", summary="退出浏览器登录", tags=["浏览器鉴权"])
@@ -2562,10 +2483,10 @@ def delete_browser_session(request: Request, response: Response) -> dict[str, bo
         raise HTTPException(status_code=403, detail="浏览器来源未获允许")
     _revoke_browser_session(request)
     response.delete_cookie(
-        key=_browser_cookie_name,
+        key=config.browser_cookie_name,
         httponly=True,
-        secure=_browser_cookie_secure,
-        samesite=_browser_cookie_samesite,
+        secure=config.browser_cookie_secure,
+        samesite=config.browser_cookie_samesite,
         path="/",
     )
     response.headers["Cache-Control"] = "no-store"
@@ -2590,9 +2511,9 @@ def metrics() -> dict[str, Any]:
         "averageLatencyMs": round(average_latency, 2),
         "maxLatencyMs": round(_request_max_duration_ms, 2),
         "rateLimited": _rate_limited_count,
-        "rateLimitPerMinute": _rate_limit_per_minute,
-        "protectReadRoutes": _protect_read_routes,
-        "eventDataMaxBytes": _event_data_max_bytes,
+        "rateLimitPerMinute": config.rate_limit_per_minute,
+        "protectReadRoutes": config.protect_read_routes,
+        "eventDataMaxBytes": config.event_data_max_bytes,
         "recoveryTasks": len(state.recovery_tasks),
         "activeBattleTasks": len(state.battle_tasks),
         "battleTimeouts": _battle_timeout_count,
@@ -2831,7 +2752,7 @@ def list_external_cases(
     if isinstance(cached, dict):
         return cached
     result = query_external_cases(
-        _external_cases_database,
+        config.external_cases_database,
         query=normalized["q"],
         vendor=normalized["vendor"],
         product=normalized["product"],
@@ -3729,11 +3650,11 @@ async def event_stream(
 
 @app.websocket("/ws/battles/{battle_id}")
 async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
-    if _protect_read_routes and _api_key:
+    if config.protect_read_routes and config.api_key:
         supplied_key = websocket.headers.get("x-api-key") or websocket.query_params.get(
             "api_key"
         )
-        if supplied_key != _api_key:
+        if supplied_key != config.api_key:
             await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
             return
     if await asyncio.to_thread(state.battle_store.get, battle_id) is None:
