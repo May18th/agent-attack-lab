@@ -11,9 +11,27 @@ vi.mock('./adminApi', async () => {
 })
 
 const battle = { id: 'b-1', difficulty: 'high' as const, topic: '测试战局', status: 'failed', createdAt: '2026-10-18T00:00:00Z', attackerOut: { samples: [] }, defenderOut: [] }
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); window.localStorage.clear() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); window.localStorage.clear(); window.history.replaceState(null, '', '/admin') })
+const openWorkspace = async (name: RegExp) => { const tab = await screen.findByRole('tab', { name }); fireEvent.click(tab) }
 
 describe('AdminApp', () => {
+  it('exposes workspace tabs and keeps the selected workspace active', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    render(<AdminApp />)
+
+    const overviewTab = await screen.findByRole('tab', { name: /^总览/ })
+    const battlesTab = screen.getByRole('tab', { name: /^战局/ })
+    expect(overviewTab).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(battlesTab)
+    expect(battlesTab).toHaveAttribute('aria-selected', 'true')
+    expect(overviewTab).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('tabpanel', { name: '战局工作区' })).toBeInTheDocument()
+  })
+
   it('lets an administrator choose the number of rounds and submits it to the admin API', async () => {
     vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
     vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
@@ -22,28 +40,28 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     vi.mocked(adminApi.createAdminBattle).mockResolvedValue({ ...battle, status: 'pending', rounds: 5 } as never)
     render(<AdminApp />)
-    await screen.findByText('运行指标')
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
     fireEvent.click(screen.getByRole('tab', { name: '创建战局' }))
     fireEvent.change(screen.getByLabelText('演练回合数'), { target: { value: '5' } })
     fireEvent.click(screen.getByRole('button', { name: '创建并启动战局' }))
     await waitFor(() => expect(adminApi.createAdminBattle).toHaveBeenCalledWith({ topic: PRESET_THEMES[0], difficulty: 'mid', rounds: 5 }))
   })
 
-  it('opens and filters the command panel with the keyboard shortcut', async () => {
+  it('switches workspaces as real views and persists the selected view in the URL', async () => {
     vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
     vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
     vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
     vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     render(<AdminApp />)
-    await screen.findByText('运行指标')
-    fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
-    const input = screen.getByRole('textbox', { name: '搜索菜单' })
-    expect(screen.getByRole('dialog', { name: '命令面板' })).toBeInTheDocument()
-    fireEvent.change(input, { target: { value: '管理' } })
-    expect(screen.getByRole('option', { name: /管理模块/ })).toHaveAttribute('aria-selected', 'true')
-    fireEvent.keyDown(input, { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: '命令面板' })).not.toBeInTheDocument()
+    await screen.findByRole('tab', { name: /^总览/ })
+    const monitoringTab = screen.getByRole('tab', { name: /^监控/ })
+    fireEvent.click(monitoringTab)
+    expect(monitoringTab).toHaveAttribute('aria-selected', 'true')
+    expect(window.location.hash).toBe('#monitoring')
+    expect(screen.getByRole('tabpanel', { name: '监控工作区' })).toBeInTheDocument()
+    expect(screen.queryByRole('tabpanel', { name: '总览工作区' })).not.toBeInTheDocument()
   })
 
   it('uses the frontend preset theme library and shares custom themes through localStorage', async () => {
@@ -54,9 +72,10 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     vi.mocked(adminApi.createAdminBattle).mockResolvedValue({ ...battle, status: 'pending' } as never)
     render(<AdminApp />)
-    await screen.findByText('运行指标')
+    await screen.findByRole('tab', { name: /^总览/ })
 
     // 预置主题与前台一致，六个都在主题库里
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
     fireEvent.click(screen.getByRole('tab', { name: '主题库' }))
     for (const theme of PRESET_THEMES) {
       expect(await screen.findByRole('button', { name: theme })).toBeInTheDocument()
@@ -101,7 +120,7 @@ describe('AdminApp', () => {
     fireEvent.change(await screen.findByLabelText('后台管理密码'), { target: { value: 'secret' } })
     fireEvent.click(screen.getByRole('button', { name: '登录管理后台' }))
     await waitFor(() => expect(adminApi.loginAdminSession).toHaveBeenCalledWith('secret'))
-    expect(await screen.findByText('运行指标')).toBeInTheDocument()
+    expect(await screen.findByRole('tab', { name: /^总览/ })).toBeInTheDocument()
   })
 
   it('rechecks the session when the access button is clicked', async () => {
@@ -115,7 +134,7 @@ describe('AdminApp', () => {
     render(<AdminApp />)
     fireEvent.click(await screen.findByRole('button', { name: '我已完成认证，重新检查' }))
     await waitFor(() => expect(adminApi.getAdminSession).toHaveBeenCalledTimes(2))
-    expect(await screen.findByText('运行指标')).toBeInTheDocument()
+    expect(await screen.findByRole('tab', { name: /^总览/ })).toBeInTheDocument()
   })
 
   it('renders authenticated modules and filters battles', async () => {
@@ -125,19 +144,24 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [battle], total: 1 })
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     render(<AdminApp />)
-    expect(await screen.findByText('运行指标')).toBeInTheDocument()
-    expect(await screen.findByText('总战局')).toBeInTheDocument()
+    expect(await screen.findByRole('tab', { name: /^总览/ })).toBeInTheDocument()
+    expect((await screen.findAllByText('总战局')).length).toBeGreaterThan(0)
     // 指标区只展示中文卡片与格式化后的数值，不再输出原始 JSON
     expect(screen.queryByText('原始指标数据')).not.toBeInTheDocument()
+    await openWorkspace(/^监控/)
     expect(screen.getByText('1 分 30 秒')).toBeInTheDocument()
+
+    await openWorkspace(/^战局/)
     expect(screen.getByText('战局列表')).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索战局' }), { target: { value: 'needle' } })
+    await waitFor(() => expect(adminApi.listAdminBattles).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'needle' })))
+
+    fireEvent.click(screen.getByRole('tab', { name: /^监控/ }))
     expect(screen.getByText('外部案例')).toBeInTheDocument()
     const externalCases = screen.getByRole('group', { name: '外部案例' })
     expect(externalCases).not.toHaveAttribute('open')
     fireEvent.click(within(externalCases).getByRole('heading', { name: '外部案例' }))
     expect(within(externalCases).getByRole('textbox', { name: '搜索外部案例' })).toBeVisible()
-    fireEvent.change(screen.getByRole('textbox', { name: '搜索战局' }), { target: { value: 'needle' } })
-    await waitFor(() => expect(adminApi.listAdminBattles).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'needle' })))
   })
 
   it('manages samples from the sample library tab with a modal editor', async () => {
@@ -149,7 +173,8 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.listAdminSamples).mockResolvedValue({ items: [{ id: 's-1', topic: '提示注入', content: '忽略规则', source: '测试', useCount: 2, createdAt: '', updatedAt: '' }], total: 1 })
     vi.mocked(adminApi.createAdminSample).mockResolvedValue({ id: 's-2', topic: '越狱', content: '新样本', source: '管理员', useCount: 0, createdAt: '', updatedAt: '' })
     render(<AdminApp />)
-    await screen.findByText('运行指标')
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
     fireEvent.click(screen.getByRole('tab', { name: '样本库' }))
     expect(await screen.findByText('提示注入')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '新增样本' }))
@@ -170,12 +195,14 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.listAdminRules).mockResolvedValue({ items: [{ id: 'r-1', name: '越权拦截', condition: 'role != admin', action: '拦截', hitCount: 1, createdAt: '', updatedAt: '' }], total: 1 })
     vi.mocked(adminApi.listAdminAuditLogs).mockResolvedValue([{ id: 'a-1', eventType: 'rule.updated', status: 'success', createdAt: '2026-01-01', data: {} }])
     render(<AdminApp />)
-    await screen.findByText('运行指标')
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
     fireEvent.click(screen.getByRole('tab', { name: '规则库' }))
     expect(await screen.findByText('越权拦截')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('textbox', { name: '搜索规则' }), { target: { value: '越权' } })
     fireEvent.click(screen.getByRole('button', { name: '查询规则' }))
     await waitFor(() => expect(adminApi.listAdminRules).toHaveBeenLastCalledWith('越权'))
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
     fireEvent.click(screen.getByRole('tab', { name: '审计日志' }))
     expect(await screen.findByText('rule.updated')).toBeInTheDocument()
   })
@@ -187,7 +214,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     render(<AdminApp />)
-    expect(await screen.findByText('运行指标')).toBeInTheDocument()
+    expect(await screen.findByRole('tab', { name: /^总览/ })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '管理员后台 - 管理员认证' })).not.toBeInTheDocument()
   })
 
@@ -201,6 +228,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.retryAdminBattle).mockResolvedValue({ ...battle, status: 'pending' })
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(<AdminApp />)
+    await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
     fireEvent.click(await screen.findByRole('button', { name: '重试战局' }))
     await waitFor(() => expect(adminApi.retryAdminBattle).toHaveBeenCalledWith('b-1'))
@@ -215,6 +243,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.retryAdminBattle).mockResolvedValue({ ...battle, status: 'pending' })
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(<AdminApp />)
+    await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
     fireEvent.click(await screen.findByRole('button', { name: '重试战局' }))
     await waitFor(() => expect(screen.queryByRole('button', { name: '重试战局' })).not.toBeInTheDocument())
@@ -231,6 +260,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.cancelAdminBattle).mockResolvedValue({ ...runningBattle, status: 'failed' })
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(<AdminApp />)
+    await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
     fireEvent.click(await screen.findByRole('button', { name: '取消战局' }))
     await waitFor(() => expect(screen.queryByRole('button', { name: '取消战局' })).not.toBeInTheDocument())
@@ -263,6 +293,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.deleteAdminBattle).mockResolvedValue()
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(<AdminApp />)
+    await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
     await screen.findByRole('button', { name: '删除战局' })
     const detailCalls = vi.mocked(adminApi.getAdminBattleDetail).mock.calls.length
@@ -301,6 +332,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.getAdminReport).mockResolvedValue({})
     render(<AdminApp />)
 
+    await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
     fireEvent.click(screen.getByRole('button', { name: '查看当前战局' }))
     expect((await screen.findAllByText(/当前事件/)).length).toBeGreaterThan(0)
@@ -325,9 +357,10 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.getAdminBattleAudit).mockResolvedValue({})
     vi.mocked(adminApi.getAdminReport).mockResolvedValue({})
     render(<AdminApp />)
+    await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
 
-    const replay = await screen.findByRole('region', { name: '3D 战局回放' })
+    const replay = await screen.findByRole('region', { name: /战局记录/ })
     const loadMore = await within(replay).findByRole('button', { name: '加载更多事件（1 / 2）' })
     fireEvent.click(loadMore)
     fireEvent.click(loadMore)
@@ -352,6 +385,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.getAdminBattleAudit).mockResolvedValue({})
     vi.mocked(adminApi.getAdminReport).mockResolvedValue({})
     render(<AdminApp />)
+    await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看测试战局' }))
     await waitFor(() => expect(adminApi.getAdminBattleDetail).toHaveBeenCalledTimes(1))
     await act(async () => { vi.advanceTimersByTime(14_999) })
@@ -402,6 +436,7 @@ describe('AdminApp', () => {
   it('renders a readable verdict and round breakdown before any raw JSON', async () => {
     mockReadableBattle({ verdict: 'undetermined' })
     render(<AdminApp />)
+    await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看可读战局' }))
 
     expect(await screen.findByText('战局结论')).toBeInTheDocument()
@@ -425,6 +460,7 @@ describe('AdminApp', () => {
     window.history.replaceState({}, '', '/admin?debug=1')
     try {
       render(<AdminApp />)
+      await openWorkspace(/^战局/)
       fireEvent.click(await screen.findByRole('button', { name: '查看可读战局' }))
 
       const rawData = await screen.findByText('原始数据（排查用）')
@@ -437,6 +473,7 @@ describe('AdminApp', () => {
   it('reports a verified compromise instead of an undetermined result', async () => {
     mockReadableBattle({ verdict: 'attacker_won' })
     render(<AdminApp />)
+    await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看可读战局' }))
     expect((await screen.findAllByText('攻击得手（目标已验证）')).length).toBeGreaterThan(0)
     expect(screen.queryByText(/未取得验证证据/)).not.toBeInTheDocument()
@@ -454,7 +491,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     render(<AdminApp />)
-    await screen.findByText('运行指标')
+    await screen.findByRole('tab', { name: /^总览/ })
 
     const kpi = screen.getByRole('region', { name: '关键指标' })
     expect(await within(kpi).findByText('60%')).toBeInTheDocument() // 18/30
@@ -466,6 +503,7 @@ describe('AdminApp', () => {
     for (const key of ['sampleCount', 'acpCallBattles', 'agentExecutionCount', 'averageAgentCallLatencyMs', 'ruleLibraryCaseCount']) {
       expect(screen.queryByText(key)).not.toBeInTheDocument()
     }
+    await openWorkspace(/^监控/)
     // 四个同源字段只出一张卡
     expect(screen.getAllByText('防守命中（含建议/风险）')).toHaveLength(1)
   })
@@ -480,7 +518,8 @@ describe('AdminApp', () => {
       { id: 'a-1', createdAt: '2026-10-24T10:00:00Z', actorRole: 'admin', eventType: 'battle.created', status: 'ok', data: { battleId: 'b-1', topic: '提示注入', rounds: 3 } },
     ] as never)
     render(<AdminApp />)
-    await screen.findByText('运行指标')
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
     fireEvent.click(screen.getByRole('tab', { name: '审计日志' }))
 
     expect(await screen.findByText('战局 ID')).toBeInTheDocument()

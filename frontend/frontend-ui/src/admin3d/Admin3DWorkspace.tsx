@@ -280,8 +280,8 @@ function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.l
   return <section className="admin3d-workspace" aria-labelledby="admin3d-title">
     <header className="admin3d-heading">
       <div>
-        <span className="admin3d-kicker">战局记录 / 事件回放</span>
-        <h2 id="admin3d-title">3D 战局回放</h2>
+        <span className="admin3d-kicker">事件时间线</span>
+        <h2 id="admin3d-title">战局回放</h2>
       </div>
       <div className="admin3d-heading-controls">
         <label className="admin3d-battle-select">

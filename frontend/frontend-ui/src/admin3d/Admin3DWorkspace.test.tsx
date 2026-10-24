@@ -88,7 +88,7 @@ describe('Admin3DWorkspace', () => {
       { sequence: 2, type: '防守拦截', timestamp: '2026-10-19T00:00:02Z' },
     ]
     renderWorkspace({ selectedBattle: battle, events })
-    expect(screen.getByRole('region', { name: '3D 战局回放' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '战局回放' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '播放回放' })).toBeInTheDocument()
     expect(screen.getByRole('slider', { name: '回放进度' })).toBeInTheDocument()
     expect(screen.queryByText(/模拟估算/)).not.toBeInTheDocument()
