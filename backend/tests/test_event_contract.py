@@ -1,8 +1,8 @@
-from agent_attack_lab.service import _event
+from agent_attack_lab.events import build_event
 
 
 def test_event_contains_frontend_replay_contract_metadata() -> None:
-    event = _event(
+    event = build_event(
         "battle-contract",
         1,
         "round.completed",
@@ -23,5 +23,5 @@ def test_event_contains_frontend_replay_contract_metadata() -> None:
 
 
 def test_defense_completed_event_is_classified_as_completed() -> None:
-    event = _event("battle-contract", 1, "defense.completed", "completed", {})
+    event = build_event("battle-contract", 1, "defense.completed", "completed", {})
     assert event["data"]["classification"] == "completed"

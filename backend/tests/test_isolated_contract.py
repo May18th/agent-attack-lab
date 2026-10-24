@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import service
+from agent_attack_lab import state
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
 
@@ -14,7 +14,7 @@ from agent_attack_lab.storage import BattleStore
 def isolated_client(tmp_path, monkeypatch):
     """Keep every contract check away from the developer's default database."""
     store = BattleStore(str(tmp_path / "isolated-battles.sqlite3"))
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     return TestClient(app), store
 
 

@@ -55,7 +55,7 @@ agent_attack_lab/
 | `service._lifespan` | 4 | `service.py`（不变） |
 | `service._verify_cloudflare_access_jwt` | 3 | `security.verify_cloudflare_access_jwt` |
 | `service.BattleRequest` | 3 | `models.py` |
-| `service._event` | 2 | `events.build_event` |
+| `service._event` | 0（实测） | `events.build_event` |
 | `service._browser_client_ip` / `_rate_windows` / `_public_battle_rate_windows` | 各 1-2 | `security.*` / `state.*` |
 
 **注意**：不能靠 `service.py` 里写 `_battle_store = state.battle_store` 这种别名兼容，因为别名是导入时静态绑定，`monkeypatch.setattr(service, "_battle_store", store)` 只改 service 模块上的名字，内部代码读 `state.battle_store` 仍拿旧值。
@@ -79,31 +79,47 @@ agent_attack_lab/
 - 搬：`_battle_store`、`_redis_cache`、`_rate_windows`、`_public_battle_rate_windows`、报告摘要缓存与其余内存缓存。
 - 内部读写改成**函数内取值**（`state.battle_store`），不要 `from state import battle_store` 后直接用。
 - 同步改测试：15 处 `service._battle_store` → `state.battle_store`；2 处 `service._redis_cache`；限流窗口各 2 处。
-- 验收：193 绿 + `service.py` 行数下降 > 150。
+- 验收：193 绿 + `app.openapi()["paths"]` 与 S0 基准一致 + `state.py` 只放定义（实测 43 行）。
+- 注意：这一步**不以行数为指标**。单例定义本来就只有十几行（实测迁出 14 行），真正的瘦身在 S5 与 S7；S1 的价值是把 80 余处引用改成 `state.<name>`，并在同一次提交里迁移打桩目标。
 
 ### S2 抽 `config.py`
 
-- 搬 `_env_int` 与全部 `AGENT_*` 常量、默认值。
-- 此步纯搬运，测试无 patch 点，风险最低。
+- 搬 `_env_int` 与全部 `AGENT_*` / `CF_ACCESS_*` 常量、CORS 来源、静态资源路径、超时、开关。
+- 同步改 **29 处**打桩目标（实测，不是方案最初说的"无 patch 点"）：`_api_key` 8、`_browser_password` 7、`_protect_read_routes` 4、`_cloudflare_access_configured` 2、`_browser_cookie_secure` 2、`_cloudflare_access_audience` / `_rate_limit_per_minute` / `_public_battle_limit_per_minute` / `_external_cases_database` / `_event_data_max_bytes` / `_battle_timeout_seconds` / `_cloudflare_access_team_domain` 各 1。
+- 常量在 `config.py` 里去掉前导下划线（`config.api_key` 而不是 `config._api_key`），因为拆分后它是模块的公开接口。
+- 验收：193 绿 + `app.openapi()["paths"]` 与 S0 基准一致 + 一次「打桩是否真的生效」的实证（改 `config.*` 后请求行为必须跟着变，否则就是 alias 造成的假绿）。
+- 注意：`_aip_server_options` **不能**搬，它依赖后面才定义的 `handle_rpc_request`；`_browser_sessions` / `_browser_login_attempts` / `_cloudflare_jwk_client` 是运行时状态，留给 S3。
+- 注意：删掉 `_frontend_dist` 后 `service.py` 里的 `Path` 变为未使用，`ruff --fix` 会删掉它——而 `test_service.py` 曾经用 `service.Path` 借这个副作用，需要改成测试自己 import `pathlib.Path`。
 
 ### S3 抽 `security.py`
 
-- 搬 Cloudflare Access JWT 校验、browser session（digest/issue/revoke/origin 校验）、登录限流、`_check_api_key`、四个 `*_dependency`。
-- 同步改 3 处 `service._verify_cloudflare_access_jwt`、1 处 `_browser_client_ip`、1 处 `_browser_origin_allowed`。
-- 验收：`/auth/session`、`/login` 相关测试全绿（`test_service.py` 里鉴权用例约 20 个）。
+- 搬 16 个函数：`_check_api_key`、`_verify_cloudflare_access_jwt`、`_browser_origin_allowed`、`_browser_session_digest`、`_has_browser_session`、`_issue_browser_session`、`_revoke_browser_session`、`_check_browser_session_origin`、`_check_browser_or_api_auth`、`_browser_client_ip`、`_browser_login_rate_limit`、`_api_key_dependency`、`_metrics_auth_dependency`、`_read_auth_dependency`、`_public_battle_rate_limit_dependency`、`_rate_limit_dependency`。
+- **可变状态不跟着走**，按 S1 的口径归 `state.py`：`browser_sessions` + 锁、`browser_login_attempts` + 锁、`cloudflare_jwk_client` + 锁、`rate_limited_count`（后者被 `/metrics` 读）。搬走后 `verify_cloudflare_access_jwt` 与 `rate_limit_dependency` 里的两行 `global` 必须删掉——写 `state.x` 是模块属性赋值，不需要 `global`。
+- 同步改测试 **14 处**：8 处打桩（`_browser_sessions` 2、`_browser_login_attempts` 4、`_cloudflare_jwk_client` 1、`_verify_cloudflare_access_jwt` 1）+ 6 处直接调用（`_verify_cloudflare_access_jwt` 3、`_browser_client_ip` 2、`_browser_origin_allowed` 1）。
+- 验收：193 绿 + 契约 md5 不变 + 接线实证（清空 `state.browser_sessions` 后会话立刻失效；打桩 `security.verify_cloudflare_access_jwt` 后鉴权放行；`state.rate_limited_count` 随 429 递增）。
+- 注意：本步实测迁出 265 行、`security.py` 290 行。**副作用依赖又出现一次**：`Lock` 随 `_browser_*_lock` 一起变成 service.py 里未使用的导入，被 `ruff --fix` 删掉，而 `test_service.py` 里有 `service.Lock()` —— 和 S2 的 `service.Path` 同一类，改成测试自己 `from threading import Lock`。以后每搬一块，先 grep 一遍 `service\.(被搬走的导入名)`。
 
 ### S4 抽 `events.py`
 
 - 搬 `_event`、`_bounded_event_data`、`_event_stage_id`、`_event_classification`、`_record_audit_event`。
-- 同步改 2 处 `service._event`。
+- 实测 **2 处** `service._event` 调用（`test_service.py` 的两个 payload 用例），另外 `test_event_contract.py` 还有 `from agent_attack_lab.service import _event` 的 import 级引用——方案最初写的「2 处」是对的；我曾因 `grep` 结果被 `head` 截断误判为 0 处，教训是**测量时不要截断输出，先看总数**。
+- 唯一的耦合是 `config.event_data_max_bytes`（S2 之后已就位），所以本步在 S2 之后做最省事。
 - 验收：`test_event_contract.py` 与 replay 相关用例全绿。
 
 ### S5 抽 `battle_runner.py` + `scoring_glue.py`
 
 - `battle_runner`：`_run_battle_async`、`_run_battle_with_tracking`、`_schedule_battle_task`、`_battle_attack`、`_battle_defend`、`_tracked_agent_call`、`_mark_battle_terminal`。
-- `scoring_glue`：`_persist_internal_score`、`_insufficient_internal_score`、`_backfill_missing_internal_scores`、`_run_score_backfill`、`_battle_stats`。
-- 这两个模块间的引用必须显式传参，不要互相 import。
+- `scoring_glue`：`_persist_internal_score`、`_insufficient_internal_score`、`_backfill_missing_internal_scores`、`_run_score_backfill`、`_battle_stats`，外加 `_invalidate_leaderboard_cache`（与 `_persist_internal_score` 同属「终态副作用」，一起走）。
 - 验收：战局创建/执行相关用例全绿（这是最大的一块，约占测试 60 例）。
+
+实测修正（2026-10-25 落地时）：
+
+1. **`create_battle` 里还有一条同步执行路径**，它也直接调用 `_tracked_agent_call` / `_battle_attack` / `_battle_defend`。方案原文只列了被搬走的 7 个函数，没提这个调用方，所以首轮替换漏了 4 处。本步只把调用点改为 `battle_runner.*`，`create_battle` 本身留到 S7 的 routers 再搬。
+2. **借用式打桩共 9 处**，不是 0 处：测试用 `setattr(service, "call_attacker", ...)` / `"call_defender"` / `"score_battle"` 打桩**外部函数**，靠的是 service 的模块 globals 查找。这些函数随 `_battle_attack` / `_persist_internal_score` 一起搬走后，打桩目标必须同步迁到 `battle_runner` / `scoring_glue`，否则**测试仍会通过但打桩已成摆设**（假绿）。教训：迁移测量不能只看「service 里哪些名字被搬走」，还要扫 `setattr(service, "<外部名字>")`。
+3. **两个计数器不跟着走**：`_battle_timeout_count` 被 `_run_battle_with_tracking` 写、被 `/metrics` 读；`_battle_cancel_count` 被 `cancel_battle` 写、被 `/metrics` 读。都归 `state.py`，写侧的 `global` 一并删掉。
+4. **方案说的「两模块间不要互相 import」改成了单向 import**：`battle_runner → scoring_glue` 不构成环（`scoring_glue` 不回调 `battle_runner`）。若坚持传参，`_mark_battle_terminal` 得新增一个 `persist_score` 形参，签名变形会波及 `cancel_battle` 等调用方，违背「只搬结构不改接口」的约束。
+5. **`configured_verify_mode` 的打桩出现分叉**：同步路径（`create_battle`，在 service）读 service 的全局名，异步路径（`run_battle_async`，在 battle_runner）读 battle_runner 的。当前两个测试都走 `POST /battles` 的同步路径，打桩 `service.configured_verify_mode` 仍然真实生效，故不动；**将来若要测异步路径的 verify mode，必须打桩 `battle_runner.configured_verify_mode`**。
+6. `BattleRequest` 不必挪到 `models.py`：`service.py` 有 `from __future__ import annotations`，签名里的注解是字符串不求值，`battle_runner` 用 `TYPE_CHECKING` 导入即可，运行时鸭子类型足够。
 
 ### S6 抽 `reports.py`
 

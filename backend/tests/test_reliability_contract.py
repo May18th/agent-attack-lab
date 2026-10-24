@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import service
+from agent_attack_lab import battle_runner, config, service, state
 
 
 def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> None:
@@ -11,7 +11,7 @@ def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> No
     def fake_schedule(*args):
         created.append(args)
 
-    monkeypatch.setattr(service, "_schedule_battle_task", fake_schedule)
+    monkeypatch.setattr(battle_runner, "schedule_battle_task", fake_schedule)
     client = TestClient(service.app)
 
     first = client.post(
@@ -32,7 +32,7 @@ def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> No
 
 
 def test_background_battle_idempotency_conflict_returns_409(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_schedule_battle_task", lambda *args: None)
+    monkeypatch.setattr(battle_runner, "schedule_battle_task", lambda *args: None)
     client = TestClient(service.app)
 
     first = client.post(
@@ -52,7 +52,7 @@ def test_background_battle_idempotency_conflict_returns_409(monkeypatch) -> None
 
 def test_cancel_running_battle_is_explicit_and_idempotent() -> None:
     client = TestClient(service.app)
-    service._battle_store.save(
+    state.battle_store.save(
         {
             "id": "battle-cancel-contract",
             "difficulty": "low",
@@ -68,7 +68,7 @@ def test_cancel_running_battle_is_explicit_and_idempotent() -> None:
 
     assert response.status_code == 202
     assert response.json()["status"] == "failed"
-    cancelled_score = service._battle_store.get_score("battle-cancel-contract")
+    cancelled_score = state.battle_store.get_score("battle-cancel-contract")
     assert cancelled_score is not None
     assert cancelled_score["version"]
     assert client.post("/battles/battle-cancel-contract/cancel").status_code == 409
@@ -87,7 +87,7 @@ def test_battle_timeout_is_persisted_as_failed(monkeypatch) -> None:
     async def stuck_battle(_battle_id, _payload):
         await service.asyncio.sleep(10)
 
-    service._battle_store.save(
+    state.battle_store.save(
         {
             "id": "battle-timeout-contract",
             "difficulty": "low",
@@ -98,23 +98,23 @@ def test_battle_timeout_is_persisted_as_failed(monkeypatch) -> None:
             "defenderOut": [],
         }
     )
-    monkeypatch.setattr(service, "_run_battle_async", stuck_battle)
-    monkeypatch.setattr(service, "_battle_timeout_seconds", 0.01)
+    monkeypatch.setattr(battle_runner, "run_battle_async", stuck_battle)
+    monkeypatch.setattr(config, "battle_timeout_seconds", 0.01)
 
     import asyncio
 
     asyncio.run(
-        service._run_battle_with_tracking(
+        battle_runner.run_battle_with_tracking(
             "battle-timeout-contract",
             service.BattleRequest(difficulty="low", topic="timeout"),
         )
     )
 
-    assert service._battle_store.get("battle-timeout-contract")["status"] == "failed"
+    assert state.battle_store.get("battle-timeout-contract")["status"] == "failed"
     assert (
-        service._battle_store.list_events("battle-timeout-contract")[-1]["type"]
+        state.battle_store.list_events("battle-timeout-contract")[-1]["type"]
         == "battle.timeout"
     )
-    timeout_score = service._battle_store.get_score("battle-timeout-contract")
+    timeout_score = state.battle_store.get_score("battle-timeout-contract")
     assert timeout_score is not None
     assert timeout_score["version"]

@@ -3,10 +3,20 @@ import sqlite3
 import time
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Lock
 
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import service
+from agent_attack_lab import (
+    battle_runner,
+    config,
+    events,
+    scoring_glue,
+    security,
+    service,
+    state,
+)
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
@@ -143,7 +153,7 @@ def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_ve
     tmp_path, monkeypatch
 ) -> None:
     store = BattleStore(str(tmp_path / "created-rounds.sqlite3"))
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     monkeypatch.setattr(service, "configured_verify_mode", lambda: "off")
     response = client.post(
         "/battles", json={"topic": "提示注入", "difficulty": "low", "rounds": 5}
@@ -168,7 +178,7 @@ def test_simulated_compromise_is_persisted_and_explicitly_labeled(
     tmp_path, monkeypatch
 ) -> None:
     store = BattleStore(str(tmp_path / "simulated-verdict.sqlite3"))
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     monkeypatch.setattr(service, "configured_verify_mode", lambda: "simulated")
     response = client.post(
         "/battles", json={"topic": "general", "difficulty": "high", "rounds": 3}
@@ -206,13 +216,13 @@ def test_recovery_and_retry_reuse_persisted_round_count(tmp_path, monkeypatch) -
     async def fake_run(_battle_id: str, payload: service.BattleRequest) -> None:
         captured.append(payload.rounds)
 
-    monkeypatch.setattr(service, "_run_battle_with_tracking", fake_run)
+    monkeypatch.setattr(battle_runner, "run_battle_with_tracking", fake_run)
 
     async def recover() -> None:
         async with service._lifespan(service.app):
             await asyncio.sleep(0)
 
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     asyncio.run(recover())
     assert captured == [7]
     store.close()
@@ -247,7 +257,7 @@ def test_dashboard_prefills_query_params_and_escapes_topic() -> None:
 def test_browser_login_page_redirects_to_safe_dashboard_destination(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_browser_password", "browser-secret")
+    monkeypatch.setattr(config, "browser_password", "browser-secret")
     browser = TestClient(
         service.app, follow_redirects=False, base_url="https://api.example.test"
     )
@@ -276,12 +286,12 @@ def test_browser_login_page_redirects_to_safe_dashboard_destination(
 def test_same_origin_browser_login_authenticates_dashboard_and_mutations(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_api_key", "server-only-secret")
-    monkeypatch.setattr(service, "_browser_password", "browser-secret")
-    monkeypatch.setattr(service, "_browser_cookie_secure", False)
-    monkeypatch.setattr(service, "_protect_read_routes", False)
-    monkeypatch.setattr(service, "_browser_sessions", {})
-    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    monkeypatch.setattr(config, "api_key", "server-only-secret")
+    monkeypatch.setattr(config, "browser_password", "browser-secret")
+    monkeypatch.setattr(config, "browser_cookie_secure", False)
+    monkeypatch.setattr(config, "protect_read_routes", False)
+    monkeypatch.setattr(state, "browser_sessions", {})
+    monkeypatch.setattr(state, "browser_login_attempts", defaultdict(deque))
     browser = TestClient(service.app, base_url="https://api.example.test")
 
     login = browser.post(
@@ -394,8 +404,8 @@ def test_battle_records_independent_agent_sources(monkeypatch) -> None:
     async def local_defend(_payload, *, correlation_id):
         assert correlation_id.startswith("call-")
 
-    monkeypatch.setattr(service, "call_attacker", remote_attack)
-    monkeypatch.setattr(service, "call_defender", local_defend)
+    monkeypatch.setattr(battle_runner, "call_attacker", remote_attack)
+    monkeypatch.setattr(battle_runner, "call_defender", local_defend)
 
     response = client.post(
         "/battles", json={"difficulty": "low", "topic": "agent source test"}
@@ -442,7 +452,7 @@ def test_battle_injects_role_scoped_knowledge_into_remote_agents(monkeypatch) ->
     monkeypatch.setenv("AGENT_DEFENDER_RPC_URL", "https://defender.example/rpc")
 
     monkeypatch.setattr(
-        service._battle_store,
+        state.battle_store,
         "list_admin_samples",
         lambda **_kwargs: [
             {
@@ -455,7 +465,7 @@ def test_battle_injects_role_scoped_knowledge_into_remote_agents(monkeypatch) ->
         ],
     )
     monkeypatch.setattr(
-        service._battle_store,
+        state.battle_store,
         "list_admin_rules",
         lambda **_kwargs: [
             {
@@ -480,8 +490,8 @@ def test_battle_injects_role_scoped_knowledge_into_remote_agents(monkeypatch) ->
         captured["defend"] = payload
         return {"caught": [], "risks": [], "fixed": [], "agentMode": "llm"}
 
-    monkeypatch.setattr(service, "call_attacker", remote_attack)
-    monkeypatch.setattr(service, "call_defender", remote_defend)
+    monkeypatch.setattr(battle_runner, "call_attacker", remote_attack)
+    monkeypatch.setattr(battle_runner, "call_defender", remote_defend)
 
     response = client.post(
         "/battles", json={"difficulty": "low", "topic": "知识库注入", "rounds": 1}
@@ -544,8 +554,8 @@ def test_battle_persists_independent_arbiter_review(monkeypatch) -> None:
             "agentMode": "llm",
         }
 
-    monkeypatch.setattr(service, "call_attacker", remote_attack)
-    monkeypatch.setattr(service, "call_defender", remote_defend)
+    monkeypatch.setattr(battle_runner, "call_attacker", remote_attack)
+    monkeypatch.setattr(battle_runner, "call_defender", remote_defend)
     monkeypatch.delenv("AGENT_TARGET_VERIFY_MODE", raising=False)
     response = client.post(
         "/battles", json={"difficulty": "low", "topic": "arbiter test", "rounds": 1}
@@ -563,10 +573,10 @@ def test_battle_persists_independent_arbiter_review(monkeypatch) -> None:
 def test_rule_candidate_route_never_saves_candidate_without_manual_approval(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_api_key", "admin-test-key")
+    monkeypatch.setattr(config, "api_key", "admin-test-key")
     created: list[dict[str, object]] = []
     monkeypatch.setattr(
-        service._battle_store, "save_admin_rule", lambda value: created.append(value)
+        state.battle_store, "save_admin_rule", lambda value: created.append(value)
     )
 
     async def suggestion(_payload):
@@ -594,7 +604,7 @@ def test_rule_candidate_route_never_saves_candidate_without_manual_approval(
     assert created == []
     assert any(
         event["eventType"] == "admin.rule.candidate.proposed"
-        for event in service._battle_store.list_audit_events()
+        for event in state.battle_store.list_audit_events()
     )
 
 
@@ -605,7 +615,7 @@ def test_sync_acp_failure_is_persisted_and_returns_battle_id(monkeypatch) -> Non
         assert correlation_id.startswith("call-")
         raise service.ACPAgentError("remote detail must not be exposed")
 
-    monkeypatch.setattr(service, "call_attacker", failed_attack)
+    monkeypatch.setattr(battle_runner, "call_attacker", failed_attack)
     response = client.post(
         "/battles", json={"difficulty": "low", "topic": "trace failure"}
     )
@@ -619,7 +629,7 @@ def test_sync_acp_failure_is_persisted_and_returns_battle_id(monkeypatch) -> Non
     assert failure["data"]["dispatchMode"] == "acp"
     assert failure["data"]["errorType"] == "ACPAgentError"
     assert "remote detail" not in response.text
-    failed_score = service._battle_store.get_score(battle_id)
+    failed_score = state.battle_store.get_score(battle_id)
     assert failed_score is not None
     assert failed_score["version"]
 
@@ -672,7 +682,7 @@ def test_background_battle_persists_staged_events() -> None:
     assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     assert all(event["battleId"] == battle_id for event in events)
     assert all(event["status"] for event in events)
-    completed_score = service._battle_store.get_score(battle_id)
+    completed_score = state.battle_store.get_score(battle_id)
     assert completed_score is not None
     assert completed_score["version"]
 
@@ -707,7 +717,7 @@ def test_external_case_route_is_read_only_and_keeps_provenance(
         catalog=catalog,
         source_url="https://example.invalid/catalog.json",
     )
-    monkeypatch.setattr(service, "_external_cases_database", database)
+    monkeypatch.setattr(config, "external_cases_database", database)
 
     response = client.get("/external-cases", params={"q": "CVE-2099", "limit": 1})
 
@@ -742,7 +752,7 @@ def test_battle_list_returns_filtered_total_for_pagination(
                 "defenderOut": [],
             }
         )
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
 
     response = client.get("/battles?limit=1&offset=1&q=分页搜索")
     assert response.status_code == 200
@@ -753,7 +763,7 @@ def test_battle_list_returns_filtered_total_for_pagination(
 
 def test_delete_battle_removes_record_and_events(tmp_path, monkeypatch) -> None:
     store = BattleStore(str(tmp_path / "battle-delete.sqlite3"))
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     created = client.post("/battles", json={"difficulty": "low", "topic": "删除测试"})
     battle_id = created.json()["id"]
     assert store.list_events(battle_id)
@@ -780,7 +790,7 @@ def test_delete_battle_rejects_active_record(tmp_path, monkeypatch) -> None:
             "defenderOut": [],
         }
     )
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
 
     response = client.delete("/battles/battle-active")
 
@@ -815,7 +825,7 @@ def test_battle_events_report_filters_and_leaderboard() -> None:
         score.json()["defender"]["score"]
         == report.json()["internalScore"]["defender"]["score"]
     )
-    assert service._battle_store.get_score(battle_id) == score.json()
+    assert state.battle_store.get_score(battle_id) == score.json()
     scores = client.get("/internal-scores?limit=10")
     assert scores.status_code == 200
     assert scores.json()["attacker"]["scoredBattleCount"] >= 1
@@ -838,9 +848,9 @@ def test_existing_team_routes_are_exposed_and_protected_when_reads_are_enabled(
     tmp_path, monkeypatch
 ) -> None:
     store = BattleStore(str(tmp_path / "team-contract.sqlite3"))
-    monkeypatch.setattr(service, "_battle_store", store)
-    monkeypatch.setattr(service, "_protect_read_routes", True)
-    monkeypatch.setattr(service, "_api_key", "team-secret")
+    monkeypatch.setattr(state, "battle_store", store)
+    monkeypatch.setattr(config, "protect_read_routes", True)
+    monkeypatch.setattr(config, "api_key", "team-secret")
     created = client.post(
         "/battles",
         headers={"X-API-Key": "team-secret"},
@@ -884,9 +894,9 @@ def test_score_route_does_not_compute_or_expose_live_score_without_persisted_sna
             "defenderOut": [],
         }
     )
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     monkeypatch.setattr(
-        service,
+        scoring_glue,
         "score_battle",
         lambda *_args: {
             "version": "test-live-score",
@@ -931,9 +941,9 @@ def test_markdown_report_does_not_compute_or_expose_live_score_without_persisted
             "defenderOut": [],
         }
     )
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     monkeypatch.setattr(
-        service,
+        scoring_glue,
         "score_battle",
         lambda *_args: {
             "version": "test-live-score",
@@ -986,8 +996,8 @@ def test_report_summary_is_cached_until_events_change(tmp_path, monkeypatch) -> 
             "data": {},
         }
     )
-    monkeypatch.setattr(service, "_battle_store", store)
-    monkeypatch.setattr(service, "_report_summary_cache", {})
+    monkeypatch.setattr(state, "battle_store", store)
+    monkeypatch.setattr(state, "report_summary_cache", {})
     calls: list[int] = []
 
     async def fake_summarize(_record, _events):
@@ -1034,9 +1044,9 @@ def test_report_summary_cache_expires_after_ttl(tmp_path, monkeypatch) -> None:
             "defenderOut": [],
         }
     )
-    monkeypatch.setattr(service, "_battle_store", store)
-    monkeypatch.setattr(service, "_report_summary_cache", {})
-    monkeypatch.setattr(service, "_REPORT_SUMMARY_CACHE_TTL_SECONDS", 0.0)
+    monkeypatch.setattr(state, "battle_store", store)
+    monkeypatch.setattr(state, "report_summary_cache", {})
+    monkeypatch.setattr(state, "REPORT_SUMMARY_CACHE_TTL_SECONDS", 0.0)
     calls: list[int] = []
 
     async def fake_summarize(_record, _events):
@@ -1065,8 +1075,8 @@ def test_markdown_report_includes_llm_summary(tmp_path, monkeypatch) -> None:
             "defenderOut": [],
         }
     )
-    monkeypatch.setattr(service, "_battle_store", store)
-    monkeypatch.setattr(service, "_report_summary_cache", {})
+    monkeypatch.setattr(state, "battle_store", store)
+    monkeypatch.setattr(state, "report_summary_cache", {})
 
     async def fake_summarize(_record, _events):
         return {
@@ -1123,7 +1133,7 @@ def test_battle_events_support_cursor_pagination_and_server_side_filters(
                 "data": {"marker": marker},
             }
         )
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
 
     first = client.get(
         "/battles/battle-replay-page/events",
@@ -1265,7 +1275,7 @@ def test_battle_store_score_upsert_is_idempotent_across_supported_dialects() -> 
         store._is_postgres = is_postgres
         store._is_mysql = is_mysql
         store._connection = connection
-        store._lock = service.Lock()
+        store._lock = Lock()
 
         store.save_score("battle-dialect", score)
         store.save_score("battle-dialect", {**score, "status": "updated"})
@@ -1429,7 +1439,7 @@ def test_dashboard_summary_uses_saved_battle_data(tmp_path, monkeypatch) -> None
             ],
         }
     )
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
 
     assert client.get("/dashboard/summary").json() == {
         "totalBattles": 1,
@@ -1484,7 +1494,7 @@ def test_dashboard_summary_exposes_distinct_real_counts_in_openapi(
             ],
         }
     )
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
 
     response = client.get("/dashboard/summary")
     assert response.status_code == 200
@@ -1506,9 +1516,9 @@ def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(
     database = tmp_path / "migrated.sqlite3"
     BattleStore(str(database))
     monkeypatch.setenv("AGENT_BATTLE_DATABASE_URL", "sqlite:///" + database.as_posix())
-    config = Config(str(service.Path(__file__).parents[1] / "alembic.ini"))
-    command.upgrade(config, "head")
-    command.upgrade(config, "head")
+    alembic_config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    command.upgrade(alembic_config, "head")
+    command.upgrade(alembic_config, "head")
 
     import sqlite3
 
@@ -1551,8 +1561,8 @@ def test_sqlite_store_handles_concurrent_writes(tmp_path) -> None:
 
 
 def test_event_payload_is_bounded(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_event_data_max_bytes", 1024)
-    event = service._event(
+    monkeypatch.setattr(config, "event_data_max_bytes", 1024)
+    event = events.build_event(
         "battle-large",
         1,
         "round.completed",
@@ -1567,7 +1577,7 @@ def test_event_payload_is_bounded(monkeypatch) -> None:
 
 
 def test_event_payload_has_replay_contract_metadata() -> None:
-    event = service._event(
+    event = events.build_event(
         "battle-contract",
         1,
         "round.completed",
@@ -1704,7 +1714,7 @@ def test_rounds_endpoint_exposes_role_scores_per_round(tmp_path, monkeypatch) ->
     ]
     for event in events:
         store.save_event(event)
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     response = client.get("/battles/battle-round-scores/rounds")
     assert response.status_code == 200
     round_item = response.json()["rounds"][0]
@@ -1748,7 +1758,7 @@ def test_rounds_falls_back_to_defender_out_arbiter_review(
             ],
         }
     )
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     response = client.get("/battles/battle-arbiter-fallback/rounds")
     assert response.status_code == 200
     round_item = response.json()["rounds"][0]
@@ -1767,7 +1777,7 @@ def test_retry_failed_battle() -> None:
         "attackerOut": {"samples": []},
         "defenderOut": [],
     }
-    service._battle_store.save(record)
+    state.battle_store.save(record)
     response = client.post("/battles/battle-retry-test/retry")
     assert response.status_code == 202
     assert response.json()["status"] == "pending"
@@ -1779,8 +1789,8 @@ def test_retry_failed_battle() -> None:
 
 
 def test_read_routes_can_be_protected_together(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_protect_read_routes", True)
-    monkeypatch.setattr(service, "_api_key", "read-secret")
+    monkeypatch.setattr(config, "protect_read_routes", True)
+    monkeypatch.setattr(config, "api_key", "read-secret")
     response = client.post(
         "/battles",
         json={"difficulty": "low", "topic": "鉴权测试"},
@@ -1814,13 +1824,13 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(
 ) -> None:
     from fastapi.testclient import TestClient
 
-    monkeypatch.setattr(service, "_api_key", "server-only-secret")
+    monkeypatch.setattr(config, "api_key", "server-only-secret")
     browser_password = "一段足够长的登录密码"
-    monkeypatch.setattr(service, "_browser_password", browser_password)
-    monkeypatch.setattr(service, "_browser_cookie_secure", False)
-    monkeypatch.setattr(service, "_protect_read_routes", False)
-    monkeypatch.setattr(service, "_browser_sessions", {})
-    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    monkeypatch.setattr(config, "browser_password", browser_password)
+    monkeypatch.setattr(config, "browser_cookie_secure", False)
+    monkeypatch.setattr(config, "protect_read_routes", False)
+    monkeypatch.setattr(state, "browser_sessions", {})
+    monkeypatch.setattr(state, "browser_login_attempts", defaultdict(deque))
     browser = TestClient(service.app, follow_redirects=False)
     origin = "http://localhost:5173"
 
@@ -1875,26 +1885,26 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(
 def test_browser_login_requires_configured_password_and_trusted_origin(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_browser_password", "browser-secret")
-    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    monkeypatch.setattr(config, "browser_password", "browser-secret")
+    monkeypatch.setattr(state, "browser_login_attempts", defaultdict(deque))
     untrusted = client.post(
         "/auth/session",
         json={"password": "browser-secret"},
         headers={"Origin": "https://attacker.example"},
     )
     assert untrusted.status_code == 403
-    assert not service._browser_origin_allowed(
+    assert not security.browser_origin_allowed(
         "https://demo-front-end.trycloudflare.com"
     )
 
-    monkeypatch.setattr(service, "_browser_password", "")
+    monkeypatch.setattr(config, "browser_password", "")
     disabled = client.post("/auth/session", json={"password": "anything"})
     assert disabled.status_code == 503
 
 
 def test_browser_login_rate_limit_returns_retry_after(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_browser_password", "browser-secret")
-    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    monkeypatch.setattr(config, "browser_password", "browser-secret")
+    monkeypatch.setattr(state, "browser_login_attempts", defaultdict(deque))
     browser = TestClient(service.app)
     for _ in range(5):
         response = browser.post("/auth/session", json={"password": "wrong"})
@@ -1907,12 +1917,12 @@ def test_browser_login_rate_limit_returns_retry_after(monkeypatch) -> None:
 def test_cloudflare_access_jwt_authenticates_without_browser_password(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(service, "_api_key", "")
-    monkeypatch.setattr(service, "_browser_password", "")
-    monkeypatch.setattr(service, "_cloudflare_access_configured", True)
+    monkeypatch.setattr(config, "api_key", "")
+    monkeypatch.setattr(config, "browser_password", "")
+    monkeypatch.setattr(config, "cloudflare_access_configured", True)
     monkeypatch.setattr(
-        service,
-        "_verify_cloudflare_access_jwt",
+        security,
+        "verify_cloudflare_access_jwt",
         lambda token: token == "valid-access-jwt",
     )
 
@@ -1955,8 +1965,8 @@ def test_cloudflare_access_jwt_authenticates_without_browser_password(
 
 
 def test_public_battle_creation_has_separate_rate_limit(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_public_battle_limit_per_minute", 1)
-    service._public_battle_rate_windows.clear()
+    monkeypatch.setattr(config, "public_battle_limit_per_minute", 1)
+    state.public_battle_rate_windows.clear()
 
     first = client.post("/battles", json={"topic": "公开限流测试"})
     second = client.post("/battles", json={"topic": "公开限流测试"})
@@ -1979,14 +1989,14 @@ def test_cloudflare_access_jwt_verifies_signature_claims_and_expiry(
         def get_signing_key_from_jwt(self, token: str):
             return type("SigningKey", (), {"key": public_key})()
 
-    monkeypatch.setattr(service, "_cloudflare_access_configured", True)
+    monkeypatch.setattr(config, "cloudflare_access_configured", True)
     monkeypatch.setattr(
-        service,
-        "_cloudflare_access_team_domain",
+        config,
+        "cloudflare_access_team_domain",
         "https://team.example.cloudflareaccess.com",
     )
-    monkeypatch.setattr(service, "_cloudflare_access_audience", "audience-1")
-    monkeypatch.setattr(service, "_cloudflare_jwk_client", FakeJwkClient())
+    monkeypatch.setattr(config, "cloudflare_access_audience", "audience-1")
+    monkeypatch.setattr(state, "cloudflare_jwk_client", FakeJwkClient())
     now = int(time.time())
 
     def token(**claims: object) -> str:
@@ -2002,12 +2012,12 @@ def test_cloudflare_access_jwt_verifies_signature_claims_and_expiry(
             headers={"kid": "test-key"},
         )
 
-    assert service._verify_cloudflare_access_jwt(token(exp=now + 300)) is True
+    assert security.verify_cloudflare_access_jwt(token(exp=now + 300)) is True
     assert (
-        service._verify_cloudflare_access_jwt(token(aud="other", exp=now + 300))
+        security.verify_cloudflare_access_jwt(token(aud="other", exp=now + 300))
         is False
     )
-    assert service._verify_cloudflare_access_jwt(token(exp=now - 1)) is False
+    assert security.verify_cloudflare_access_jwt(token(exp=now - 1)) is False
 
 
 def test_browser_login_limit_uses_cloudflare_ip_only_from_loopback() -> None:
@@ -2028,8 +2038,8 @@ def test_browser_login_limit_uses_cloudflare_ip_only_from_loopback() -> None:
             }
         )
 
-    assert service._browser_client_ip(make_request("127.0.0.1")) == "203.0.113.9"
-    assert service._browser_client_ip(make_request("198.51.100.4")) == "198.51.100.4"
+    assert security.browser_client_ip(make_request("127.0.0.1")) == "203.0.113.9"
+    assert security.browser_client_ip(make_request("198.51.100.4")) == "198.51.100.4"
 
 
 def test_follow_sse_stream_emits_complete_event_history() -> None:
@@ -2043,7 +2053,7 @@ def test_follow_sse_stream_emits_complete_event_history() -> None:
 
 def test_lifespan_resumes_interrupted_battle(tmp_path, monkeypatch) -> None:
     store = BattleStore(str(tmp_path / "battle-recovery.sqlite3"))
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     battle_id = "battle-recovery-test"
     store.save(
         {
@@ -2060,7 +2070,7 @@ def test_lifespan_resumes_interrupted_battle(tmp_path, monkeypatch) -> None:
     async def recover() -> None:
         async with service._lifespan(service.app):
             for _ in range(120):
-                record = service._battle_store.get(battle_id)
+                record = state.battle_store.get(battle_id)
                 if record and record["status"] == "completed":
                     return
                 await asyncio.sleep(0.1)
@@ -2097,9 +2107,9 @@ def test_lifespan_resumes_all_interrupted_battles_beyond_first_page(
     async def capture_recovery(battle_id, _payload) -> None:
         resumed.add(battle_id)
 
-    monkeypatch.setattr(service, "_battle_store", RecoveryStore())
-    monkeypatch.setattr(service, "_run_battle_async", capture_recovery)
-    monkeypatch.setattr(service._redis_cache, "close", lambda: None)
+    monkeypatch.setattr(state, "battle_store", RecoveryStore())
+    monkeypatch.setattr(battle_runner, "run_battle_async", capture_recovery)
+    monkeypatch.setattr(state.redis_cache, "close", lambda: None)
 
     async def recover() -> None:
         async with service._lifespan(service.app):
@@ -2136,9 +2146,9 @@ def test_lifespan_backfills_missing_terminal_scores_without_overwriting_existing
         "defender": {"score": 91},
     }
     store.save_score(existing["id"], existing_score)
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     monkeypatch.setattr(store, "close", lambda: None)
-    monkeypatch.setattr(service._redis_cache, "close", lambda: None)
+    monkeypatch.setattr(state.redis_cache, "close", lambda: None)
 
     async def start_and_wait() -> None:
         async with service._lifespan(service.app):
@@ -2152,7 +2162,7 @@ def test_lifespan_backfills_missing_terminal_scores_without_overwriting_existing
     assert store.get_score(existing["id"]) == existing_score
     backfilled_score = store.get_score(legacy["id"])
     assert backfilled_score is not None
-    assert service._backfill_missing_internal_scores(limit=10) == 0
+    assert scoring_glue.backfill_missing_internal_scores(limit=10) == 0
     assert store.get_score(existing["id"]) == existing_score
     assert store.get_score(legacy["id"]) == backfilled_score
     assert (
@@ -2214,7 +2224,7 @@ def test_rounds_endpoint_aggregates_events_and_stats(tmp_path, monkeypatch) -> N
                 "data": data,
             }
         )
-    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(state, "battle_store", store)
     response = client.get("/battles/battle-rounds/rounds")
     assert response.status_code == 200
     body = response.json()
@@ -2380,7 +2390,7 @@ def test_aip_rpc_start_returns_task_result() -> None:
 
 
 def test_api_key_protects_agent_routes(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_api_key", "test-secret")
+    monkeypatch.setattr(config, "api_key", "test-secret")
     without_key = client.post(
         "/agent/attack", json={"difficulty": "low", "topic": "安全测试"}
     )
@@ -2407,7 +2417,7 @@ def test_api_key_protects_agent_routes(monkeypatch) -> None:
 
 
 def test_api_key_protects_metrics(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_api_key", "test-secret")
+    monkeypatch.setattr(config, "api_key", "test-secret")
     assert client.get("/metrics").status_code == 401
     response = client.get("/metrics", headers={"X-API-Key": "test-secret"})
     assert response.status_code == 200
@@ -2481,8 +2491,8 @@ def test_cors_preflight_allows_production_frontend_with_credentials() -> None:
 
 
 def test_rate_limit_returns_retry_after(monkeypatch) -> None:
-    service._rate_windows.clear()
-    monkeypatch.setattr(service, "_rate_limit_per_minute", 1)
+    state.rate_windows.clear()
+    monkeypatch.setattr(config, "rate_limit_per_minute", 1)
     first = client.post(
         "/agent/attack", json={"difficulty": "low", "topic": "限流测试"}
     )

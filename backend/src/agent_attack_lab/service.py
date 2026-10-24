@@ -3,22 +3,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import ipaddress
 import json
 import logging
-import os
-import secrets
 import time
 import uuid
-from collections import defaultdict, deque
-from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from html import escape as escape_html
-from pathlib import Path
-from threading import Lock
 from typing import Any, Literal
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 from acps_sdk.aip import (
     Product,
@@ -55,10 +48,10 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from agent_attack_lab import battle_runner, config, scoring_glue, security, state
+from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
-    call_attacker,
-    call_defender,
     rpc_metrics,
 )
 from agent_attack_lab.acp_agents import (
@@ -72,22 +65,17 @@ from agent_attack_lab.agent_logic import (
     local_rule_case_count,
 )
 from agent_attack_lab.agents.arbiter import review_round
-from agent_attack_lab.agents.knowledge import (
-    build_attacker_knowledge,
-    build_defender_knowledge,
-)
 from agent_attack_lab.agents.reporter import summarize as summarize_report
 from agent_attack_lab.agents.rule_discovery import (
     suggest_rule_candidate,
 )
 from agent_attack_lab.aip_compat import server_identity_options
 from agent_attack_lab.battle_audit import audit_battle
-from agent_attack_lab.cache import RedisJsonCache
 from agent_attack_lab.external_cases import query_external_cases
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
-from agent_attack_lab.scoring import SCORING_VERSION, score_battle, score_battle_rounds
-from agent_attack_lab.storage import BattleStore
+from agent_attack_lab.reports import build_markdown_report
+from agent_attack_lab.scoring import SCORING_VERSION, score_battle_rounds
 from agent_attack_lab.target_verify import (
     aggregate_verdict,
     configured_verify_mode,
@@ -108,49 +96,12 @@ app = FastAPI(
     },
 )
 
-_default_origins = {
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://yuanyiagentzhandui.cn",
-}
-_configured_origins = {
-    origin.strip()
-    for origin in os.getenv("AGENT_CORS_ORIGINS", "").split(",")
-    if origin.strip()
-}
-_cors_origins = _configured_origins or _default_origins
-_cors_origin_regex = os.getenv(
-    "AGENT_CORS_ORIGIN_REGEX",
-    r"^https://[a-z0-9-]+\.trycloudflare\.com$",
-)
-_cloudflare_access_team_domain = (
-    os.getenv("CF_ACCESS_TEAM_DOMAIN", "").strip().rstrip("/")
-)
-_cloudflare_access_audience = os.getenv("CF_ACCESS_AUDIENCE", "").strip()
-if bool(_cloudflare_access_team_domain) != bool(_cloudflare_access_audience):
-    raise RuntimeError(
-        "Cloudflare Access 鉴权必须同时配置 CF_ACCESS_TEAM_DOMAIN 和 CF_ACCESS_AUDIENCE"
-    )
-_cloudflare_access_configured = bool(
-    _cloudflare_access_team_domain and _cloudflare_access_audience
-)
-_browser_auth_configured = (
-    bool(os.getenv("AGENT_BROWSER_PASSWORD", "")) or _cloudflare_access_configured
-)
-if _browser_auth_configured and "*" in _cors_origins:
-    raise RuntimeError("启用浏览器会话时 AGENT_CORS_ORIGINS 必须使用精确来源")
-if (
-    _browser_auth_configured
-    and not os.getenv("AGENT_API_KEY", "").strip()
-    and bool(os.getenv("AGENT_BROWSER_PASSWORD", ""))
-):
-    raise RuntimeError("启用浏览器会话时必须同时配置服务端 AGENT_API_KEY")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=sorted(_cors_origins),
-    allow_origin_regex=None if _browser_auth_configured else _cors_origin_regex,
+    allow_origins=sorted(config.cors_origins),
+    allow_origin_regex=None
+    if config.browser_auth_configured
+    else config.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
@@ -163,12 +114,11 @@ app.add_middleware(
     ],
 )
 
-_frontend_dist = (
-    Path(__file__).resolve().parents[3] / "frontend" / "frontend-ui" / "dist"
-)
-if _frontend_dist.is_dir():
+if config.frontend_dist.is_dir():
     app.mount(
-        "/ui", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend-ui"
+        "/ui",
+        StaticFiles(directory=str(config.frontend_dist), html=True),
+        name="frontend-ui",
     )
 
 
@@ -249,94 +199,17 @@ class BattleEvent(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-_battle_store = BattleStore()
 _started_at = time.monotonic()
 _request_count = 0
 _request_errors = 0
 _request_total_duration_ms = 0.0
 _request_max_duration_ms = 0.0
-_rate_limited_count = 0
-_api_key = os.getenv("AGENT_API_KEY", "").strip()
-_protect_read_routes = os.getenv("AGENT_PROTECT_READS", "0").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
-_local_aic = os.getenv("AGENT_LOCAL_AIC", "").strip() or None
-_identity_binding_enabled = os.getenv(
-    "AGENT_IDENTITY_BINDING_ENABLED", ""
-).strip().lower() in {"1", "true", "yes", "on"}
-if _identity_binding_enabled and not _local_aic:
-    raise RuntimeError(
-        "AGENT_IDENTITY_BINDING_ENABLED 已开启，但未配置 AGENT_LOCAL_AIC"
-    )
 _aip_server_options = server_identity_options(
     handle_rpc_request,
-    local_aic=_local_aic,
-    enabled=_identity_binding_enabled,
+    local_aic=config.local_aic,
+    enabled=config.identity_binding_enabled,
     setting_name="AGENT_IDENTITY_BINDING_ENABLED",
 )
-_event_data_max_bytes = 32768
-_leaderboard_cache: tuple[float, dict[str, Any]] | None = None
-_redis_cache = RedisJsonCache()
-_recovery_tasks: set[asyncio.Task[Any]] = set()
-_battle_tasks: dict[str, asyncio.Task[Any]] = {}
-_cancel_requested: set[str] = set()
-_idempotency_lock = Lock()
-_battle_timeout_count = 0
-_battle_cancel_count = 0
-
-
-def _env_int(name: str, default: int, minimum: int = 0) -> int:
-    try:
-        return max(minimum, int(os.getenv(name, str(default))))
-    except ValueError:
-        return default
-
-
-_battle_timeout_seconds = min(
-    max(_env_int("AGENT_BATTLE_TIMEOUT_SECONDS", 300, minimum=5), 5),
-    3600,
-)
-_score_backfill_batch_size = min(
-    _env_int("AGENT_SCORE_BACKFILL_BATCH_SIZE", 100, minimum=1),
-    1000,
-)
-
-
-_browser_password = os.getenv("AGENT_BROWSER_PASSWORD", "")
-_browser_session_ttl_seconds = min(
-    max(_env_int("AGENT_BROWSER_SESSION_TTL_SECONDS", 28800, minimum=300), 300),
-    86400,
-)
-_browser_cookie_name = "agent_browser_session"
-_browser_cookie_secure = os.getenv(
-    "AGENT_BROWSER_COOKIE_SECURE", "1"
-).strip().lower() not in {"0", "false", "no"}
-_browser_cookie_samesite = (
-    os.getenv("AGENT_BROWSER_COOKIE_SAMESITE", "lax").strip().lower()
-)
-if _browser_cookie_samesite not in {"lax", "strict", "none"}:
-    _browser_cookie_samesite = "lax"
-if _browser_cookie_samesite == "none" and not _browser_cookie_secure:
-    raise RuntimeError("SameSite=None 浏览器会话 Cookie 必须启用 Secure")
-_browser_sessions: dict[str, float] = {}
-_browser_sessions_lock = Lock()
-_browser_login_attempts: dict[str, deque[float]] = defaultdict(deque)
-_browser_login_lock = Lock()
-_cloudflare_jwk_client: Any | None = None
-_cloudflare_jwk_lock = Lock()
-
-_rate_limit_per_minute = _env_int("AGENT_RATE_LIMIT_PER_MINUTE", 60)
-_public_battle_limit_per_minute = _env_int("AGENT_PUBLIC_BATTLE_LIMIT_PER_MINUTE", 10)
-_event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=1024)
-_external_cases_database = Path(
-    os.getenv("AGENT_EXTERNAL_CASE_DB", ".data/external_security_cases.sqlite3")
-)
-_rate_windows: dict[str, deque[float]] = defaultdict(deque)
-_rate_lock = Lock()
-_public_battle_rate_windows: dict[str, deque[float]] = defaultdict(deque)
-_public_battle_rate_lock = Lock()
 
 
 def _request_id(request: Request) -> str:
@@ -406,7 +279,7 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
         response.status_code,
         duration_ms,
     )
-    _record_audit_event(
+    events_api.record_audit_event(
         "http.request",
         status="completed" if response.status_code < 400 else "failed",
         request_id=request_id,
@@ -421,825 +294,6 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
     return response
 
 
-def _check_api_key(request: Request) -> None:
-    """Enable a simple deployment-time API key without affecting local development."""
-    supplied = request.headers.get("x-api-key", "")
-    if _api_key and not hmac.compare_digest(
-        supplied.encode("utf-8"), _api_key.encode("utf-8")
-    ):
-        raise HTTPException(status_code=401, detail="缺少或无效的 API 密钥")
-    if not _api_key and (_browser_password or _cloudflare_access_configured):
-        raise HTTPException(status_code=401, detail="服务端 API 密钥未配置")
-
-
-def _verify_cloudflare_access_jwt(token: str) -> bool:
-    """Verify the Access assertion against the configured team JWKS and audience."""
-    if not _cloudflare_access_configured or not token:
-        return False
-    try:
-        import jwt
-        from jwt import PyJWKClient
-
-        global _cloudflare_jwk_client
-        with _cloudflare_jwk_lock:
-            if _cloudflare_jwk_client is None:
-                _cloudflare_jwk_client = PyJWKClient(
-                    f"{_cloudflare_access_team_domain}/cdn-cgi/access/certs",
-                    cache_jwk_set=True,
-                    lifespan=300,
-                )
-            jwk_client = _cloudflare_jwk_client
-        signing_key = jwk_client.get_signing_key_from_jwt(token).key
-        jwt.decode(
-            token,
-            signing_key,
-            algorithms=["RS256"],
-            audience=_cloudflare_access_audience,
-            issuer=_cloudflare_access_team_domain,
-            options={"require": ["exp", "iat", "iss", "aud"]},
-        )
-        return True
-    except Exception as exc:  # noqa: BLE001 - token libraries expose heterogeneous errors.
-        logger.warning("Cloudflare Access JWT rejected reason=%s", type(exc).__name__)
-        return False
-
-
-def _browser_origin_allowed(origin: str, request: Request | None = None) -> bool:
-    if origin in _cors_origins:
-        return True
-    if request is None:
-        return False
-    try:
-        parsed_origin = urlsplit(origin)
-        if (
-            parsed_origin.scheme.lower() not in {"http", "https"}
-            or not parsed_origin.netloc
-            or parsed_origin.path not in ("", "/")
-        ):
-            return False
-        if (
-            parsed_origin.query
-            or parsed_origin.fragment
-            or parsed_origin.username
-            or parsed_origin.password
-        ):
-            return False
-        peer_host = request.client.host if request.client else ""
-        try:
-            trusted_proxy = ipaddress.ip_address(peer_host).is_loopback
-        except ValueError:
-            trusted_proxy = False
-        request_host = request.headers.get("host", "")
-        request_scheme = request.url.scheme
-        if trusted_proxy:
-            request_host = (
-                request.headers.get("x-forwarded-host", request_host)
-                .split(",", 1)[0]
-                .strip()
-            )
-            request_scheme = (
-                request.headers.get("x-forwarded-proto", request_scheme)
-                .split(",", 1)[0]
-                .strip()
-            )
-        return (
-            parsed_origin.scheme.lower() == request_scheme.lower()
-            and parsed_origin.netloc.lower() == request_host.lower()
-        )
-    except ValueError:
-        return False
-
-
-def _browser_session_digest(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _has_browser_session(request: Request) -> bool:
-    token = request.cookies.get(_browser_cookie_name, "")
-    if not token:
-        return False
-    digest = _browser_session_digest(token)
-    now = time.monotonic()
-    with _browser_sessions_lock:
-        expires_at = _browser_sessions.get(digest)
-        if expires_at is None:
-            return False
-        if expires_at <= now:
-            _browser_sessions.pop(digest, None)
-            return False
-        return True
-
-
-def _issue_browser_session() -> str:
-    token = secrets.token_urlsafe(32)
-    now = time.monotonic()
-    with _browser_sessions_lock:
-        expired = [
-            key for key, deadline in _browser_sessions.items() if deadline <= now
-        ]
-        for key in expired:
-            _browser_sessions.pop(key, None)
-        if len(_browser_sessions) >= 10000:
-            raise HTTPException(status_code=503, detail="浏览器会话容量已满")
-        _browser_sessions[_browser_session_digest(token)] = (
-            now + _browser_session_ttl_seconds
-        )
-    return token
-
-
-def _revoke_browser_session(request: Request) -> None:
-    token = request.cookies.get(_browser_cookie_name, "")
-    if token:
-        with _browser_sessions_lock:
-            _browser_sessions.pop(_browser_session_digest(token), None)
-
-
-def _check_browser_session_origin(request: Request) -> None:
-    origin = request.headers.get("origin", "")
-    if not origin and request.method in {"GET", "HEAD", "OPTIONS"}:
-        return
-    if not origin or not _browser_origin_allowed(origin, request):
-        raise HTTPException(status_code=403, detail="浏览器来源未获允许")
-
-
-def _check_browser_or_api_auth(request: Request) -> None:
-    supplied_api_key = request.headers.get("x-api-key", "")
-    if _api_key and hmac.compare_digest(
-        supplied_api_key.encode("utf-8"), _api_key.encode("utf-8")
-    ):
-        return
-    access_token = request.headers.get("cf-access-jwt-assertion", "")
-    if _verify_cloudflare_access_jwt(access_token):
-        if request.headers.get("origin"):
-            _check_browser_session_origin(request)
-        return
-    if _browser_password and _has_browser_session(request):
-        _check_browser_session_origin(request)
-        return
-    if not _api_key and not _browser_password and not _cloudflare_access_configured:
-        return
-    raise HTTPException(
-        status_code=401,
-        detail="需要有效的 API 密钥、Cloudflare Access 身份或浏览器登录会话",
-    )
-
-
-def _browser_client_ip(request: Request) -> str:
-    peer_host = request.client.host if request.client else "unknown"
-    try:
-        peer_is_loopback = ipaddress.ip_address(peer_host).is_loopback
-    except ValueError:
-        peer_is_loopback = False
-    if peer_is_loopback:
-        for header in ("cf-connecting-ip", "x-real-ip"):
-            forwarded_ip = request.headers.get(header, "").strip()
-            if forwarded_ip:
-                try:
-                    return str(ipaddress.ip_address(forwarded_ip))
-                except ValueError:
-                    continue
-    return peer_host
-
-
-def _browser_login_rate_limit(request: Request) -> None:
-    client_key = _browser_client_ip(request)
-    now = time.monotonic()
-    cutoff = now - 300
-    with _browser_login_lock:
-        attempts = _browser_login_attempts[client_key]
-        while attempts and attempts[0] <= cutoff:
-            attempts.popleft()
-        if len(attempts) >= 5:
-            retry_after = max(1, int(300 - (now - attempts[0])))
-            raise HTTPException(
-                status_code=429,
-                detail="登录尝试过多，请稍后重试",
-                headers={"Retry-After": str(retry_after)},
-            )
-        attempts.append(now)
-
-
-def _api_key_dependency(request: Request) -> None:
-    _check_api_key(request)
-
-
-def _metrics_auth_dependency(request: Request) -> None:
-    _check_browser_or_api_auth(request)
-
-
-def _read_auth_dependency(request: Request) -> None:
-    if _protect_read_routes or _browser_password or _cloudflare_access_configured:
-        _check_browser_or_api_auth(request)
-
-
-def _public_battle_rate_limit_dependency(request: Request) -> None:
-    """Limit anonymous battle creation separately from internal agent traffic."""
-    if _public_battle_limit_per_minute <= 0:
-        return
-    client_key = _browser_client_ip(request)
-    now = time.monotonic()
-    cutoff = now - 60
-    with _public_battle_rate_lock:
-        window = _public_battle_rate_windows[client_key]
-        while window and window[0] <= cutoff:
-            window.popleft()
-        if len(window) >= _public_battle_limit_per_minute:
-            retry_after = max(1, int(60 - (now - window[0])))
-            raise HTTPException(
-                status_code=429,
-                detail="公开战局创建过于频繁，请稍后重试",
-                headers={"Retry-After": str(retry_after)},
-            )
-        window.append(now)
-
-
-def _rate_limit_dependency(request: Request) -> None:
-    """Apply a small in-process window limit to mutating agent endpoints."""
-    global _rate_limited_count
-    if _rate_limit_per_minute <= 0:
-        return
-    client_key = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    cutoff = now - 60
-    with _rate_lock:
-        window = _rate_windows[client_key]
-        while window and window[0] <= cutoff:
-            window.popleft()
-        if len(window) >= _rate_limit_per_minute:
-            _rate_limited_count += 1
-            retry_after = max(1, int(60 - (now - window[0])))
-            raise HTTPException(
-                status_code=429,
-                detail="请求过于频繁，请稍后重试",
-                headers={"Retry-After": str(retry_after)},
-            )
-        window.append(now)
-
-
-def _invalidate_leaderboard_cache() -> None:
-    global _leaderboard_cache
-    _leaderboard_cache = None
-    _redis_cache.delete(
-        "agent-attack-lab:v1:leaderboard",
-        "agent-attack-lab:v1:dashboard-summary",
-        "agent-attack-lab:v2:dashboard-summary",
-    )
-
-
-def _bounded_event_data(data: dict[str, Any]) -> dict[str, Any]:
-    serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    if len(serialized.encode("utf-8")) <= _event_data_max_bytes:
-        return data
-    compact = dict(data)
-    sample = compact.get("sample")
-    if isinstance(sample, dict):
-        sample_copy = dict(sample)
-        content = str(sample_copy.get("content", ""))
-        sample_copy["content"] = content[:2048]
-        sample_copy["contentTruncated"] = len(content) > 2048
-        compact["sample"] = sample_copy
-    compact["dataTruncated"] = True
-    compact["originalBytes"] = len(serialized.encode("utf-8"))
-    compact_serialized = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
-    if len(compact_serialized.encode("utf-8")) <= _event_data_max_bytes:
-        return compact
-    return {
-        "dataTruncated": True,
-        "originalBytes": len(serialized.encode("utf-8")),
-        "preview": serialized[: max(1, _event_data_max_bytes // 8)],
-    }
-
-
-def _event(
-    battle_id: str, sequence: int, event_type: str, status: str, data: dict[str, Any]
-) -> dict[str, Any]:
-    normalized_data = dict(data)
-    normalized_data.setdefault("stageId", _event_stage_id(event_type, normalized_data))
-    normalized_data.setdefault("round", normalized_data.get("round"))
-    normalized_data.setdefault("layerIndex", normalized_data.get("layerIndex"))
-    normalized_data.setdefault(
-        "classification", _event_classification(event_type, normalized_data)
-    )
-    scores = normalized_data.get("scores")
-    normalized_data["scores"] = scores if isinstance(scores, dict) else {}
-    return {
-        "id": f"event-{uuid.uuid4()}",
-        "battleId": battle_id,
-        "sequence": sequence,
-        "type": event_type,
-        "status": status,
-        "createdAt": datetime.now(UTC).isoformat(),
-        "data": _bounded_event_data(normalized_data),
-    }
-
-
-_EVENT_STAGE_IDS = {
-    "battle.created": "A1",
-    "attack.started": "A1",
-    "agent.call.started": "A2",
-    "attack.sample.generated": "A3",
-    "attack.completed": "A4",
-    "round.started": "A5",
-    "round.completed": "A6",
-    "attack.compromised": "A7",
-    "defense.completed": "A8",
-    "battle.completed": "L0",
-    "battle.failed": "L0",
-}
-
-
-def _event_stage_id(event_type: str, data: dict[str, Any]) -> str:
-    explicit = data.get("stageId")
-    return str(explicit) if explicit else _EVENT_STAGE_IDS.get(event_type, event_type)
-
-
-def _event_classification(event_type: str, data: dict[str, Any]) -> str:
-    explicit = data.get("classification")
-    if explicit:
-        return str(explicit)
-    if event_type == "attack.compromised":
-        return "compromised"
-    if event_type == "round.completed":
-        return "blocked" if data.get("caught") else "passed"
-    if event_type.endswith(".failed") or data.get("error"):
-        return "failed"
-    if event_type.endswith(".started"):
-        return "started"
-    if event_type.endswith(".completed"):
-        return "completed"
-    return "observed"
-
-
-def _record_audit_event(
-    event_type: str,
-    *,
-    status: str,
-    request_id: str | None = None,
-    battle_id: str | None = None,
-    correlation_id: str | None = None,
-    actor_role: str | None = None,
-    data: dict[str, Any] | None = None,
-) -> None:
-    try:
-        _battle_store.save_audit_event(
-            {
-                "id": f"audit-{uuid.uuid4()}",
-                "eventType": event_type,
-                "requestId": request_id,
-                "battleId": battle_id,
-                "correlationId": correlation_id,
-                "actorRole": actor_role,
-                "status": status,
-                "createdAt": datetime.now(UTC).isoformat(),
-                "data": data or {},
-            }
-        )
-    except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
-        logger.warning(
-            "Audit persistence failed event=%s error=%s", event_type, type(exc).__name__
-        )
-
-
-def _mark_battle_terminal(battle_id: str, event_type: str, reason: str) -> None:
-    record = _battle_store.get(battle_id)
-    if record is None or record["status"] in {"completed", "failed"}:
-        return
-    record["status"] = "failed"
-    _battle_store.save(record)
-    events = _battle_store.list_events(battle_id)
-    _battle_store.save_event(
-        _event(
-            battle_id,
-            max((item["sequence"] for item in events), default=0) + 1,
-            event_type,
-            "failed",
-            {"reason": reason},
-        )
-    )
-    _record_audit_event(
-        event_type,
-        status="failed",
-        battle_id=battle_id,
-        actor_role="system",
-        data={"reason": reason},
-    )
-    _persist_internal_score(record)
-    _invalidate_leaderboard_cache()
-
-
-async def _run_battle_with_tracking(battle_id: str, payload: BattleRequest) -> None:
-    global _battle_timeout_count
-    current = asyncio.current_task()
-    if current is not None:
-        _battle_tasks[battle_id] = current
-    try:
-        await asyncio.wait_for(
-            _run_battle_async(battle_id, payload), timeout=_battle_timeout_seconds
-        )
-    except TimeoutError:
-        _battle_timeout_count += 1
-        _mark_battle_terminal(battle_id, "battle.timeout", "execution_timeout")
-    except asyncio.CancelledError:
-        if battle_id in _cancel_requested:
-            _cancel_requested.discard(battle_id)
-            _mark_battle_terminal(battle_id, "battle.cancelled", "requested_by_client")
-            return
-        raise
-    finally:
-        _battle_tasks.pop(battle_id, None)
-
-
-def _schedule_battle_task(
-    background_tasks: BackgroundTasks, battle_id: str, payload: BattleRequest
-) -> None:
-    background_tasks.add_task(_run_battle_with_tracking, battle_id, payload)
-
-
-async def _battle_attack(
-    payload: BattleRequest, *, correlation_id: str
-) -> tuple[dict[str, Any], str]:
-    agent_payload = payload.model_dump()
-    knowledge = build_attacker_knowledge(
-        _battle_store.list_admin_samples(limit=200, offset=0),
-        topic=payload.topic,
-    )
-    if knowledge["records"]:
-        agent_payload["_knowledgeContext"] = knowledge
-    result = await call_attacker(agent_payload, correlation_id=correlation_id)
-    source = "local-rule"
-    if result is None:
-        result = attack(AttackRequest.model_validate(payload.model_dump()))
-        result["agentMode"] = "local-rule"
-    else:
-        source = result.pop("agentSource", None) or (
-            "acp-llm" if result.get("agentMode") == "llm" else "acp-rule-fallback"
-        )
-    return {**result, "agentSource": source}, source
-
-
-async def _battle_defend(
-    sample: dict[str, Any], *, correlation_id: str
-) -> tuple[dict[str, Any], str]:
-    topic = str(sample.get("topic") or "")
-    knowledge = build_defender_knowledge(
-        _battle_store.list_admin_rules(limit=200, offset=0),
-        topic=topic,
-    )
-    agent_payload: dict[str, Any] = {"sample": sample}
-    if knowledge["records"]:
-        agent_payload["_knowledgeContext"] = knowledge
-    result = await call_defender(agent_payload, correlation_id=correlation_id)
-    source = "local-rule"
-    if result is None:
-        result = defend(DefendRequest(sample=sample))
-        result["agentMode"] = "local-rule"
-    else:
-        source = result.pop("agentSource", None) or (
-            "acp-llm" if result.get("agentMode") == "llm" else "acp-rule-fallback"
-        )
-    return {**result, "agentSource": source}, source
-
-
-async def _tracked_agent_call(
-    *,
-    battle_id: str,
-    role: Literal["attacker", "defender"],
-    invoke: Callable[[str], Awaitable[tuple[dict[str, Any], str]]],
-    add_event: Callable[[str, str, dict[str, Any]], None],
-) -> tuple[dict[str, Any], str, str]:
-    correlation_id = f"call-{uuid.uuid4()}"
-    dispatch_mode = "acp" if acp_agent_configured(role) else "local"
-    event_data: dict[str, Any] = {
-        "correlationId": correlation_id,
-        "agentRole": role,
-        "dispatchMode": dispatch_mode,
-    }
-    expected_aic = os.getenv(
-        f"AGENT_{role.upper()}_EXPECTED_AIC",
-        os.getenv("AGENT_AIP_EXPECTED_PARTNER_AIC", ""),
-    ).strip()
-    if expected_aic:
-        event_data["expectedPeerAic"] = expected_aic
-
-    started = time.monotonic()
-    add_event("agent.call.started", "running", event_data)
-    _record_audit_event(
-        "agent.call.started",
-        status="running",
-        battle_id=battle_id,
-        correlation_id=correlation_id,
-        actor_role=role,
-        data=event_data,
-    )
-    try:
-        result, source = await invoke(correlation_id)
-    except Exception as exc:
-        failure_data = {
-            **event_data,
-            "durationMs": round((time.monotonic() - started) * 1000),
-            "errorType": type(exc).__name__,
-        }
-        add_event(
-            "agent.call.failed",
-            "failed",
-            failure_data,
-        )
-        _record_audit_event(
-            "agent.call.failed",
-            status="failed",
-            battle_id=battle_id,
-            correlation_id=correlation_id,
-            actor_role=role,
-            data=failure_data,
-        )
-        logger.warning(
-            "Battle %s %s call failed (correlation_id=%s, error_type=%s)",
-            battle_id,
-            role,
-            correlation_id,
-            type(exc).__name__,
-        )
-        raise
-
-    completed_data = {
-        **event_data,
-        "durationMs": round((time.monotonic() - started) * 1000),
-        "resultSource": source,
-    }
-    add_event(
-        "agent.call.completed",
-        "completed",
-        completed_data,
-    )
-    _record_audit_event(
-        "agent.call.completed",
-        status="completed",
-        battle_id=battle_id,
-        correlation_id=correlation_id,
-        actor_role=role,
-        data=completed_data,
-    )
-    return result, source, correlation_id
-
-
-def _persist_internal_score(record: dict[str, Any]) -> None:
-    """Persist a terminal battle's evidence-derived score snapshot."""
-    try:
-        score = score_battle(record, _battle_store.list_events(record["id"]))
-        _battle_store.save_score(record["id"], score)
-    except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
-        logger.warning(
-            "Battle %s score snapshot unavailable (%s)",
-            record.get("id"),
-            type(exc).__name__,
-        )
-
-
-def _insufficient_internal_score() -> dict[str, Any]:
-    """Return the explicit no-snapshot response used by read APIs.
-
-    A live calculation is intentionally not exposed as an authoritative score. Terminal
-    battles are scored once and persisted in ``battle_scores``; callers without that
-    snapshot must see evidence insufficiency instead of a value that can change.
-    """
-    role_message = "缺少已持久化的 Agent 调用评分快照，无法提供真实分数。"
-    return {
-        "version": SCORING_VERSION,
-        "status": "insufficient_evidence",
-        "message": "当前战局没有可用的 battle_scores 快照；未使用前端或接口实时估算值。",
-        "attacker": {
-            "status": "insufficient_evidence",
-            "score": None,
-            "maxScore": 100,
-            "message": role_message,
-            "categories": [],
-        },
-        "defender": {
-            "status": "insufficient_evidence",
-            "score": None,
-            "maxScore": 100,
-            "message": role_message,
-            "categories": [],
-        },
-    }
-
-
-def _battle_stats(
-    record: dict[str, Any], events: list[dict[str, Any]] | None = None
-) -> dict[str, int]:
-    samples = record.get("attackerOut", {}).get("samples", [])
-    defenses = record.get("defenderOut", [])
-    return {
-        "attackGenerated": len(samples),
-        "defenderDetected": sum(
-            len(item.get("caught", [])) for item in defenses if isinstance(item, dict)
-        ),
-        "fixesSuggested": sum(
-            len(item.get("fixed", [])) for item in defenses if isinstance(item, dict)
-        ),
-        # TODO 战略检测口径：当前以 round.completed 事件计数。
-        "strategyChecks": sum(
-            1 for event in (events or []) if event.get("type") == "round.completed"
-        ),
-    }
-
-
-def _backfill_missing_internal_scores(limit: int = _score_backfill_batch_size) -> int:
-    """Backfill a bounded batch of terminal battles without replacing snapshots."""
-    list_records = getattr(_battle_store, "list", None)
-    list_scores = getattr(_battle_store, "list_scores", None)
-    if not callable(list_records) or not callable(list_scores) or limit <= 0:
-        return 0
-
-    records: list[dict[str, Any]] = []
-    remaining = limit
-    try:
-        for status in ("completed", "failed"):
-            if remaining <= 0:
-                break
-            batch = list_records(limit=remaining, offset=0, status=status)
-            records.extend(batch)
-            remaining -= len(batch)
-        if not records:
-            return 0
-        stored = list_scores([record["id"] for record in records])
-        missing = [record for record in records if record["id"] not in stored]
-        for record in missing:
-            _persist_internal_score(record)
-        return len(missing)
-    except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
-        logger.warning("Battle score backfill unavailable (%s)", type(exc).__name__)
-        return 0
-
-
-async def _run_score_backfill() -> None:
-    await asyncio.to_thread(_backfill_missing_internal_scores)
-
-
-async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
-    """Run a battle in stages so clients can observe its event stream."""
-    record = await asyncio.to_thread(_battle_store.get, battle_id)
-    if record is None:
-        return
-    events = await asyncio.to_thread(_battle_store.list_events, battle_id)
-    sequence = max((event["sequence"] for event in events), default=0) + 1
-    verification_mode = configured_verify_mode()
-    verifications: list[dict[str, Any]] = []
-
-    def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
-        nonlocal sequence
-        event = _event(battle_id, sequence, event_type, status, data)
-        sequence += 1
-        _battle_store.save_event(event)
-
-    try:
-        record["status"] = "running"
-        _battle_store.save(record)
-        add_event(
-            "attack.started",
-            "running",
-            {
-                "topic": payload.topic,
-                "attackerSource": "acp-pending"
-                if acp_agent_configured("attacker")
-                else "local-rule",
-            },
-        )
-        await asyncio.sleep(0.8)
-        attack_result, attacker_source, attack_call_id = await _tracked_agent_call(
-            battle_id=battle_id,
-            role="attacker",
-            invoke=lambda correlation_id: _battle_attack(
-                payload, correlation_id=correlation_id
-            ),
-            add_event=add_event,
-        )
-        record["attackerOut"] = attack_result
-        _battle_store.save(record)
-        for index, sample in enumerate(attack_result["samples"], start=1):
-            add_event(
-                "attack.sample.generated",
-                "completed",
-                {
-                    "round": index,
-                    "sample": sample,
-                    "attackerSource": attacker_source,
-                    "correlationId": attack_call_id,
-                },
-            )
-            await asyncio.sleep(0.35)
-        add_event(
-            "attack.completed",
-            "completed",
-            {
-                "sampleCount": len(attack_result["samples"]),
-                "attackerSource": attacker_source,
-                "correlationId": attack_call_id,
-            },
-        )
-
-        defender_results: list[dict[str, Any]] = []
-        for index, sample in enumerate(attack_result["samples"], start=1):
-            add_event(
-                "round.started",
-                "running",
-                {
-                    "round": index,
-                    "defenderSource": "acp-pending"
-                    if acp_agent_configured("defender")
-                    else "local-rule",
-                },
-            )
-            await asyncio.sleep(0.8)
-            defense, defender_source, defense_call_id = await _tracked_agent_call(
-                battle_id=battle_id,
-                role="defender",
-                invoke=lambda correlation_id, current_sample=sample: _battle_defend(
-                    current_sample, correlation_id=correlation_id
-                ),
-                add_event=add_event,
-            )
-            defender_results.append(defense)
-            record["defenderOut"] = defender_results
-            _battle_store.save(record)
-            add_event(
-                "round.completed",
-                "completed",
-                {
-                    "round": index,
-                    "sample": sample,
-                    "caught": defense["caught"],
-                    "risks": defense["risks"],
-                    "fixed": defense["fixed"],
-                    "defenderSource": defender_source,
-                    "analysisMode": defense.get("analysisMode"),
-                    "verificationStatus": defense.get("verificationStatus"),
-                    "scopeNotice": defense.get("scopeNotice"),
-                    "correlationId": defense_call_id,
-                },
-            )
-            verification = verify_round(sample, defense, mode=verification_mode)
-            verifications.append(verification)
-            if verification["verified"]:
-                add_event(
-                    "attack.compromised",
-                    "completed",
-                    {
-                        "round": index,
-                        "targetAssetId": verification.get("targetAssetId"),
-                        "targetVerified": True,
-                        "verificationMode": verification["mode"],
-                        "simulated": verification["simulated"],
-                        "evidence": verification["evidence"],
-                        "correlationId": defense_call_id,
-                    },
-                )
-        add_event(
-            "defense.completed",
-            "completed",
-            {
-                "roundCount": len(defender_results),
-                "layerInterceptions": derive_layer_interceptions(
-                    payload.topic, defender_results
-                ),
-            },
-        )
-        record["status"] = "completed"
-        record["verdict"] = aggregate_verdict(
-            verification_mode, verifications, defender_results
-        )
-        _battle_store.save(record)
-        await asyncio.to_thread(_invalidate_leaderboard_cache)
-        add_event(
-            "battle.completed",
-            "completed",
-            {
-                "status": record["status"],
-                "verdict": record["verdict"],
-                "compromisedRounds": sum(
-                    1 for item in verifications if item["verified"]
-                ),
-                "interceptedRounds": sum(
-                    1 for item in defender_results if item.get("caught")
-                ),
-                "verificationMode": verification_mode,
-            },
-        )
-        await asyncio.to_thread(_persist_internal_score, record)
-    except Exception as exc:
-        logger.exception("Battle %s failed", battle_id)
-        record["status"] = "failed"
-        _battle_store.save(record)
-        await asyncio.to_thread(_invalidate_leaderboard_cache)
-        message = (
-            "ACP 独立 Agent 调用失败，请检查服务端日志和 URL/证书配置"
-            if isinstance(exc, ACPAgentError)
-            else "战局执行失败，请检查服务端日志"
-        )
-        add_event("battle.failed", "failed", {"error": message})
-        await asyncio.to_thread(_persist_internal_score, record)
-
-
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """Resume persisted pending/running battles after a process restart."""
@@ -1249,7 +303,9 @@ async def _lifespan(_app: FastAPI):
     for status in ("pending", "running"):
         offset = 0
         while True:
-            records = _battle_store.list(limit=page_size, offset=offset, status=status)
+            records = state.battle_store.list(
+                limit=page_size, offset=offset, status=status
+            )
             recovered_records.extend(records)
             offset += len(records)
             if len(records) < page_size:
@@ -1263,22 +319,24 @@ async def _lifespan(_app: FastAPI):
             topic=record["topic"],
             rounds=record.get("rounds", 3),
         )
-        task = asyncio.create_task(_run_battle_with_tracking(record["id"], payload))
-        _recovery_tasks.add(task)
-        task.add_done_callback(_recovery_tasks.discard)
-    score_backfill = asyncio.create_task(_run_score_backfill())
-    _recovery_tasks.add(score_backfill)
-    score_backfill.add_done_callback(_recovery_tasks.discard)
+        task = asyncio.create_task(
+            battle_runner.run_battle_with_tracking(record["id"], payload)
+        )
+        state.recovery_tasks.add(task)
+        task.add_done_callback(state.recovery_tasks.discard)
+    score_backfill = asyncio.create_task(scoring_glue.run_score_backfill())
+    state.recovery_tasks.add(score_backfill)
+    score_backfill.add_done_callback(state.recovery_tasks.discard)
     try:
         yield
     finally:
-        pending = list(_recovery_tasks)
+        pending = list(state.recovery_tasks)
         for task in pending:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-        _battle_store.close()
-        _redis_cache.close()
+        state.battle_store.close()
+        state.redis_cache.close()
 
 
 app.router.lifespan_context = _lifespan
@@ -1314,9 +372,9 @@ def dashboard(
     difficulty: Literal["low", "mid", "high"] | None = Query(default=None),
 ) -> str:
     try:
-        _check_browser_or_api_auth(request)
+        security.check_browser_or_api_auth(request)
     except HTTPException as exc:
-        if exc.status_code == 401 and _browser_password:
+        if exc.status_code == 401 and config.browser_password:
             destination = request.url.path
             if request.url.query:
                 destination += "?" + request.url.query
@@ -2399,7 +1457,7 @@ def dashboard(
 def health(request: Request) -> dict[str, Any]:
     storage_status = "ok"
     try:
-        _battle_store.count()
+        state.battle_store.count()
     except Exception:  # noqa: BLE001 - health must report degraded storage instead of failing.
         storage_status = "error"
     return {
@@ -2425,11 +1483,11 @@ def browser_login_page(
         or any(ord(char) < 32 for char in destination)
     ):
         destination = "/dashboard"
-    if _browser_password and _has_browser_session(request):
+    if config.browser_password and security.has_browser_session(request):
         return RedirectResponse(
             destination, status_code=303, headers={"Cache-Control": "no-store"}
         )
-    login_enabled = bool(_browser_password)
+    login_enabled = bool(config.browser_password)
     disabled_message = (
         "浏览器密码登录尚未启用，请联系服务管理员配置。"
         if not login_enabled
@@ -2520,20 +1578,22 @@ def browser_login_page(
 @app.get("/auth/session", summary="查询浏览器登录状态", tags=["浏览器鉴权"])
 def browser_session_status(request: Request, response: Response) -> dict[str, bool]:
     response.headers["Cache-Control"] = "no-store"
-    authenticated = bool(_browser_password) and _has_browser_session(request)
-    if _verify_cloudflare_access_jwt(
+    authenticated = bool(config.browser_password) and security.has_browser_session(
+        request
+    )
+    if security.verify_cloudflare_access_jwt(
         request.headers.get("cf-access-jwt-assertion", "")
     ):
         authenticated = True
     return {
-        "enabled": bool(_browser_password) or _cloudflare_access_configured,
+        "enabled": bool(config.browser_password) or config.cloudflare_access_configured,
         "authenticated": authenticated,
     }
 
 
 @app.post(
     "/auth/session",
-    dependencies=[Depends(_browser_login_rate_limit)],
+    dependencies=[Depends(security.login_rate_limit)],
     summary="创建浏览器登录会话",
     tags=["浏览器鉴权"],
 )
@@ -2542,40 +1602,43 @@ def create_browser_session(
     request: Request,
     response: Response,
 ) -> dict[str, Any]:
-    if not _browser_password:
+    if not config.browser_password:
         raise HTTPException(status_code=503, detail="浏览器登录尚未启用")
     origin = request.headers.get("origin", "")
-    if origin and not _browser_origin_allowed(origin, request):
+    if origin and not security.browser_origin_allowed(origin, request):
         raise HTTPException(status_code=403, detail="浏览器来源未获允许")
     if not hmac.compare_digest(
-        payload.password.encode("utf-8"), _browser_password.encode("utf-8")
+        payload.password.encode("utf-8"), config.browser_password.encode("utf-8")
     ):
         raise HTTPException(status_code=401, detail="登录密码错误")
-    token = _issue_browser_session()
+    token = security.issue_browser_session()
     response.set_cookie(
-        key=_browser_cookie_name,
+        key=config.browser_cookie_name,
         value=token,
-        max_age=_browser_session_ttl_seconds,
+        max_age=config.browser_session_ttl_seconds,
         httponly=True,
-        secure=_browser_cookie_secure,
-        samesite=_browser_cookie_samesite,
+        secure=config.browser_cookie_secure,
+        samesite=config.browser_cookie_samesite,
         path="/",
     )
     response.headers["Cache-Control"] = "no-store"
-    return {"authenticated": True, "expiresInSeconds": _browser_session_ttl_seconds}
+    return {
+        "authenticated": True,
+        "expiresInSeconds": config.browser_session_ttl_seconds,
+    }
 
 
 @app.delete("/auth/session", summary="退出浏览器登录", tags=["浏览器鉴权"])
 def delete_browser_session(request: Request, response: Response) -> dict[str, bool]:
     origin = request.headers.get("origin", "")
-    if origin and not _browser_origin_allowed(origin, request):
+    if origin and not security.browser_origin_allowed(origin, request):
         raise HTTPException(status_code=403, detail="浏览器来源未获允许")
-    _revoke_browser_session(request)
+    security.revoke_browser_session(request)
     response.delete_cookie(
-        key=_browser_cookie_name,
+        key=config.browser_cookie_name,
         httponly=True,
-        secure=_browser_cookie_secure,
-        samesite=_browser_cookie_samesite,
+        secure=config.browser_cookie_secure,
+        samesite=config.browser_cookie_samesite,
         path="/",
     )
     response.headers["Cache-Control"] = "no-store"
@@ -2585,7 +1648,7 @@ def delete_browser_session(request: Request, response: Response) -> dict[str, bo
 @app.get(
     "/metrics",
     include_in_schema=False,
-    dependencies=[Depends(_metrics_auth_dependency)],
+    dependencies=[Depends(security.metrics_auth_dependency)],
 )
 def metrics() -> dict[str, Any]:
     average_latency = (
@@ -2599,24 +1662,24 @@ def metrics() -> dict[str, Any]:
         "errors": _request_errors,
         "averageLatencyMs": round(average_latency, 2),
         "maxLatencyMs": round(_request_max_duration_ms, 2),
-        "rateLimited": _rate_limited_count,
-        "rateLimitPerMinute": _rate_limit_per_minute,
-        "protectReadRoutes": _protect_read_routes,
-        "eventDataMaxBytes": _event_data_max_bytes,
-        "recoveryTasks": len(_recovery_tasks),
-        "activeBattleTasks": len(_battle_tasks),
-        "battleTimeouts": _battle_timeout_count,
-        "battleCancellations": _battle_cancel_count,
+        "rateLimited": state.rate_limited_count,
+        "rateLimitPerMinute": config.rate_limit_per_minute,
+        "protectReadRoutes": config.protect_read_routes,
+        "eventDataMaxBytes": config.event_data_max_bytes,
+        "recoveryTasks": len(state.recovery_tasks),
+        "activeBattleTasks": len(state.battle_tasks),
+        "battleTimeouts": state.battle_timeout_count,
+        "battleCancellations": state.battle_cancel_count,
         "acpRetries": acp["retries"],
         "acpTimeouts": acp["timeouts"],
-        "auditEvents": _battle_store.count_audit_events(),
-        "battles": _battle_store.count(),
-        "events": _battle_store.count_events(),
+        "auditEvents": state.battle_store.count_audit_events(),
+        "battles": state.battle_store.count(),
+        "events": state.battle_store.count_events(),
     }
 
 
 def _admin_write_audit(request: Request, event_type: str, data: dict[str, Any]) -> None:
-    _record_audit_event(
+    events_api.record_audit_event(
         event_type,
         status="accepted",
         request_id=request.state.request_id,
@@ -2633,8 +1696,8 @@ def list_admin_samples(
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[dict[str, Any]]:
-    _check_browser_or_api_auth(request)
-    items = _battle_store.list_admin_samples(
+    security.check_browser_or_api_auth(request)
+    items = state.battle_store.list_admin_samples(
         query=q.strip() if q else None, limit=limit, offset=offset
     )
     response.headers["X-Total-Count"] = str(len(items))
@@ -2647,8 +1710,8 @@ def list_admin_samples(
 def create_admin_sample(
     payload: AdminSampleRequest, request: Request
 ) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
-    item = _battle_store.save_admin_sample(payload.model_dump())
+    security.check_browser_or_api_auth(request)
+    item = state.battle_store.save_admin_sample(payload.model_dump())
     _admin_write_audit(
         request,
         "admin.sample.created",
@@ -2663,8 +1726,8 @@ def create_admin_sample(
 def update_admin_sample(
     sample_id: str, payload: AdminSampleRequest, request: Request
 ) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
-    item = _battle_store.update_admin_sample(sample_id, payload.model_dump())
+    security.check_browser_or_api_auth(request)
+    item = state.battle_store.update_admin_sample(sample_id, payload.model_dump())
     if item is None:
         raise HTTPException(status_code=404, detail="攻击样本不存在")
     _admin_write_audit(request, "admin.sample.updated", {"sampleId": sample_id})
@@ -2678,8 +1741,8 @@ def update_admin_sample(
     tags=["管理员资源"],
 )
 def delete_admin_sample(sample_id: str, request: Request) -> Response:
-    _check_browser_or_api_auth(request)
-    if not _battle_store.delete_admin_sample(sample_id):
+    security.check_browser_or_api_auth(request)
+    if not state.battle_store.delete_admin_sample(sample_id):
         raise HTTPException(status_code=404, detail="攻击样本不存在")
     _admin_write_audit(request, "admin.sample.deleted", {"sampleId": sample_id})
     return Response(status_code=204)
@@ -2693,8 +1756,8 @@ def list_admin_rules(
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[dict[str, Any]]:
-    _check_browser_or_api_auth(request)
-    items = _battle_store.list_admin_rules(
+    security.check_browser_or_api_auth(request)
+    items = state.battle_store.list_admin_rules(
         query=q.strip() if q else None, limit=limit, offset=offset
     )
     response.headers["X-Total-Count"] = str(len(items))
@@ -2705,8 +1768,8 @@ def list_admin_rules(
     "/admin/rules", status_code=201, summary="新增管理员防守规则", tags=["管理员资源"]
 )
 def create_admin_rule(payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
-    item = _battle_store.save_admin_rule(payload.model_dump())
+    security.check_browser_or_api_auth(request)
+    item = state.battle_store.save_admin_rule(payload.model_dump())
     _admin_write_audit(
         request, "admin.rule.created", {"ruleId": item["id"], "name": item["name"]}
     )
@@ -2723,7 +1786,7 @@ async def propose_admin_rule_candidate(
     payload: RuleCandidateRequest,
     request: Request,
 ) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     result = await suggest_rule_candidate(payload.model_dump())
     _admin_write_audit(
         request,
@@ -2741,8 +1804,8 @@ async def propose_admin_rule_candidate(
 def update_admin_rule(
     rule_id: str, payload: AdminRuleRequest, request: Request
 ) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
-    item = _battle_store.update_admin_rule(rule_id, payload.model_dump())
+    security.check_browser_or_api_auth(request)
+    item = state.battle_store.update_admin_rule(rule_id, payload.model_dump())
     if item is None:
         raise HTTPException(status_code=404, detail="防守规则不存在")
     _admin_write_audit(request, "admin.rule.updated", {"ruleId": rule_id})
@@ -2756,8 +1819,8 @@ def update_admin_rule(
     tags=["管理员资源"],
 )
 def delete_admin_rule(rule_id: str, request: Request) -> Response:
-    _check_browser_or_api_auth(request)
-    if not _battle_store.delete_admin_rule(rule_id):
+    security.check_browser_or_api_auth(request)
+    if not state.battle_store.delete_admin_rule(rule_id):
         raise HTTPException(status_code=404, detail="防守规则不存在")
     _admin_write_audit(request, "admin.rule.deleted", {"ruleId": rule_id})
     return Response(status_code=204)
@@ -2772,8 +1835,8 @@ def list_admin_audit_logs(
     operation: str | None = Query(default=None, max_length=128),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[dict[str, Any]]:
-    _check_browser_or_api_auth(request)
-    return _battle_store.list_audit_events_filtered(
+    security.check_browser_or_api_auth(request)
+    return state.battle_store.list_audit_events_filtered(
         from_time=from_time,
         to_time=to_time,
         actor_role=user,
@@ -2794,15 +1857,15 @@ def list_admin_audit_logs(
 )
 def dashboard_summary() -> dict[str, int]:
     cache_key = "agent-attack-lab:v2:dashboard-summary"
-    cached = _redis_cache.get_json(cache_key)
+    cached = state.redis_cache.get_json(cache_key)
     if isinstance(cached, dict):
         return {str(key): int(value) for key, value in cached.items()}
     result = {
-        **_battle_store.dashboard_summary(),
+        **state.battle_store.dashboard_summary(),
         "ruleLibraryCaseCount": local_rule_case_count(),
         "owaspLlmRuleCount": len(OWASP_LLM_CATEGORIES),
     }
-    _redis_cache.set_json(cache_key, result)
+    state.redis_cache.set_json(cache_key, result)
     return result
 
 
@@ -2837,11 +1900,11 @@ def list_external_cases(
             json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
     )
-    cached = _redis_cache.get_json(cache_key)
+    cached = state.redis_cache.get_json(cache_key)
     if isinstance(cached, dict):
         return cached
     result = query_external_cases(
-        _external_cases_database,
+        config.external_cases_database,
         query=normalized["q"],
         vendor=normalized["vendor"],
         product=normalized["product"],
@@ -2849,7 +1912,7 @@ def list_external_cases(
         offset=offset,
     )
     if result.get("available"):
-        _redis_cache.set_json(cache_key, result, ttl_seconds=300)
+        state.redis_cache.set_json(cache_key, result, ttl_seconds=300)
     return result
 
 
@@ -2858,20 +1921,20 @@ def list_external_cases(
     summary="审计战局事件完整性",
     description="只读检查事件序列、战局归属、状态和 Agent 来源是否一致，不修改战局数据。",
     tags=["战局接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def battle_audit(battle_id: str) -> dict[str, Any]:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    result = audit_battle(record, _battle_store.list_events(battle_id))
-    result["auditEvents"] = _battle_store.list_audit_events(battle_id=battle_id)
+    result = audit_battle(record, state.battle_store.list_events(battle_id))
+    result["auditEvents"] = state.battle_store.list_audit_events(battle_id=battle_id)
     return result
 
 
 @app.post(
     "/battles",
-    dependencies=[Depends(_public_battle_rate_limit_dependency)],
+    dependencies=[Depends(security.public_battle_rate_limit_dependency)],
     status_code=201,
     summary="创建一场攻防战局",
     description="输入测试主题和难度，返回完整的攻击样本与防守结果。添加 background=true 可启用分阶段实时执行。",
@@ -2886,19 +1949,19 @@ async def create_battle(
     idempotency_key = _idempotency_key(request) if background else None
     fingerprint = _battle_fingerprint(payload) if idempotency_key else None
     if idempotency_key and fingerprint:
-        with _idempotency_lock:
-            existing = _battle_store.get_idempotency(idempotency_key)
+        with state.idempotency_lock:
+            existing = state.battle_store.get_idempotency(idempotency_key)
             if existing is not None:
                 if existing["fingerprint"] != fingerprint:
                     raise HTTPException(
                         status_code=409, detail="Idempotency-Key 已用于不同请求"
                     )
-                existing_record = _battle_store.get(existing["battleId"])
+                existing_record = state.battle_store.get(existing["battleId"])
                 if existing_record is None:
                     raise HTTPException(
                         status_code=409, detail="幂等记录对应的战局已不存在"
                     )
-                _record_audit_event(
+                events_api.record_audit_event(
                     "battle.idempotency.reused",
                     status="reused",
                     request_id=request.state.request_id,
@@ -2908,7 +1971,7 @@ async def create_battle(
                 )
                 return BattleRecord.model_validate(existing_record)
     battle_id = f"battle-{uuid.uuid4()}"
-    battle_code = _battle_store.next_battle_code()
+    battle_code = state.battle_store.next_battle_code()
     created_at = datetime.now(UTC).isoformat()
     if background:
         record = BattleRecord(
@@ -2922,10 +1985,10 @@ async def create_battle(
             attackerOut={"samples": []},
             defenderOut=[],
         )
-        _battle_store.save(record.model_dump())
+        state.battle_store.save(record.model_dump())
         if idempotency_key and fingerprint:
-            _battle_store.save_idempotency(idempotency_key, fingerprint, battle_id)
-        _record_audit_event(
+            state.battle_store.save_idempotency(idempotency_key, fingerprint, battle_id)
+        events_api.record_audit_event(
             "battle.created",
             status="accepted",
             request_id=request.state.request_id,
@@ -2936,8 +1999,8 @@ async def create_battle(
                 "idempotencyKeyPresent": bool(idempotency_key),
             },
         )
-        _battle_store.save_event(
-            _event(
+        state.battle_store.save_event(
+            events_api.build_event(
                 battle_id,
                 1,
                 "battle.created",
@@ -2955,7 +2018,7 @@ async def create_battle(
                 },
             )
         )
-        _schedule_battle_task(background_tasks, battle_id, payload)
+        battle_runner.schedule_battle_task(background_tasks, battle_id, payload)
         return record
 
     events: list[dict[str, Any]] = []
@@ -2963,7 +2026,9 @@ async def create_battle(
 
     def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
         nonlocal sequence
-        events.append(_event(battle_id, sequence, event_type, status, data))
+        events.append(
+            events_api.build_event(battle_id, sequence, event_type, status, data)
+        )
         sequence += 1
 
     add_event(
@@ -2997,10 +2062,14 @@ async def create_battle(
     verification_mode = configured_verify_mode()
     verifications: list[dict[str, Any]] = []
     try:
-        attack_result, attacker_source, attack_call_id = await _tracked_agent_call(
+        (
+            attack_result,
+            attacker_source,
+            attack_call_id,
+        ) = await battle_runner.tracked_agent_call(
             battle_id=battle_id,
             role="attacker",
-            invoke=lambda correlation_id: _battle_attack(
+            invoke=lambda correlation_id: battle_runner.battle_attack(
                 payload, correlation_id=correlation_id
             ),
             add_event=add_event,
@@ -3016,11 +2085,13 @@ async def create_battle(
             },
         )
         for sample in attack_result["samples"]:
-            defense, _, defense_call_id = await _tracked_agent_call(
+            defense, _, defense_call_id = await battle_runner.tracked_agent_call(
                 battle_id=battle_id,
                 role="defender",
-                invoke=lambda correlation_id, current_sample=sample: _battle_defend(
-                    current_sample, correlation_id=correlation_id
+                invoke=lambda correlation_id, current_sample=sample: (
+                    battle_runner.battle_defend(
+                        current_sample, correlation_id=correlation_id
+                    )
                 ),
                 add_event=add_event,
             )
@@ -3044,11 +2115,11 @@ async def create_battle(
             attackerOut=attack_result,
             defenderOut=defense_results,
         )
-        _battle_store.save(failed_record.model_dump())
+        state.battle_store.save(failed_record.model_dump())
         for event in events:
-            _battle_store.save_event(event)
-        _persist_internal_score(failed_record.model_dump())
-        await asyncio.to_thread(_invalidate_leaderboard_cache)
+            state.battle_store.save_event(event)
+        scoring_glue.persist_internal_score(failed_record.model_dump())
+        await asyncio.to_thread(scoring_glue.invalidate_leaderboard_cache)
         if isinstance(exc, ACPAgentError):
             raise HTTPException(
                 status_code=502,
@@ -3118,8 +2189,8 @@ async def create_battle(
         attackerOut=attack_result,
         defenderOut=defense_results,
     )
-    _battle_store.save(record.model_dump())
-    await asyncio.to_thread(_invalidate_leaderboard_cache)
+    state.battle_store.save(record.model_dump())
+    await asyncio.to_thread(scoring_glue.invalidate_leaderboard_cache)
     add_event(
         "battle.completed",
         "completed",
@@ -3134,14 +2205,14 @@ async def create_battle(
         },
     )
     for event in events:
-        _battle_store.save_event(event)
-    _persist_internal_score(record.model_dump())
+        state.battle_store.save_event(event)
+    scoring_glue.persist_internal_score(record.model_dump())
     return record
 
 
 @app.post(
     "/battles/{battle_id}/retry",
-    dependencies=[Depends(_rate_limit_dependency)],
+    dependencies=[Depends(security.rate_limit_dependency)],
     status_code=202,
     summary="重试失败战局",
     description="将失败战局重置为等待中并重新执行；需要配置 API Key 时沿用创建战局的密钥。",
@@ -3152,8 +2223,8 @@ def retry_battle(
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> BattleRecord:
-    _check_browser_or_api_auth(request)
-    record = _battle_store.get(battle_id)
+    security.check_browser_or_api_auth(request)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     if record["status"] != "failed":
@@ -3161,12 +2232,12 @@ def retry_battle(
     record["status"] = "pending"
     record["attackerOut"] = {"samples": []}
     record["defenderOut"] = []
-    _battle_store.save(record)
-    _battle_store.delete_score(battle_id)
-    _invalidate_leaderboard_cache()
-    events = _battle_store.list_events(battle_id)
-    _battle_store.save_event(
-        _event(
+    state.battle_store.save(record)
+    state.battle_store.delete_score(battle_id)
+    scoring_glue.invalidate_leaderboard_cache()
+    events = state.battle_store.list_events(battle_id)
+    state.battle_store.save_event(
+        events_api.build_event(
             battle_id,
             max((item["sequence"] for item in events), default=0) + 1,
             "battle.retry",
@@ -3179,32 +2250,33 @@ def retry_battle(
         topic=record["topic"],
         rounds=record.get("rounds", 3),
     )
-    _schedule_battle_task(background_tasks, battle_id, payload)
+    battle_runner.schedule_battle_task(background_tasks, battle_id, payload)
     return BattleRecord.model_validate(record)
 
 
 @app.post(
     "/battles/{battle_id}/cancel",
-    dependencies=[Depends(_rate_limit_dependency)],
+    dependencies=[Depends(security.rate_limit_dependency)],
     status_code=202,
     summary="取消运行中的战局",
     tags=["战局接口"],
 )
 def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
-    global _battle_cancel_count
-    _check_browser_or_api_auth(request)
-    record = _battle_store.get(battle_id)
+    security.check_browser_or_api_auth(request)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     if record["status"] in {"completed", "failed"}:
         raise HTTPException(status_code=409, detail="终态战局不能取消")
-    _battle_cancel_count += 1
-    task = _battle_tasks.get(battle_id)
+    state.battle_cancel_count += 1
+    task = state.battle_tasks.get(battle_id)
     if task is not None and not task.done():
-        _cancel_requested.add(battle_id)
+        state.cancel_requested.add(battle_id)
         task.cancel()
-    _mark_battle_terminal(battle_id, "battle.cancelled", "requested_by_client")
-    _record_audit_event(
+    battle_runner.mark_battle_terminal(
+        battle_id, "battle.cancelled", "requested_by_client"
+    )
+    events_api.record_audit_event(
         "battle.cancel.requested",
         status="accepted",
         request_id=request.state.request_id,
@@ -3212,7 +2284,7 @@ def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
         actor_role="operator",
         data={"taskTracked": task is not None and not task.done()},
     )
-    updated = _battle_store.get(battle_id)
+    updated = state.battle_store.get(battle_id)
     if updated is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return BattleRecord.model_validate(updated)
@@ -3220,21 +2292,21 @@ def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
 
 @app.delete(
     "/battles/{battle_id}",
-    dependencies=[Depends(_rate_limit_dependency)],
+    dependencies=[Depends(security.rate_limit_dependency)],
     status_code=204,
     summary="删除已结束的战局",
     description="删除 completed 或 failed 战局及其事件；pending/running 战局必须先结束。",
     tags=["战局接口"],
 )
 def delete_battle(battle_id: str, request: Request) -> Response:
-    _check_browser_or_api_auth(request)
-    record = _battle_store.get(battle_id)
+    security.check_browser_or_api_auth(request)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     if record["status"] in {"pending", "running"}:
         raise HTTPException(status_code=409, detail="运行中的战局不能删除")
-    _battle_store.delete(battle_id)
-    _invalidate_leaderboard_cache()
+    state.battle_store.delete(battle_id)
+    scoring_glue.invalidate_leaderboard_cache()
     return Response(status_code=204)
 
 
@@ -3253,11 +2325,11 @@ def list_battles(
     q: str | None = Query(default=None, max_length=200, description="按主题或编号搜索"),
 ) -> list[BattleRecord]:
     response.headers["X-Total-Count"] = str(
-        _battle_store.count(difficulty=difficulty, status=status, query=q)
+        state.battle_store.count(difficulty=difficulty, status=status, query=q)
     )
     return [
         BattleRecord.model_validate(item)
-        for item in _battle_store.list(
+        for item in state.battle_store.list(
             limit=limit, offset=offset, difficulty=difficulty, status=status, query=q
         )
     ]
@@ -3268,7 +2340,7 @@ def list_battles(
     summary="查询战局回放事件",
     description="按事件序号升序分页返回已持久化的战局事件，可按类型、时间范围和事件内容检索。",
     tags=["战局回放"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def get_battle_events(
     battle_id: str,
@@ -3284,7 +2356,7 @@ def get_battle_events(
         default=None, max_length=200, description="搜索事件类型和原始事件数据"
     ),
 ) -> list[BattleEvent]:
-    if _battle_store.get(battle_id) is None:
+    if state.battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
 
     def utc_iso(value: datetime | None) -> str | None:
@@ -3300,7 +2372,7 @@ def get_battle_events(
     if normalized_from and normalized_to and normalized_from > normalized_to:
         raise HTTPException(status_code=422, detail="from_time 不能晚于 to_time")
 
-    events, total = _battle_store.query_events(
+    events, total = state.battle_store.query_events(
         battle_id,
         limit=limit,
         after_sequence=after_sequence,
@@ -3321,14 +2393,14 @@ def get_battle_events(
 @app.get(
     "/battles/{battle_id}/replay",
     include_in_schema=False,
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def replay_battle(battle_id: str) -> dict[str, Any]:
-    if _battle_store.get(battle_id) is None:
+    if state.battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return {
         "battleId": battle_id,
-        "events": _battle_store.list_events(battle_id),
+        "events": state.battle_store.list_events(battle_id),
         "mode": "replay",
     }
 
@@ -3340,7 +2412,7 @@ def replay_battle(battle_id: str) -> dict[str, Any]:
     tags=["战局接口"],
 )
 def get_battle(battle_id: str) -> BattleRecord:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return BattleRecord.model_validate(record)
@@ -3350,13 +2422,13 @@ def get_battle(battle_id: str) -> BattleRecord:
     "/battles/{battle_id}/rounds",
     summary="按回合聚合战局证据",
     tags=["战局回放"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def get_battle_rounds(battle_id: str) -> dict[str, Any]:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    events = _battle_store.list_events(battle_id)
+    events = state.battle_store.list_events(battle_id)
     grouped: dict[int, dict[str, Any]] = {}
     call_durations = {
         (event.get("data") or {}).get("correlationId"): (event.get("data") or {}).get(
@@ -3479,14 +2551,14 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         )
         scored_round = round_scores.get(item["round"])
         if scored_round is None:
-            item["attacker"] = _insufficient_internal_score()["attacker"]
-            item["defender"] = _insufficient_internal_score()["defender"]
+            item["attacker"] = scoring_glue.insufficient_internal_score()["attacker"]
+            item["defender"] = scoring_glue.insufficient_internal_score()["defender"]
             item["scores"] = {"attacker": None, "defender": None}
         else:
             item["attacker"] = scored_round["attacker"]
             item["defender"] = scored_round["defender"]
             item["scores"] = scored_round["scores"]
-    stats = _battle_stats(record, events)
+    stats = scoring_glue.battle_stats(record, events)
     # `total` reflects what was actually produced so callers never see a
     # mismatch (for example "5 of 5" while only three rounds exist). The
     # requested count is kept separately for diagnostics.
@@ -3513,88 +2585,6 @@ def _scores(record: dict[str, Any]) -> tuple[int, int]:
     return attacker_score, defender_score
 
 
-def _markdown_report(
-    record: dict[str, Any],
-    events: list[dict[str, Any]],
-    internal_score: dict[str, Any],
-    report_summary: dict[str, Any] | None = None,
-) -> str:
-    attacker_score, defender_score = _scores(record)
-    lines = [
-        f"# 智能体攻防战报：{record['topic']}",
-        "",
-        f"- 战局编号：`{record['id']}`",
-        f"- 难度：{record['difficulty']}",
-        f"- 状态：{record['status']}",
-        f"- 创建时间：{record['createdAt']}",
-        f"- 攻击方得分：{attacker_score}",
-        f"- 防守方得分：{defender_score}",
-        "",
-        "## 内部运行质量评分",
-        "",
-        f"- 规则版本：`{internal_score['version']}`",
-        f"- 口径：{internal_score['message']}",
-        *[
-            f"- {role_name}：{role_score['score']}/{role_score['maxScore']}"
-            if role_score["score"] is not None
-            else f"- {role_name}：证据不足（{role_score['message']}）"
-            for role_name, role_score in (
-                ("攻击方", internal_score["attacker"]),
-                ("防守方", internal_score["defender"]),
-            )
-        ],
-        *[
-            f"  - {item['label']}：{item['score']}/{item['maxScore']}（{item['basis']}）"
-            for role_score in (internal_score["attacker"], internal_score["defender"])
-            for item in role_score["categories"]
-        ],
-        "",
-    ]
-    if report_summary is not None:
-        lines.extend(
-            [
-                "## LLM 战报总结",
-                "",
-                str(report_summary.get("summary", "")),
-                "",
-                f"- 结果来源：{report_summary.get('agentSource', 'unknown')}",
-                f"- 需要人工复核：{'是' if report_summary.get('needsHumanReview') else '否'}",
-                *[f"- 风险：{item}" for item in report_summary.get("keyRisks", [])],
-                *[f"- 证据：`{item}`" for item in report_summary.get("evidence", [])],
-                *[
-                    f"- 建议：{item}"
-                    for item in report_summary.get("recommendations", [])
-                ],
-                "",
-            ]
-        )
-    lines.extend(["## 对抗过程", ""])
-    samples = record["attackerOut"].get("samples", [])
-    defenses = record.get("defenderOut", [])
-    for index, sample in enumerate(samples, start=1):
-        defense = defenses[index - 1] if index - 1 < len(defenses) else {}
-        lines.extend(
-            [
-                f"### 第 {index} 轮：{sample.get('type', 'unknown')} / {sample.get('severity', 'unknown')}",
-                f"- 主题：{sample.get('topic', record['topic'])}",
-                f"- 攻击内容：{sample.get('content', '')}",
-                f"- 发现问题：{', '.join(item.get('reason', '') for item in defense.get('caught', [])) or '无'}",
-                f"- 风险：{', '.join(item.get('reason', '') for item in defense.get('risks', [])) or '无'}",
-                f"- 修复动作：{', '.join(item.get('action', '') for item in defense.get('fixed', [])) or '无'}",
-                "",
-            ]
-        )
-    lines.extend(["## 事件记录", ""])
-    for event in events:
-        lines.append(f"- `{event['sequence']}` {event['type']}：{event['createdAt']}")
-    return "\n".join(lines) + "\n"
-
-
-_REPORT_SUMMARY_CACHE_TTL_SECONDS = 600.0
-_REPORT_SUMMARY_CACHE_MAX_ENTRIES = 256
-_report_summary_cache: dict[tuple[str, int, str], tuple[float, dict[str, Any]]] = {}
-
-
 def _report_summary_key(
     battle_id: str, record: dict[str, Any], events: list[dict[str, Any]]
 ) -> tuple[str, int, str]:
@@ -3603,12 +2593,12 @@ def _report_summary_key(
 
 
 def _prune_report_summary_cache(now: float) -> None:
-    for key, (expires_at, _summary) in list(_report_summary_cache.items()):
+    for key, (expires_at, _summary) in list(state.report_summary_cache.items()):
         if expires_at <= now:
-            _report_summary_cache.pop(key, None)
-    while len(_report_summary_cache) >= _REPORT_SUMMARY_CACHE_MAX_ENTRIES:
-        oldest = min(_report_summary_cache.items(), key=lambda item: item[1][0])[0]
-        _report_summary_cache.pop(oldest, None)
+            state.report_summary_cache.pop(key, None)
+    while len(state.report_summary_cache) >= state.REPORT_SUMMARY_CACHE_MAX_ENTRIES:
+        oldest = min(state.report_summary_cache.items(), key=lambda item: item[1][0])[0]
+        state.report_summary_cache.pop(oldest, None)
 
 
 async def _report_summary_for(
@@ -3621,60 +2611,64 @@ async def _report_summary_for(
     """
     now = time.monotonic()
     key = _report_summary_key(battle_id, record, events)
-    cached = _report_summary_cache.get(key)
+    cached = state.report_summary_cache.get(key)
     if cached is not None and cached[0] > now:
         return cached[1]
-    _report_summary_cache.pop(key, None)
+    state.report_summary_cache.pop(key, None)
     summary = await summarize_report(record, events)
     _prune_report_summary_cache(now)
-    _report_summary_cache[key] = (now + _REPORT_SUMMARY_CACHE_TTL_SECONDS, summary)
+    state.report_summary_cache[key] = (
+        now + state.REPORT_SUMMARY_CACHE_TTL_SECONDS,
+        summary,
+    )
     return summary
 
 
 @app.get(
     "/battles/{battle_id}/report",
     include_in_schema=False,
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 @app.get(
     "/reports/{battle_id}",
     summary="查看或下载战报",
     description="默认返回 JSON；将 format 设置为 markdown 可下载 Markdown 战报。",
     tags=["战报接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 async def battle_report(
     battle_id: str,
     format: Literal["json", "markdown"] = Query(default="json"),
 ) -> Any:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    events = _battle_store.list_events(battle_id)
+    events = state.battle_store.list_events(battle_id)
     report_summary = await _report_summary_for(battle_id, record, events)
     if format == "markdown":
-        stored_internal_score = _battle_store.get_score(battle_id)
+        stored_internal_score = state.battle_store.get_score(battle_id)
         return PlainTextResponse(
-            _markdown_report(
+            build_markdown_report(
                 record,
                 events,
                 stored_internal_score
                 if stored_internal_score is not None
-                else _insufficient_internal_score(),
+                else scoring_glue.insufficient_internal_score(),
+                _scores(record),
                 report_summary,
             ),
             media_type="text/markdown; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{battle_id}.md"'},
         )
     attacker_score, defender_score = _scores(record)
-    stored_internal_score = _battle_store.get_score(battle_id)
+    stored_internal_score = state.battle_store.get_score(battle_id)
     return {
         "battle": record,
         "events": events,
         "scores": {"attacker": attacker_score, "defender": defender_score},
         "internalScore": stored_internal_score
         if stored_internal_score is not None
-        else _insufficient_internal_score(),
+        else scoring_glue.insufficient_internal_score(),
         "summary": report_summary,
     }
 
@@ -3684,14 +2678,14 @@ async def battle_report(
     summary="查看战局内部运行质量评分",
     description="返回战局完成后持久化的可追溯运行评分，不代表攻击成功率或检测准确率；缺少快照时返回证据不足。",
     tags=["评分接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def battle_internal_score(battle_id: str) -> dict[str, Any]:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    stored = _battle_store.get_score(battle_id)
-    return stored if stored is not None else _insufficient_internal_score()
+    stored = state.battle_store.get_score(battle_id)
+    return stored if stored is not None else scoring_glue.insufficient_internal_score()
 
 
 @app.get(
@@ -3699,14 +2693,17 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
     summary="查看近期战局内部运行质量评分",
     description="聚合最近战局的运行质量评分；缺少逐调用事件的历史战局单独标记为证据不足。",
     tags=["评分接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
     items = []
-    records = _battle_store.list(limit=limit)
-    stored_scores = _battle_store.list_scores([record["id"] for record in records])
+    records = state.battle_store.list(limit=limit)
+    stored_scores = state.battle_store.list_scores([record["id"] for record in records])
     for record in records:
-        score = stored_scores.get(record["id"]) or _insufficient_internal_score()
+        score = (
+            stored_scores.get(record["id"])
+            or scoring_glue.insufficient_internal_score()
+        )
         items.append(
             {
                 "battleId": record["id"],
@@ -3752,20 +2749,19 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
     summary="查看攻防排行榜",
     description="返回攻击方和防守方的累计得分与对抗轮次。",
     tags=["统计接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def leaderboard() -> dict[str, Any]:
-    global _leaderboard_cache
     now = time.monotonic()
-    if _leaderboard_cache and now - _leaderboard_cache[0] < 2:
-        return _leaderboard_cache[1]
-    cached = _redis_cache.get_json("agent-attack-lab:v1:leaderboard")
+    if state.leaderboard_cache and now - state.leaderboard_cache[0] < 2:
+        return state.leaderboard_cache[1]
+    cached = state.redis_cache.get_json("agent-attack-lab:v1:leaderboard")
     if isinstance(cached, dict) and isinstance(cached.get("items"), list):
-        _leaderboard_cache = (now, cached)
+        state.leaderboard_cache = (now, cached)
         return cached
     attacker_score = defender_score = 0
     rounds = 0
-    for record in _battle_store.list(limit=100000):
+    for record in state.battle_store.list(limit=100000):
         attack_points, defend_points = _scores(record)
         attacker_score += attack_points
         defender_score += defend_points
@@ -3776,20 +2772,20 @@ def leaderboard() -> dict[str, Any]:
             {"agent": "defender", "score": defender_score, "rounds": rounds},
         ],
     }
-    _leaderboard_cache = (now, result)
-    _redis_cache.set_json("agent-attack-lab:v1:leaderboard", result)
+    state.leaderboard_cache = (now, result)
+    state.redis_cache.set_json("agent-attack-lab:v1:leaderboard", result)
     return result
 
 
 @app.get(
     "/battles/{battle_id}/events/stream",
     include_in_schema=False,
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 async def event_stream(
     battle_id: str, follow: bool = Query(default=False)
 ) -> StreamingResponse:
-    if await asyncio.to_thread(_battle_store.get, battle_id) is None:
+    if await asyncio.to_thread(state.battle_store.get, battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
 
     async def generate() -> Any:
@@ -3798,7 +2794,7 @@ async def event_stream(
         poll_interval = 0.1
         while attempts < (60 if follow else 1):
             events = await asyncio.to_thread(
-                _battle_store.list_events_after, battle_id, after_sequence
+                state.battle_store.list_events_after, battle_id, after_sequence
             )
             for event in events:
                 yield f"id: {event['id']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -3818,14 +2814,14 @@ async def event_stream(
 
 @app.websocket("/ws/battles/{battle_id}")
 async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
-    if _protect_read_routes and _api_key:
+    if config.protect_read_routes and config.api_key:
         supplied_key = websocket.headers.get("x-api-key") or websocket.query_params.get(
             "api_key"
         )
-        if supplied_key != _api_key:
+        if supplied_key != config.api_key:
             await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
             return
-    if await asyncio.to_thread(_battle_store.get, battle_id) is None:
+    if await asyncio.to_thread(state.battle_store.get, battle_id) is None:
         await websocket.close(code=4404, reason="战局不存在")
         return
     await websocket.accept()
@@ -3833,7 +2829,7 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
     try:
         for _ in range(60):
             events = await asyncio.to_thread(
-                _battle_store.list_events_after, battle_id, sent
+                state.battle_store.list_events_after, battle_id, sent
             )
             for event in events:
                 await websocket.send_json(event)
@@ -3856,7 +2852,10 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
 
 @app.post(
     "/agent/attack",
-    dependencies=[Depends(_api_key_dependency), Depends(_rate_limit_dependency)],
+    dependencies=[
+        Depends(security.api_key_dependency),
+        Depends(security.rate_limit_dependency),
+    ],
     include_in_schema=False,
 )
 def agent_attack(payload: AttackRequest) -> dict[str, Any]:
@@ -3865,7 +2864,10 @@ def agent_attack(payload: AttackRequest) -> dict[str, Any]:
 
 @app.post(
     "/agent/defend",
-    dependencies=[Depends(_api_key_dependency), Depends(_rate_limit_dependency)],
+    dependencies=[
+        Depends(security.api_key_dependency),
+        Depends(security.rate_limit_dependency),
+    ],
     include_in_schema=False,
 )
 def agent_defend(payload: DefendRequest) -> dict[str, Any]:
@@ -3921,7 +2923,10 @@ _aip_handlers = CommandHandlers(on_start=_aip_start)
 
 @app.post(
     "/rpc",
-    dependencies=[Depends(_api_key_dependency), Depends(_rate_limit_dependency)],
+    dependencies=[
+        Depends(security.api_key_dependency),
+        Depends(security.rate_limit_dependency),
+    ],
     include_in_schema=False,
 )
 async def rpc(request: Request) -> dict[str, Any]:
