@@ -74,21 +74,26 @@ describe('AdminApp', () => {
     render(<AdminApp />)
     await screen.findByRole('tab', { name: /^总览/ })
 
-    // 预置主题与前台一致，六个都在主题库里
+    // 主题库不再单独占一个 Tab，而是收进创建战局流程
     fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
-    fireEvent.click(screen.getByRole('tab', { name: '主题库' }))
+    expect(screen.queryByRole('tab', { name: '主题库' })).not.toBeInTheDocument()
+    const themeLibrary = screen.getByRole('group', { name: '主题库' })
+    expect(themeLibrary).not.toHaveAttribute('open')
+    fireEvent.click(within(themeLibrary).getByText('主题库'))
+
+    // 预置主题与前台一致，六个都在主题库里
     for (const theme of PRESET_THEMES) {
-      expect(await screen.findByRole('button', { name: theme })).toBeInTheDocument()
+      expect(await within(themeLibrary).findByRole('button', { name: theme })).toBeInTheDocument()
     }
 
     // 新增自定义主题后写入前台同名 localStorage 键
     const custom = '内部知识库越权检索'
-    fireEvent.change(screen.getByLabelText('新增主题'), { target: { value: custom } })
-    fireEvent.click(screen.getByRole('button', { name: '添加到主题库' }))
+    fireEvent.change(within(themeLibrary).getByLabelText('新增主题'), { target: { value: custom } })
+    fireEvent.click(within(themeLibrary).getByRole('button', { name: '添加到主题库' }))
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem(THEME_STORAGE_KEY) ?? '[]')).toContain(custom))
 
     // 自定义主题可直接带入创建战局并提交
-    fireEvent.click(await screen.findByRole('button', { name: custom }))
+    fireEvent.click(await within(themeLibrary).findByRole('button', { name: custom }))
     fireEvent.click(screen.getByRole('button', { name: '创建并启动战局' }))
     await waitFor(() => expect(adminApi.createAdminBattle).toHaveBeenCalledWith({ topic: custom, difficulty: 'mid', rounds: 3 }))
   })
@@ -504,8 +509,12 @@ describe('AdminApp', () => {
       expect(screen.queryByText(key)).not.toBeInTheDocument()
     }
     await openWorkspace(/^监控/)
-    // 四个同源字段只出一张卡
-    expect(screen.getAllByText('防守命中（含建议/风险）')).toHaveLength(1)
+    // 监控首屏只保留服务健康；其余指标默认收起，但仍可展开查看
+    const moreMetrics = screen.getByRole('group', { name: '更多运行数据' })
+    expect(moreMetrics).not.toHaveAttribute('open')
+    expect(within(moreMetrics).getByText('防守命中（含建议/风险）')).not.toBeVisible()
+    fireEvent.click(within(moreMetrics).getByText('更多运行数据'))
+    expect(within(moreMetrics).getByText('防守命中（含建议/风险）')).toBeVisible()
   })
 
   it('renders audit log data as labelled key/value chips instead of raw JSON', async () => {

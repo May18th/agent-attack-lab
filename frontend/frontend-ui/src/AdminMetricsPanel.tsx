@@ -120,27 +120,39 @@ export function AdminMetricsPanel({ summary, metrics }: Props) {
 
   const serviceName = typeof merged.service === 'string' ? merged.service : ''
   const hasData = groups.length > 0
+  const primaryKeys = new Set(['uptimeSeconds', 'requests', 'errors', 'averageLatencyMs'])
+  const serviceGroup = groups.find((group) => group.title === '服务运行')
+  const primaryGroup = serviceGroup ? { ...serviceGroup, entries: serviceGroup.entries.filter(([key]) => primaryKeys.has(key)) } : null
+  const secondaryGroups = groups
+    .map((group) => group.title === '服务运行' ? { ...group, entries: group.entries.filter(([key]) => !primaryKeys.has(key)) } : group)
+    .filter((group) => group.entries.length > 0)
+  const secondaryCount = secondaryGroups.reduce((total, group) => total + group.entries.length, 0)
+  const renderGroup = (group: MetricGroup) => (
+    <div className="metric-group" key={group.title}>
+      <h3>{group.title}</h3>
+      <div className="metric-grid">
+        {group.entries.map(([key, value]) => (
+          <div className={`metric${ALERT_KEYS.has(key) && typeof value === 'number' && value > 0 ? ' metric-alert' : ''}`} key={key}>
+            <span>{METRIC_LABELS[key] ?? key}</span>
+            <strong>{formatValue(key, value)}</strong>
+          </div>
+        ))}
+      </div>
+      {group.hint && <p className="metric-note">{group.hint}</p>}
+    </div>
+  )
 
   return (
-    <section className="admin-module metrics">
-      <div className="module-head"><h2>运行指标</h2><span>{serviceName || (hasData ? '进程累计统计' : '暂无数据')}</span></div>
+    <section className="admin-module metrics" aria-label="服务状态">
+      <div className="module-head"><h2>服务状态</h2><span>{serviceName || (hasData ? '进程累计统计' : '暂无数据')}</span></div>
       {hasData ? (
-        <div className="metric-groups">
-          {groups.map((group) => (
-            <div className="metric-group" key={group.title}>
-              <h3>{group.title}</h3>
-              <div className="metric-grid">
-                {group.entries.map(([key, value]) => (
-                  <div className={`metric${ALERT_KEYS.has(key) && typeof value === 'number' && value > 0 ? ' metric-alert' : ''}`} key={key}>
-                    <span>{METRIC_LABELS[key] ?? key}</span>
-                    <strong>{formatValue(key, value)}</strong>
-                  </div>
-                ))}
-              </div>
-              {group.hint && <p className="metric-note">{group.hint}</p>}
-            </div>
-          ))}
-        </div>
+        <>
+          {primaryGroup?.entries.length ? <div className="metric-groups metric-primary-groups">{renderGroup(primaryGroup)}</div> : <p className="empty metrics-primary-empty">暂无核心运行指标</p>}
+          {secondaryGroups.length > 0 && <details className="metrics-more" role="group" aria-label="更多运行数据">
+            <summary className="metrics-more-summary"><span>更多运行数据</span><small>{secondaryCount} 项，按需展开</small></summary>
+            <div className="metric-groups metric-secondary-groups">{secondaryGroups.map(renderGroup)}</div>
+          </details>}
+        </>
       ) : <p className="empty">暂无指标</p>}
     </section>
   )

@@ -277,6 +277,24 @@
 .metrics .metric span { line-height: 1.45; }
 .metrics .metric strong { margin-top: 10px; font-size: 26px; line-height: 1.15; }
 .metrics .metric-note { max-width: 64ch; margin: 12px 0 0; line-height: 1.65; }
+.metrics .metric-primary-groups .metric-group { grid-column: 1 / -1; padding-bottom: 0; border-bottom: 0; }
+.metrics-more { margin-top: 22px; border-top: 1px solid var(--front-line); }
+.metrics-more-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 2px 2px; color: var(--front-text); cursor: pointer; list-style: none; }
+.metrics-more-summary::-webkit-details-marker { display: none; }
+.metrics-more-summary::after { content: '+'; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid #3b536b; border-radius: 50%; color: var(--front-defender); font-size: 16px; line-height: 1; }
+.metrics-more[open] .metrics-more-summary::after { content: '−'; }
+.metrics-more-summary span { font-size: 13px; font-weight: 650; }
+.metrics-more-summary small { margin-left: auto; color: var(--front-dim); font-size: 11px; }
+.metrics-secondary-groups { margin-top: 20px; }
+.metrics .metric-secondary-groups .metric-group:first-child { grid-column: auto; padding-bottom: 0; border-bottom: 0; }
+.theme-library-inline { grid-column: 1 / -1; border-top: 1px solid var(--front-line); }
+.theme-library-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 2px 2px; color: var(--front-text); cursor: pointer; list-style: none; }
+.theme-library-summary::-webkit-details-marker { display: none; }
+.theme-library-summary::after { content: '+'; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid #3b536b; border-radius: 50%; color: var(--front-defender); font-size: 16px; line-height: 1; }
+.theme-library-inline[open] .theme-library-summary::after { content: '−'; }
+.theme-library-summary span { font-size: 13px; font-weight: 650; }
+.theme-library-summary small { margin-left: auto; color: var(--front-dim); font-size: 11px; }
+.theme-library-content { padding-top: 14px; }
 
 /* 管理页把说明放到右侧，填补无意义的空白，同时让主操作更像工作台控件。 */
 .management-form { max-width: none; grid-template-columns: minmax(0, 1fr) minmax(280px, .82fr); gap: 16px 24px; align-items: start; }
@@ -301,6 +319,8 @@
   .metrics .metric-group .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .metrics .metric { min-height: 74px; padding: 12px; }
   .metrics .metric strong { font-size: 21px; }
+  .metrics-more-summary, .theme-library-summary { align-items: flex-start; flex-wrap: wrap; }
+  .metrics-more-summary small, .theme-library-summary small { flex-basis: calc(100% - 36px); margin-left: 0; }
   .management-form .primary-action { width: 100%; justify-self: stretch; }
 }
 
@@ -360,7 +380,7 @@
 @media (prefers-reduced-motion: reduce) { .scene-halo, .scene-ring, .scene-tower, .scene-core, .scene-core-orbit, .scene-float, .scene-data-line, .scene-data-dot { animation: none; } }
 
 /* 视觉密度微调：扩大左侧主体，并用低对比度数据光轨填补中下部留白 */
-.auth-shell::after { content: ""; position: absolute; z-index: 2; left: 5%; right: 5%; bottom: 14%; height: 22%; pointer-events: none; opacity: .34; background: radial-gradient(ellipse at 30% 60%, rgba(34,211,238,.18), transparent 42%), linear-gradient(96deg, transparent 4%, rgba(64,189,255,.16) 25%, transparent 47%, rgba(126,91,255,.1) 72%, transparent 96%); filter: blur(12px); transform: skewX(-12deg); }
+.auth-shell::after { content: ""; position: absolute; z-index: 2; left: 5%; right: 5%; bottom: 14%; height: 22%; pointer-events: none; opacity: .14; background: radial-gradient(ellipse at 30% 60%, rgba(34,211,238,.15), transparent 42%); filter: blur(16px); transform: skewX(-12deg); }
 .industry-scene { width: min(57vw, 740px); left: 3%; top: 49%; }
 .auth-card { width: min(100%, 500px); }
 @media (max-width: 720px) { .industry-scene { width: min(104vw, 560px); top: 23%; } .auth-card { width: min(100%, 480px); } }
@@ -373,3 +393,31 @@
 @media (max-width: 720px) { .auth-card { position: relative; top: auto; right: auto; width: min(100%, 480px); transform: none; animation-name: auth-card-in; }.industry-scene { left: 50%; width: min(104vw, 560px); } }
 @media (prefers-reduced-motion: reduce) { .auth-card { animation-name: none; transform: translateY(-50%); } }
 @media (max-width: 720px) and (prefers-reduced-motion: reduce) { .auth-card { transform: none; } }
+
+/* 攻防太阳系：与前台天体系统保持同一视觉语言 */
+.industry-scene { display: none; }
+.solar-scene { position: absolute; z-index: 4; left: 1%; top: 50%; width: min(56vw, 760px); transform: translateY(-50%); pointer-events: none; filter: drop-shadow(0 24px 46px rgba(0,0,0,.3)); }
+.solar-scene svg { display: block; width: 100%; height: auto; overflow: visible; }
+.solar-ambient { fill: rgba(36,179,255,.16); filter: url(#solar-blur); animation: solar-ambient-pulse 5s ease-in-out infinite; }.solar-orbit { fill: none; stroke: rgba(103,232,249,.4); stroke-width: 1.2; stroke-dasharray: 2 12; transform-origin: 294px 262px; }.solar-orbit-one { animation: solar-orbit-spin 15s linear infinite; }.solar-orbit-two { stroke: rgba(167,139,250,.52); animation: solar-orbit-spin-reverse 21s linear infinite; }.solar-orbit-three { animation: solar-orbit-spin 29s linear infinite; }.solar-orbit-four { stroke: rgba(103,232,249,.22); animation: solar-orbit-spin-reverse 36s linear infinite; }
+.solar-sun-glow { fill: rgba(72,217,255,.28); filter: url(#solar-glow); animation: solar-sun-breathe 4s ease-in-out infinite; }.solar-sun-ring { fill: none; stroke: rgba(175,244,255,.8); stroke-width: 1; stroke-dasharray: 3 7; animation: solar-orbit-spin 9s linear infinite; transform-origin: 294px 262px; }.solar-sun-label { fill: #e7fcff; font: 700 18px "Cascadia Code", Consolas, monospace; letter-spacing: .18em; }.solar-sun-sub { fill: rgba(224,250,255,.72); font: 8px "Cascadia Code", Consolas, monospace; letter-spacing: .22em; }
+.solar-planet { font: 10px "Microsoft YaHei", sans-serif; text-shadow: 0 0 9px rgba(76,214,255,.7); }.solar-planet text { fill: rgba(201,242,255,.9); }.solar-planet circle { stroke: rgba(191,246,255,.7); stroke-width: 1; filter: drop-shadow(0 0 7px rgba(103,232,249,.75)); }.solar-planet-ring { fill: none !important; stroke: rgba(167,139,250,.65) !important; stroke-dasharray: 2 6; animation: solar-ring-pulse 3s ease-in-out infinite; }.solar-planet-attack { animation: solar-planet-drift-one 6s ease-in-out infinite; }.solar-planet-detect { animation: solar-planet-drift-two 7s ease-in-out -1.5s infinite; }.solar-planet-defend { animation: solar-planet-drift-three 8s ease-in-out -2.2s infinite; }.solar-planet-audit { animation: solar-planet-drift-four 7.5s ease-in-out -3s infinite; }.solar-planet-rules { animation: solar-planet-drift-five 6.5s ease-in-out -2s infinite; }
+.solar-data-stream { stroke: rgba(134,239,255,.5); stroke-width: 1; stroke-dasharray: 2 8; animation: solar-stream-flow 5s linear infinite; }.solar-data-dot { fill: #c5f9ff; filter: drop-shadow(0 0 7px rgba(103,232,249,.95)); animation: solar-dot-pulse 2.8s ease-in-out infinite; }.solar-caption { display: grid; gap: 7px; margin: -4px 0 0 8%; color: rgba(187,235,249,.72); text-align: center; text-transform: uppercase; }.solar-caption strong { color: rgba(228,251,255,.94); font-size: 14px; letter-spacing: .18em; }.solar-caption span { color: rgba(143,196,218,.58); font: 9px "Cascadia Code", Consolas, monospace; letter-spacing: .16em; }
+@keyframes solar-ambient-pulse { 50% { opacity: .55; transform: scale(1.04); } } @keyframes solar-sun-breathe { 50% { opacity: .55; transform: scale(1.08); } } @keyframes solar-orbit-spin { to { transform: rotate(360deg); } } @keyframes solar-orbit-spin-reverse { to { transform: rotate(-360deg); } } @keyframes solar-ring-pulse { 50% { opacity: .35; } } @keyframes solar-stream-flow { to { stroke-dashoffset: -70; } } @keyframes solar-dot-pulse { 50% { opacity: .3; } } @keyframes solar-planet-drift-one { 50% { transform: translateY(-6px); } } @keyframes solar-planet-drift-two { 50% { transform: translateY(7px); } } @keyframes solar-planet-drift-three { 50% { transform: translateY(-8px); } } @keyframes solar-planet-drift-four { 50% { transform: translateY(6px); } } @keyframes solar-planet-drift-five { 50% { transform: translateY(-5px); } }
+@media (max-width: 1120px) and (min-width: 721px) { .solar-scene { left: -3%; width: 52vw; } }
+@media (max-width: 720px) { .solar-scene { left: 50%; top: 22%; width: min(108vw, 580px); transform: translate(-50%, -50%); opacity: .62; }.solar-caption { margin-left: 0; }.solar-caption strong { font-size: 11px; } }
+@media (prefers-reduced-motion: reduce) { .solar-ambient, .solar-orbit, .solar-sun-glow, .solar-sun-ring, .solar-planet-ring, .solar-planet, .solar-data-stream, .solar-data-dot { animation: none; } }
+
+/* 真正的 Three.js 星体中枢：替换旧 SVG 太阳系，保持左侧独立留白 */
+.auth-shell .solar-scene, .auth-shell .industry-scene, .auth-shell .holo-network, .auth-shell .holo-core-mark { display: none; }
+.auth-solar-scene { position: absolute; z-index: 4; left: 2.5%; top: 50%; width: min(57vw, 760px); height: min(70vh, 620px); transform: translateY(-50%); pointer-events: auto; isolation: isolate; filter: drop-shadow(0 26px 42px rgba(0,0,0,.18)); }
+.auth-solar-scene canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.auth-solar-scene::before { content: ""; position: absolute; left: 16%; right: 12%; bottom: 8%; height: 20%; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse, rgba(31,189,255,.2), rgba(47,75,180,.07) 42%, transparent 72%); filter: blur(20px); pointer-events: none; }
+.auth-solar-caption { position: absolute; left: 13%; bottom: 5%; display: grid; gap: 7px; color: rgba(224,251,255,.9); text-transform: uppercase; text-align: center; pointer-events: none; }
+.auth-solar-caption strong { font-size: 14px; letter-spacing: .2em; text-shadow: 0 0 16px rgba(103,232,249,.42); }
+.auth-solar-caption span { color: rgba(143,196,218,.58); font: 9px "Cascadia Code", Consolas, monospace; letter-spacing: .17em; }
+.auth-solar-readout { position: absolute; left: 10%; top: 13%; display: grid; gap: 8px; color: rgba(122,202,226,.55); font: 9px "Cascadia Code", Consolas, monospace; letter-spacing: .14em; pointer-events: none; }
+.auth-solar-readout::before { content: ""; width: 36px; height: 1px; background: linear-gradient(90deg, rgba(103,232,249,.82), transparent); }
+.auth-solar-scene--fallback { background: radial-gradient(circle at 43% 50%, rgba(35,177,255,.22), transparent 30%), radial-gradient(circle at 62% 44%, rgba(139,92,246,.14), transparent 32%); }
+@media (max-width: 1120px) and (min-width: 721px) { .auth-solar-scene { left: -3%; width: 55vw; height: 66vh; } }
+@media (max-width: 720px) { .auth-solar-scene { left: 50%; top: 22%; width: min(112vw, 600px); height: min(54vh, 380px); transform: translate(-50%, -50%); opacity: .72; }.auth-solar-caption { left: 50%; bottom: 1%; transform: translateX(-50%); white-space: nowrap; }.auth-solar-caption strong { font-size: 11px; }.auth-solar-readout { left: 15%; top: 12%; font-size: 8px; } }
+@media (prefers-reduced-motion: reduce) { .auth-solar-scene canvas { opacity: .92; } }
