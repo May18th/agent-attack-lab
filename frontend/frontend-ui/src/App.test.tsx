@@ -146,9 +146,10 @@ describe('App', () => {
     const fetchMock = installFetchMock()
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: '外部安全案例库（External references）' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '安全案例' }))
+    expect(await screen.findByRole('dialog', { name: '外部安全案例' })).toBeInTheDocument()
     expect(await screen.findByText('CVE-2099-0001')).toBeInTheDocument()
-    expect(screen.getByText(/verified_primary · external_fact/)).toBeInTheDocument()
+    expect(screen.getByText('verified_primary')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('textbox', { name: '搜索外部案例' }), { target: { value: 'CVE-2099' } })
     fireEvent.click(screen.getByRole('button', { name: '查询' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/external-cases?q=CVE-2099'), expect.anything()))
@@ -236,7 +237,7 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '开始新战局（New battle）' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '发起新战局' })).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles?'), expect.anything())
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/auth/session'), expect.anything())
 
@@ -252,8 +253,11 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles/battle-test/score'), expect.anything()))
-    expect(await screen.findByText(/攻击方：65 \/ 100/)).toBeInTheDocument()
-    expect(screen.getByText(/防守方：80 \/ 100/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '实时评分' }))
+    const scoreDialog = await screen.findByRole('dialog', { name: '实时评分系统' })
+    expect(scoreDialog).toHaveTextContent('65 / 100')
+    expect(scoreDialog).toHaveTextContent('80 / 100')
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
 
     fireEvent.click(screen.getByRole('button', { name: '删除战局' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles/battle-test'), expect.objectContaining({ method: 'DELETE' })))
@@ -275,7 +279,10 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: '已有战局', level: 2 })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /历史战局 2/ }))
-    expect(await screen.findByText(/攻击方：65 \/ 100/)).toBeInTheDocument()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles/battle-2/score'), expect.anything()))
+    fireEvent.click(screen.getByRole('button', { name: '实时评分' }))
+    const scoreDialog = await screen.findByRole('dialog', { name: '实时评分系统' })
+    expect(scoreDialog).toHaveTextContent('65 / 100')
 
     resolveOldScore(new Response(JSON.stringify({
       version: 'internal-agent-v2',
@@ -284,7 +291,7 @@ describe('App', () => {
       defender: { status: 'scored', score: 99, maxScore: 100, categories: [] },
     }), { status: 200 }))
 
-    await waitFor(() => expect(screen.queryByText(/攻击方：99 \/ 100/)).not.toBeInTheDocument())
-    expect(screen.getByText(/攻击方：65 \/ 100/)).toBeInTheDocument()
+    await waitFor(() => expect(scoreDialog).not.toHaveTextContent('99 / 100'))
+    expect(scoreDialog).toHaveTextContent('65 / 100')
   })
 })
