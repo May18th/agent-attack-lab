@@ -102,8 +102,8 @@ agent_attack_lab/
 ### S4 抽 `events.py`
 
 - 搬 `_event`、`_bounded_event_data`、`_event_stage_id`、`_event_classification`、`_record_audit_event`。
-- 实测 **0 处** `service._event` 打桩（方案最初写的 2 处在当前代码里已不存在；`test_battle_audit.py` 里的 `_event` 是该文件自己的本地 helper，首参是 sequence，与 service 无关）。
-- 唯一的耦合是 `_event_data_max_bytes`，它在 S2 之后已经变成 `config.event_data_max_bytes`，所以本步必须在 S2 之后做，否则该常量会被切碎成两处配置。
+- 实测 **2 处** `service._event` 调用（`test_service.py` 的两个 payload 用例），另外 `test_event_contract.py` 还有 `from agent_attack_lab.service import _event` 的 import 级引用——方案最初写的「2 处」是对的；我曾因 `grep` 结果被 `head` 截断误判为 0 处，教训是**测量时不要截断输出，先看总数**。
+- 唯一的耦合是 `config.event_data_max_bytes`（S2 之后已就位），所以本步在 S2 之后做最省事。
 - 验收：`test_event_contract.py` 与 replay 相关用例全绿。
 
 ### S5 抽 `battle_runner.py` + `scoring_glue.py`

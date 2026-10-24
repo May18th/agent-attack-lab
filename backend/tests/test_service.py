@@ -8,7 +8,7 @@ from threading import Lock
 
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import config, security, service, state
+from agent_attack_lab import config, events, security, service, state
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
@@ -1554,7 +1554,7 @@ def test_sqlite_store_handles_concurrent_writes(tmp_path) -> None:
 
 def test_event_payload_is_bounded(monkeypatch) -> None:
     monkeypatch.setattr(config, "event_data_max_bytes", 1024)
-    event = service._event(
+    event = events.build_event(
         "battle-large",
         1,
         "round.completed",
@@ -1569,7 +1569,7 @@ def test_event_payload_is_bounded(monkeypatch) -> None:
 
 
 def test_event_payload_has_replay_contract_metadata() -> None:
-    event = service._event(
+    event = events.build_event(
         "battle-contract",
         1,
         "round.completed",

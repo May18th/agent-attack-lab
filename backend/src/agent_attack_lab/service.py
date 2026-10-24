@@ -51,6 +51,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from agent_attack_lab import config, security, state
+from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
     call_attacker,
@@ -288,7 +289,7 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
         response.status_code,
         duration_ms,
     )
-    _record_audit_event(
+    events_api.record_audit_event(
         "http.request",
         status="completed" if response.status_code < 400 else "failed",
         request_id=request_id,
@@ -312,120 +313,6 @@ def _invalidate_leaderboard_cache() -> None:
     )
 
 
-def _bounded_event_data(data: dict[str, Any]) -> dict[str, Any]:
-    serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    if len(serialized.encode("utf-8")) <= config.event_data_max_bytes:
-        return data
-    compact = dict(data)
-    sample = compact.get("sample")
-    if isinstance(sample, dict):
-        sample_copy = dict(sample)
-        content = str(sample_copy.get("content", ""))
-        sample_copy["content"] = content[:2048]
-        sample_copy["contentTruncated"] = len(content) > 2048
-        compact["sample"] = sample_copy
-    compact["dataTruncated"] = True
-    compact["originalBytes"] = len(serialized.encode("utf-8"))
-    compact_serialized = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
-    if len(compact_serialized.encode("utf-8")) <= config.event_data_max_bytes:
-        return compact
-    return {
-        "dataTruncated": True,
-        "originalBytes": len(serialized.encode("utf-8")),
-        "preview": serialized[: max(1, config.event_data_max_bytes // 8)],
-    }
-
-
-def _event(
-    battle_id: str, sequence: int, event_type: str, status: str, data: dict[str, Any]
-) -> dict[str, Any]:
-    normalized_data = dict(data)
-    normalized_data.setdefault("stageId", _event_stage_id(event_type, normalized_data))
-    normalized_data.setdefault("round", normalized_data.get("round"))
-    normalized_data.setdefault("layerIndex", normalized_data.get("layerIndex"))
-    normalized_data.setdefault(
-        "classification", _event_classification(event_type, normalized_data)
-    )
-    scores = normalized_data.get("scores")
-    normalized_data["scores"] = scores if isinstance(scores, dict) else {}
-    return {
-        "id": f"event-{uuid.uuid4()}",
-        "battleId": battle_id,
-        "sequence": sequence,
-        "type": event_type,
-        "status": status,
-        "createdAt": datetime.now(UTC).isoformat(),
-        "data": _bounded_event_data(normalized_data),
-    }
-
-
-_EVENT_STAGE_IDS = {
-    "battle.created": "A1",
-    "attack.started": "A1",
-    "agent.call.started": "A2",
-    "attack.sample.generated": "A3",
-    "attack.completed": "A4",
-    "round.started": "A5",
-    "round.completed": "A6",
-    "attack.compromised": "A7",
-    "defense.completed": "A8",
-    "battle.completed": "L0",
-    "battle.failed": "L0",
-}
-
-
-def _event_stage_id(event_type: str, data: dict[str, Any]) -> str:
-    explicit = data.get("stageId")
-    return str(explicit) if explicit else _EVENT_STAGE_IDS.get(event_type, event_type)
-
-
-def _event_classification(event_type: str, data: dict[str, Any]) -> str:
-    explicit = data.get("classification")
-    if explicit:
-        return str(explicit)
-    if event_type == "attack.compromised":
-        return "compromised"
-    if event_type == "round.completed":
-        return "blocked" if data.get("caught") else "passed"
-    if event_type.endswith(".failed") or data.get("error"):
-        return "failed"
-    if event_type.endswith(".started"):
-        return "started"
-    if event_type.endswith(".completed"):
-        return "completed"
-    return "observed"
-
-
-def _record_audit_event(
-    event_type: str,
-    *,
-    status: str,
-    request_id: str | None = None,
-    battle_id: str | None = None,
-    correlation_id: str | None = None,
-    actor_role: str | None = None,
-    data: dict[str, Any] | None = None,
-) -> None:
-    try:
-        state.battle_store.save_audit_event(
-            {
-                "id": f"audit-{uuid.uuid4()}",
-                "eventType": event_type,
-                "requestId": request_id,
-                "battleId": battle_id,
-                "correlationId": correlation_id,
-                "actorRole": actor_role,
-                "status": status,
-                "createdAt": datetime.now(UTC).isoformat(),
-                "data": data or {},
-            }
-        )
-    except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
-        logger.warning(
-            "Audit persistence failed event=%s error=%s", event_type, type(exc).__name__
-        )
-
-
 def _mark_battle_terminal(battle_id: str, event_type: str, reason: str) -> None:
     record = state.battle_store.get(battle_id)
     if record is None or record["status"] in {"completed", "failed"}:
@@ -434,7 +321,7 @@ def _mark_battle_terminal(battle_id: str, event_type: str, reason: str) -> None:
     state.battle_store.save(record)
     events = state.battle_store.list_events(battle_id)
     state.battle_store.save_event(
-        _event(
+        events_api.build_event(
             battle_id,
             max((item["sequence"] for item in events), default=0) + 1,
             event_type,
@@ -442,7 +329,7 @@ def _mark_battle_terminal(battle_id: str, event_type: str, reason: str) -> None:
             {"reason": reason},
         )
     )
-    _record_audit_event(
+    events_api.record_audit_event(
         event_type,
         status="failed",
         battle_id=battle_id,
@@ -549,7 +436,7 @@ async def _tracked_agent_call(
 
     started = time.monotonic()
     add_event("agent.call.started", "running", event_data)
-    _record_audit_event(
+    events_api.record_audit_event(
         "agent.call.started",
         status="running",
         battle_id=battle_id,
@@ -570,7 +457,7 @@ async def _tracked_agent_call(
             "failed",
             failure_data,
         )
-        _record_audit_event(
+        events_api.record_audit_event(
             "agent.call.failed",
             status="failed",
             battle_id=battle_id,
@@ -597,7 +484,7 @@ async def _tracked_agent_call(
         "completed",
         completed_data,
     )
-    _record_audit_event(
+    events_api.record_audit_event(
         "agent.call.completed",
         status="completed",
         battle_id=battle_id,
@@ -716,7 +603,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
 
     def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
         nonlocal sequence
-        event = _event(battle_id, sequence, event_type, status, data)
+        event = events_api.build_event(battle_id, sequence, event_type, status, data)
         sequence += 1
         state.battle_store.save_event(event)
 
@@ -2251,7 +2138,7 @@ def metrics() -> dict[str, Any]:
 
 
 def _admin_write_audit(request: Request, event_type: str, data: dict[str, Any]) -> None:
-    _record_audit_event(
+    events_api.record_audit_event(
         event_type,
         status="accepted",
         request_id=request.state.request_id,
@@ -2533,7 +2420,7 @@ async def create_battle(
                     raise HTTPException(
                         status_code=409, detail="幂等记录对应的战局已不存在"
                     )
-                _record_audit_event(
+                events_api.record_audit_event(
                     "battle.idempotency.reused",
                     status="reused",
                     request_id=request.state.request_id,
@@ -2560,7 +2447,7 @@ async def create_battle(
         state.battle_store.save(record.model_dump())
         if idempotency_key and fingerprint:
             state.battle_store.save_idempotency(idempotency_key, fingerprint, battle_id)
-        _record_audit_event(
+        events_api.record_audit_event(
             "battle.created",
             status="accepted",
             request_id=request.state.request_id,
@@ -2572,7 +2459,7 @@ async def create_battle(
             },
         )
         state.battle_store.save_event(
-            _event(
+            events_api.build_event(
                 battle_id,
                 1,
                 "battle.created",
@@ -2598,7 +2485,9 @@ async def create_battle(
 
     def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
         nonlocal sequence
-        events.append(_event(battle_id, sequence, event_type, status, data))
+        events.append(
+            events_api.build_event(battle_id, sequence, event_type, status, data)
+        )
         sequence += 1
 
     add_event(
@@ -2801,7 +2690,7 @@ def retry_battle(
     _invalidate_leaderboard_cache()
     events = state.battle_store.list_events(battle_id)
     state.battle_store.save_event(
-        _event(
+        events_api.build_event(
             battle_id,
             max((item["sequence"] for item in events), default=0) + 1,
             "battle.retry",
@@ -2839,7 +2728,7 @@ def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
         state.cancel_requested.add(battle_id)
         task.cancel()
     _mark_battle_terminal(battle_id, "battle.cancelled", "requested_by_client")
-    _record_audit_event(
+    events_api.record_audit_event(
         "battle.cancel.requested",
         status="accepted",
         request_id=request.state.request_id,
