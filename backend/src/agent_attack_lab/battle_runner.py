@@ -44,7 +44,7 @@ from agent_attack_lab.target_verify import (
 )
 
 if TYPE_CHECKING:
-    from agent_attack_lab.service import BattleRequest
+    from agent_attack_lab.models import BattleRequest
 
 logger = logging.getLogger(__name__)
 

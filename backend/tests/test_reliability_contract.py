@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import battle_runner, config, service, state
+from agent_attack_lab import battle_runner, config, models, service, state
 
 
 def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> None:
@@ -106,7 +106,7 @@ def test_battle_timeout_is_persisted_as_failed(monkeypatch) -> None:
     asyncio.run(
         battle_runner.run_battle_with_tracking(
             "battle-timeout-contract",
-            service.BattleRequest(difficulty="low", topic="timeout"),
+            models.BattleRequest(difficulty="low", topic="timeout"),
         )
     )
 

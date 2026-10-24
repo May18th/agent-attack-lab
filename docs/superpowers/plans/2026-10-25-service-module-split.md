@@ -26,12 +26,13 @@
 ```
 agent_attack_lab/
   service.py            # ~250 行：app 装配、lifespan、中间件、include_router
+  models.py             # 8 个 Pydantic 模型（S7 的前置：response_model 是运行时实参）
   config.py             # _env_int、路径、超时、开关常量
   state.py              # 单例：battle_store / redis_cache / 限流窗口 / 各类内存缓存
   security.py           # Cloudflare JWT、browser session、登录限流、鉴权依赖
   events.py             # _event、_bounded_event_data、stageId/classification、审计事件
   battle_runner.py      # 战局执行管线：_run_battle_async / _battle_attack / _battle_defend
-  scoring_glue.py       # 分数持久化、补算、_battle_stats
+  scoring_glue.py       # 分数持久化、补算、_battle_stats、排行榜失效
   reports.py            # _markdown_report（纯渲染，无 I/O）
   routers/
     meta.py             # /, /dashboard, /metrics, /health
@@ -128,10 +129,13 @@ agent_attack_lab/
 
 ### S7 抽 `routers/`（按域拆 6 个文件）
 
+**前置 S7a：先抽 `models.py`。** 路由函数用 `BattleRecord` / `BattleRequest` 等模型做 `response_model=` 和参数注解；`response_model=` 是**运行时实参，必须真求值**，`from __future__ import annotations` 只让注解变成字符串，救不了它。若 router 直接 `from service import BattleRecord`，而 service 又要 import routers 做 `include_router`，就成环了。所以 `models.py` 必须先存在（S7a 已落地：8 个模型 / 89 行，`service.py` 减 68 行，3 处测试打桩迁移）。
+
 - 每次只搬一个 router，搬完立刻跑全量：`meta → auth → admin → reports → battles → rpc`。
 - 顺序按依赖从少到多，`battles.py` 最大放最后。
 - `service.py` 只留：`app = FastAPI(...)`、`_lifespan`、中间件、`include_router`。
 - 验收：每搬一个 router，`openapi()` 的 paths 必须仍等于基准。
+- 已知需要迁移的打桩：`service.summarize_report`（3 处，随 `battle_report` 进 `routers/reports.py`）、`service.suggest_rule_candidate`（1 处，随 admin 路由进 `routers/admin.py`）。**`configured_verify_mode` 的 2 处打桩在 S7 之后要重新看**：`create_battle` 搬进 `routers/battles.py` 后，它的全局名查找从 service 换到了 router 模块，打桩目标必须跟着改成 `routers.battles.configured_verify_mode`。
 
 ### S8 对比与收尾
 
