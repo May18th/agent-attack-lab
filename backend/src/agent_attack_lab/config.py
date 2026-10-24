@@ -19,6 +19,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# --- Service metadata -------------------------------------------------------
+# Read by the FastAPI app factory and by /health, which must report the same
+# version the OpenAPI document advertises.
+service_version = "1.0.0"
+
 # --- CORS -------------------------------------------------------------------
 
 _default_origins = {

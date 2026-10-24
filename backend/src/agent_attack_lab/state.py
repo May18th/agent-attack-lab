@@ -13,6 +13,7 @@ not belong here; it lives in ``config.py``.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import defaultdict, deque
 from threading import Lock
 from typing import Any
@@ -48,6 +49,14 @@ cloudflare_jwk_lock = Lock()
 rate_limited_count = 0
 battle_timeout_count = 0
 battle_cancel_count = 0
+
+# Process start time and HTTP request counters: written by the metrics middleware
+# (service.py), read by /health and /metrics (routers/meta.py).
+started_at = time.monotonic()
+request_count = 0
+request_errors = 0
+request_total_duration_ms = 0.0
+request_max_duration_ms = 0.0
 
 # Background task bookkeeping and de-duplication guards.
 recovery_tasks: set[asyncio.Task[Any]] = set()

@@ -47,3 +47,4 @@ dev = [
 # would fire on nearly every route; an inline noqa breaks as soon as the
 # formatter re-wraps the call, so ignore it for the router module instead.
 "src/agent_attack_lab/service.py" = ["B008"]
+"src/agent_attack_lab/routers/*.py" = ["B008"]

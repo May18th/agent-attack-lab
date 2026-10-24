@@ -18,7 +18,11 @@ from agent_attack_lab import (
     service,
     state,
 )
+from agent_attack_lab.acp_agents import ACPAgentError
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
+from agent_attack_lab.routers import admin as admin_routes
+from agent_attack_lab.routers import battles as battle_routes
+from agent_attack_lab.routers import reports as report_routes
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
 
@@ -155,7 +159,7 @@ def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_ve
 ) -> None:
     store = BattleStore(str(tmp_path / "created-rounds.sqlite3"))
     monkeypatch.setattr(state, "battle_store", store)
-    monkeypatch.setattr(service, "configured_verify_mode", lambda: "off")
+    monkeypatch.setattr(battle_routes, "configured_verify_mode", lambda: "off")
     response = client.post(
         "/battles", json={"topic": "提示注入", "difficulty": "low", "rounds": 5}
     )
@@ -180,7 +184,7 @@ def test_simulated_compromise_is_persisted_and_explicitly_labeled(
 ) -> None:
     store = BattleStore(str(tmp_path / "simulated-verdict.sqlite3"))
     monkeypatch.setattr(state, "battle_store", store)
-    monkeypatch.setattr(service, "configured_verify_mode", lambda: "simulated")
+    monkeypatch.setattr(battle_routes, "configured_verify_mode", lambda: "simulated")
     response = client.post(
         "/battles", json={"topic": "general", "difficulty": "high", "rounds": 3}
     )
@@ -587,7 +591,7 @@ def test_rule_candidate_route_never_saves_candidate_without_manual_approval(
             "candidate": {"name": "test", "condition": "evidence", "action": "拦截"},
         }
 
-    monkeypatch.setattr(service, "suggest_rule_candidate", suggestion)
+    monkeypatch.setattr(admin_routes, "suggest_rule_candidate", suggestion)
     response = client.post(
         "/admin/rule-candidates/propose",
         headers={"X-API-Key": "admin-test-key"},
@@ -614,7 +618,7 @@ def test_sync_acp_failure_is_persisted_and_returns_battle_id(monkeypatch) -> Non
 
     async def failed_attack(_payload, *, correlation_id):
         assert correlation_id.startswith("call-")
-        raise service.ACPAgentError("remote detail must not be exposed")
+        raise ACPAgentError("remote detail must not be exposed")
 
     monkeypatch.setattr(battle_runner, "call_attacker", failed_attack)
     response = client.post(
@@ -1005,7 +1009,7 @@ def test_report_summary_is_cached_until_events_change(tmp_path, monkeypatch) -> 
         calls.append(1)
         return {"summary": f"call-{len(calls)}", "agentSource": "report-rule-fallback"}
 
-    monkeypatch.setattr(service, "summarize_report", fake_summarize)
+    monkeypatch.setattr(report_routes, "summarize_report", fake_summarize)
 
     first = client.get("/reports/battle-report-cache").json()
     second = client.get("/reports/battle-report-cache").json()
@@ -1054,7 +1058,7 @@ def test_report_summary_cache_expires_after_ttl(tmp_path, monkeypatch) -> None:
         calls.append(1)
         return {"summary": f"call-{len(calls)}"}
 
-    monkeypatch.setattr(service, "summarize_report", fake_summarize)
+    monkeypatch.setattr(report_routes, "summarize_report", fake_summarize)
 
     client.get("/reports/battle-report-cache-ttl")
     client.get("/reports/battle-report-cache-ttl")
@@ -1089,7 +1093,7 @@ def test_markdown_report_includes_llm_summary(tmp_path, monkeypatch) -> None:
             "recommendations": ["建议丙"],
         }
 
-    monkeypatch.setattr(service, "summarize_report", fake_summarize)
+    monkeypatch.setattr(report_routes, "summarize_report", fake_summarize)
 
     response = client.get("/reports/battle-markdown-summary?format=markdown")
 
