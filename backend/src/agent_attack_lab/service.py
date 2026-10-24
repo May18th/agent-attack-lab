@@ -3,21 +3,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import ipaddress
 import json
 import logging
 import os
-import secrets
 import time
 import uuid
-from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from html import escape as escape_html
-from threading import Lock
 from typing import Any, Literal
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 from acps_sdk.aip import (
     Product,
@@ -54,7 +50,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from agent_attack_lab import config, state
+from agent_attack_lab import config, security, state
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
     call_attacker,
@@ -215,7 +211,6 @@ _request_count = 0
 _request_errors = 0
 _request_total_duration_ms = 0.0
 _request_max_duration_ms = 0.0
-_rate_limited_count = 0
 _aip_server_options = server_identity_options(
     handle_rpc_request,
     local_aic=config.local_aic,
@@ -224,14 +219,6 @@ _aip_server_options = server_identity_options(
 )
 _battle_timeout_count = 0
 _battle_cancel_count = 0
-
-
-_browser_sessions: dict[str, float] = {}
-_browser_sessions_lock = Lock()
-_browser_login_attempts: dict[str, deque[float]] = defaultdict(deque)
-_browser_login_lock = Lock()
-_cloudflare_jwk_client: Any | None = None
-_cloudflare_jwk_lock = Lock()
 
 
 def _request_id(request: Request) -> str:
@@ -314,271 +301,6 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
         },
     )
     return response
-
-
-def _check_api_key(request: Request) -> None:
-    """Enable a simple deployment-time API key without affecting local development."""
-    supplied = request.headers.get("x-api-key", "")
-    if config.api_key and not hmac.compare_digest(
-        supplied.encode("utf-8"), config.api_key.encode("utf-8")
-    ):
-        raise HTTPException(status_code=401, detail="缺少或无效的 API 密钥")
-    if not config.api_key and (
-        config.browser_password or config.cloudflare_access_configured
-    ):
-        raise HTTPException(status_code=401, detail="服务端 API 密钥未配置")
-
-
-def _verify_cloudflare_access_jwt(token: str) -> bool:
-    """Verify the Access assertion against the configured team JWKS and audience."""
-    if not config.cloudflare_access_configured or not token:
-        return False
-    try:
-        import jwt
-        from jwt import PyJWKClient
-
-        global _cloudflare_jwk_client
-        with _cloudflare_jwk_lock:
-            if _cloudflare_jwk_client is None:
-                _cloudflare_jwk_client = PyJWKClient(
-                    f"{config.cloudflare_access_team_domain}/cdn-cgi/access/certs",
-                    cache_jwk_set=True,
-                    lifespan=300,
-                )
-            jwk_client = _cloudflare_jwk_client
-        signing_key = jwk_client.get_signing_key_from_jwt(token).key
-        jwt.decode(
-            token,
-            signing_key,
-            algorithms=["RS256"],
-            audience=config.cloudflare_access_audience,
-            issuer=config.cloudflare_access_team_domain,
-            options={"require": ["exp", "iat", "iss", "aud"]},
-        )
-        return True
-    except Exception as exc:  # noqa: BLE001 - token libraries expose heterogeneous errors.
-        logger.warning("Cloudflare Access JWT rejected reason=%s", type(exc).__name__)
-        return False
-
-
-def _browser_origin_allowed(origin: str, request: Request | None = None) -> bool:
-    if origin in config.cors_origins:
-        return True
-    if request is None:
-        return False
-    try:
-        parsed_origin = urlsplit(origin)
-        if (
-            parsed_origin.scheme.lower() not in {"http", "https"}
-            or not parsed_origin.netloc
-            or parsed_origin.path not in ("", "/")
-        ):
-            return False
-        if (
-            parsed_origin.query
-            or parsed_origin.fragment
-            or parsed_origin.username
-            or parsed_origin.password
-        ):
-            return False
-        peer_host = request.client.host if request.client else ""
-        try:
-            trusted_proxy = ipaddress.ip_address(peer_host).is_loopback
-        except ValueError:
-            trusted_proxy = False
-        request_host = request.headers.get("host", "")
-        request_scheme = request.url.scheme
-        if trusted_proxy:
-            request_host = (
-                request.headers.get("x-forwarded-host", request_host)
-                .split(",", 1)[0]
-                .strip()
-            )
-            request_scheme = (
-                request.headers.get("x-forwarded-proto", request_scheme)
-                .split(",", 1)[0]
-                .strip()
-            )
-        return (
-            parsed_origin.scheme.lower() == request_scheme.lower()
-            and parsed_origin.netloc.lower() == request_host.lower()
-        )
-    except ValueError:
-        return False
-
-
-def _browser_session_digest(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _has_browser_session(request: Request) -> bool:
-    token = request.cookies.get(config.browser_cookie_name, "")
-    if not token:
-        return False
-    digest = _browser_session_digest(token)
-    now = time.monotonic()
-    with _browser_sessions_lock:
-        expires_at = _browser_sessions.get(digest)
-        if expires_at is None:
-            return False
-        if expires_at <= now:
-            _browser_sessions.pop(digest, None)
-            return False
-        return True
-
-
-def _issue_browser_session() -> str:
-    token = secrets.token_urlsafe(32)
-    now = time.monotonic()
-    with _browser_sessions_lock:
-        expired = [
-            key for key, deadline in _browser_sessions.items() if deadline <= now
-        ]
-        for key in expired:
-            _browser_sessions.pop(key, None)
-        if len(_browser_sessions) >= 10000:
-            raise HTTPException(status_code=503, detail="浏览器会话容量已满")
-        _browser_sessions[_browser_session_digest(token)] = (
-            now + config.browser_session_ttl_seconds
-        )
-    return token
-
-
-def _revoke_browser_session(request: Request) -> None:
-    token = request.cookies.get(config.browser_cookie_name, "")
-    if token:
-        with _browser_sessions_lock:
-            _browser_sessions.pop(_browser_session_digest(token), None)
-
-
-def _check_browser_session_origin(request: Request) -> None:
-    origin = request.headers.get("origin", "")
-    if not origin and request.method in {"GET", "HEAD", "OPTIONS"}:
-        return
-    if not origin or not _browser_origin_allowed(origin, request):
-        raise HTTPException(status_code=403, detail="浏览器来源未获允许")
-
-
-def _check_browser_or_api_auth(request: Request) -> None:
-    supplied_api_key = request.headers.get("x-api-key", "")
-    if config.api_key and hmac.compare_digest(
-        supplied_api_key.encode("utf-8"), config.api_key.encode("utf-8")
-    ):
-        return
-    access_token = request.headers.get("cf-access-jwt-assertion", "")
-    if _verify_cloudflare_access_jwt(access_token):
-        if request.headers.get("origin"):
-            _check_browser_session_origin(request)
-        return
-    if config.browser_password and _has_browser_session(request):
-        _check_browser_session_origin(request)
-        return
-    if (
-        not config.api_key
-        and not config.browser_password
-        and not config.cloudflare_access_configured
-    ):
-        return
-    raise HTTPException(
-        status_code=401,
-        detail="需要有效的 API 密钥、Cloudflare Access 身份或浏览器登录会话",
-    )
-
-
-def _browser_client_ip(request: Request) -> str:
-    peer_host = request.client.host if request.client else "unknown"
-    try:
-        peer_is_loopback = ipaddress.ip_address(peer_host).is_loopback
-    except ValueError:
-        peer_is_loopback = False
-    if peer_is_loopback:
-        for header in ("cf-connecting-ip", "x-real-ip"):
-            forwarded_ip = request.headers.get(header, "").strip()
-            if forwarded_ip:
-                try:
-                    return str(ipaddress.ip_address(forwarded_ip))
-                except ValueError:
-                    continue
-    return peer_host
-
-
-def _browser_login_rate_limit(request: Request) -> None:
-    client_key = _browser_client_ip(request)
-    now = time.monotonic()
-    cutoff = now - 300
-    with _browser_login_lock:
-        attempts = _browser_login_attempts[client_key]
-        while attempts and attempts[0] <= cutoff:
-            attempts.popleft()
-        if len(attempts) >= 5:
-            retry_after = max(1, int(300 - (now - attempts[0])))
-            raise HTTPException(
-                status_code=429,
-                detail="登录尝试过多，请稍后重试",
-                headers={"Retry-After": str(retry_after)},
-            )
-        attempts.append(now)
-
-
-def _api_key_dependency(request: Request) -> None:
-    _check_api_key(request)
-
-
-def _metrics_auth_dependency(request: Request) -> None:
-    _check_browser_or_api_auth(request)
-
-
-def _read_auth_dependency(request: Request) -> None:
-    if (
-        config.protect_read_routes
-        or config.browser_password
-        or config.cloudflare_access_configured
-    ):
-        _check_browser_or_api_auth(request)
-
-
-def _public_battle_rate_limit_dependency(request: Request) -> None:
-    """Limit anonymous battle creation separately from internal agent traffic."""
-    if config.public_battle_limit_per_minute <= 0:
-        return
-    client_key = _browser_client_ip(request)
-    now = time.monotonic()
-    cutoff = now - 60
-    with state.public_battle_rate_lock:
-        window = state.public_battle_rate_windows[client_key]
-        while window and window[0] <= cutoff:
-            window.popleft()
-        if len(window) >= config.public_battle_limit_per_minute:
-            retry_after = max(1, int(60 - (now - window[0])))
-            raise HTTPException(
-                status_code=429,
-                detail="公开战局创建过于频繁，请稍后重试",
-                headers={"Retry-After": str(retry_after)},
-            )
-        window.append(now)
-
-
-def _rate_limit_dependency(request: Request) -> None:
-    """Apply a small in-process window limit to mutating agent endpoints."""
-    global _rate_limited_count
-    if config.rate_limit_per_minute <= 0:
-        return
-    client_key = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    cutoff = now - 60
-    with state.rate_lock:
-        window = state.rate_windows[client_key]
-        while window and window[0] <= cutoff:
-            window.popleft()
-        if len(window) >= config.rate_limit_per_minute:
-            _rate_limited_count += 1
-            retry_after = max(1, int(60 - (now - window[0])))
-            raise HTTPException(
-                status_code=429,
-                detail="请求过于频繁，请稍后重试",
-                headers={"Retry-After": str(retry_after)},
-            )
-        window.append(now)
 
 
 def _invalidate_leaderboard_cache() -> None:
@@ -1222,7 +944,7 @@ def dashboard(
     difficulty: Literal["low", "mid", "high"] | None = Query(default=None),
 ) -> str:
     try:
-        _check_browser_or_api_auth(request)
+        security.check_browser_or_api_auth(request)
     except HTTPException as exc:
         if exc.status_code == 401 and config.browser_password:
             destination = request.url.path
@@ -2333,7 +2055,7 @@ def browser_login_page(
         or any(ord(char) < 32 for char in destination)
     ):
         destination = "/dashboard"
-    if config.browser_password and _has_browser_session(request):
+    if config.browser_password and security.has_browser_session(request):
         return RedirectResponse(
             destination, status_code=303, headers={"Cache-Control": "no-store"}
         )
@@ -2428,8 +2150,10 @@ def browser_login_page(
 @app.get("/auth/session", summary="查询浏览器登录状态", tags=["浏览器鉴权"])
 def browser_session_status(request: Request, response: Response) -> dict[str, bool]:
     response.headers["Cache-Control"] = "no-store"
-    authenticated = bool(config.browser_password) and _has_browser_session(request)
-    if _verify_cloudflare_access_jwt(
+    authenticated = bool(config.browser_password) and security.has_browser_session(
+        request
+    )
+    if security.verify_cloudflare_access_jwt(
         request.headers.get("cf-access-jwt-assertion", "")
     ):
         authenticated = True
@@ -2441,7 +2165,7 @@ def browser_session_status(request: Request, response: Response) -> dict[str, bo
 
 @app.post(
     "/auth/session",
-    dependencies=[Depends(_browser_login_rate_limit)],
+    dependencies=[Depends(security.login_rate_limit)],
     summary="创建浏览器登录会话",
     tags=["浏览器鉴权"],
 )
@@ -2453,13 +2177,13 @@ def create_browser_session(
     if not config.browser_password:
         raise HTTPException(status_code=503, detail="浏览器登录尚未启用")
     origin = request.headers.get("origin", "")
-    if origin and not _browser_origin_allowed(origin, request):
+    if origin and not security.browser_origin_allowed(origin, request):
         raise HTTPException(status_code=403, detail="浏览器来源未获允许")
     if not hmac.compare_digest(
         payload.password.encode("utf-8"), config.browser_password.encode("utf-8")
     ):
         raise HTTPException(status_code=401, detail="登录密码错误")
-    token = _issue_browser_session()
+    token = security.issue_browser_session()
     response.set_cookie(
         key=config.browser_cookie_name,
         value=token,
@@ -2479,9 +2203,9 @@ def create_browser_session(
 @app.delete("/auth/session", summary="退出浏览器登录", tags=["浏览器鉴权"])
 def delete_browser_session(request: Request, response: Response) -> dict[str, bool]:
     origin = request.headers.get("origin", "")
-    if origin and not _browser_origin_allowed(origin, request):
+    if origin and not security.browser_origin_allowed(origin, request):
         raise HTTPException(status_code=403, detail="浏览器来源未获允许")
-    _revoke_browser_session(request)
+    security.revoke_browser_session(request)
     response.delete_cookie(
         key=config.browser_cookie_name,
         httponly=True,
@@ -2496,7 +2220,7 @@ def delete_browser_session(request: Request, response: Response) -> dict[str, bo
 @app.get(
     "/metrics",
     include_in_schema=False,
-    dependencies=[Depends(_metrics_auth_dependency)],
+    dependencies=[Depends(security.metrics_auth_dependency)],
 )
 def metrics() -> dict[str, Any]:
     average_latency = (
@@ -2510,7 +2234,7 @@ def metrics() -> dict[str, Any]:
         "errors": _request_errors,
         "averageLatencyMs": round(average_latency, 2),
         "maxLatencyMs": round(_request_max_duration_ms, 2),
-        "rateLimited": _rate_limited_count,
+        "rateLimited": state.rate_limited_count,
         "rateLimitPerMinute": config.rate_limit_per_minute,
         "protectReadRoutes": config.protect_read_routes,
         "eventDataMaxBytes": config.event_data_max_bytes,
@@ -2544,7 +2268,7 @@ def list_admin_samples(
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[dict[str, Any]]:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     items = state.battle_store.list_admin_samples(
         query=q.strip() if q else None, limit=limit, offset=offset
     )
@@ -2558,7 +2282,7 @@ def list_admin_samples(
 def create_admin_sample(
     payload: AdminSampleRequest, request: Request
 ) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     item = state.battle_store.save_admin_sample(payload.model_dump())
     _admin_write_audit(
         request,
@@ -2574,7 +2298,7 @@ def create_admin_sample(
 def update_admin_sample(
     sample_id: str, payload: AdminSampleRequest, request: Request
 ) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     item = state.battle_store.update_admin_sample(sample_id, payload.model_dump())
     if item is None:
         raise HTTPException(status_code=404, detail="攻击样本不存在")
@@ -2589,7 +2313,7 @@ def update_admin_sample(
     tags=["管理员资源"],
 )
 def delete_admin_sample(sample_id: str, request: Request) -> Response:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     if not state.battle_store.delete_admin_sample(sample_id):
         raise HTTPException(status_code=404, detail="攻击样本不存在")
     _admin_write_audit(request, "admin.sample.deleted", {"sampleId": sample_id})
@@ -2604,7 +2328,7 @@ def list_admin_rules(
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[dict[str, Any]]:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     items = state.battle_store.list_admin_rules(
         query=q.strip() if q else None, limit=limit, offset=offset
     )
@@ -2616,7 +2340,7 @@ def list_admin_rules(
     "/admin/rules", status_code=201, summary="新增管理员防守规则", tags=["管理员资源"]
 )
 def create_admin_rule(payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     item = state.battle_store.save_admin_rule(payload.model_dump())
     _admin_write_audit(
         request, "admin.rule.created", {"ruleId": item["id"], "name": item["name"]}
@@ -2634,7 +2358,7 @@ async def propose_admin_rule_candidate(
     payload: RuleCandidateRequest,
     request: Request,
 ) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     result = await suggest_rule_candidate(payload.model_dump())
     _admin_write_audit(
         request,
@@ -2652,7 +2376,7 @@ async def propose_admin_rule_candidate(
 def update_admin_rule(
     rule_id: str, payload: AdminRuleRequest, request: Request
 ) -> dict[str, Any]:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     item = state.battle_store.update_admin_rule(rule_id, payload.model_dump())
     if item is None:
         raise HTTPException(status_code=404, detail="防守规则不存在")
@@ -2667,7 +2391,7 @@ def update_admin_rule(
     tags=["管理员资源"],
 )
 def delete_admin_rule(rule_id: str, request: Request) -> Response:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     if not state.battle_store.delete_admin_rule(rule_id):
         raise HTTPException(status_code=404, detail="防守规则不存在")
     _admin_write_audit(request, "admin.rule.deleted", {"ruleId": rule_id})
@@ -2683,7 +2407,7 @@ def list_admin_audit_logs(
     operation: str | None = Query(default=None, max_length=128),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[dict[str, Any]]:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     return state.battle_store.list_audit_events_filtered(
         from_time=from_time,
         to_time=to_time,
@@ -2769,7 +2493,7 @@ def list_external_cases(
     summary="审计战局事件完整性",
     description="只读检查事件序列、战局归属、状态和 Agent 来源是否一致，不修改战局数据。",
     tags=["战局接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def battle_audit(battle_id: str) -> dict[str, Any]:
     record = state.battle_store.get(battle_id)
@@ -2782,7 +2506,7 @@ def battle_audit(battle_id: str) -> dict[str, Any]:
 
 @app.post(
     "/battles",
-    dependencies=[Depends(_public_battle_rate_limit_dependency)],
+    dependencies=[Depends(security.public_battle_rate_limit_dependency)],
     status_code=201,
     summary="创建一场攻防战局",
     description="输入测试主题和难度，返回完整的攻击样本与防守结果。添加 background=true 可启用分阶段实时执行。",
@@ -3052,7 +2776,7 @@ async def create_battle(
 
 @app.post(
     "/battles/{battle_id}/retry",
-    dependencies=[Depends(_rate_limit_dependency)],
+    dependencies=[Depends(security.rate_limit_dependency)],
     status_code=202,
     summary="重试失败战局",
     description="将失败战局重置为等待中并重新执行；需要配置 API Key 时沿用创建战局的密钥。",
@@ -3063,7 +2787,7 @@ def retry_battle(
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> BattleRecord:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
@@ -3096,14 +2820,14 @@ def retry_battle(
 
 @app.post(
     "/battles/{battle_id}/cancel",
-    dependencies=[Depends(_rate_limit_dependency)],
+    dependencies=[Depends(security.rate_limit_dependency)],
     status_code=202,
     summary="取消运行中的战局",
     tags=["战局接口"],
 )
 def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
     global _battle_cancel_count
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
@@ -3131,14 +2855,14 @@ def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
 
 @app.delete(
     "/battles/{battle_id}",
-    dependencies=[Depends(_rate_limit_dependency)],
+    dependencies=[Depends(security.rate_limit_dependency)],
     status_code=204,
     summary="删除已结束的战局",
     description="删除 completed 或 failed 战局及其事件；pending/running 战局必须先结束。",
     tags=["战局接口"],
 )
 def delete_battle(battle_id: str, request: Request) -> Response:
-    _check_browser_or_api_auth(request)
+    security.check_browser_or_api_auth(request)
     record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
@@ -3179,7 +2903,7 @@ def list_battles(
     summary="查询战局回放事件",
     description="按事件序号升序分页返回已持久化的战局事件，可按类型、时间范围和事件内容检索。",
     tags=["战局回放"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def get_battle_events(
     battle_id: str,
@@ -3232,7 +2956,7 @@ def get_battle_events(
 @app.get(
     "/battles/{battle_id}/replay",
     include_in_schema=False,
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def replay_battle(battle_id: str) -> dict[str, Any]:
     if state.battle_store.get(battle_id) is None:
@@ -3261,7 +2985,7 @@ def get_battle(battle_id: str) -> BattleRecord:
     "/battles/{battle_id}/rounds",
     summary="按回合聚合战局证据",
     tags=["战局回放"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def get_battle_rounds(battle_id: str) -> dict[str, Any]:
     record = state.battle_store.get(battle_id)
@@ -3466,14 +3190,14 @@ async def _report_summary_for(
 @app.get(
     "/battles/{battle_id}/report",
     include_in_schema=False,
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 @app.get(
     "/reports/{battle_id}",
     summary="查看或下载战报",
     description="默认返回 JSON；将 format 设置为 markdown 可下载 Markdown 战报。",
     tags=["战报接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 async def battle_report(
     battle_id: str,
@@ -3517,7 +3241,7 @@ async def battle_report(
     summary="查看战局内部运行质量评分",
     description="返回战局完成后持久化的可追溯运行评分，不代表攻击成功率或检测准确率；缺少快照时返回证据不足。",
     tags=["评分接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def battle_internal_score(battle_id: str) -> dict[str, Any]:
     record = state.battle_store.get(battle_id)
@@ -3532,7 +3256,7 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
     summary="查看近期战局内部运行质量评分",
     description="聚合最近战局的运行质量评分；缺少逐调用事件的历史战局单独标记为证据不足。",
     tags=["评分接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
     items = []
@@ -3585,7 +3309,7 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
     summary="查看攻防排行榜",
     description="返回攻击方和防守方的累计得分与对抗轮次。",
     tags=["统计接口"],
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 def leaderboard() -> dict[str, Any]:
     now = time.monotonic()
@@ -3616,7 +3340,7 @@ def leaderboard() -> dict[str, Any]:
 @app.get(
     "/battles/{battle_id}/events/stream",
     include_in_schema=False,
-    dependencies=[Depends(_read_auth_dependency)],
+    dependencies=[Depends(security.read_auth_dependency)],
 )
 async def event_stream(
     battle_id: str, follow: bool = Query(default=False)
@@ -3688,7 +3412,10 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
 
 @app.post(
     "/agent/attack",
-    dependencies=[Depends(_api_key_dependency), Depends(_rate_limit_dependency)],
+    dependencies=[
+        Depends(security.api_key_dependency),
+        Depends(security.rate_limit_dependency),
+    ],
     include_in_schema=False,
 )
 def agent_attack(payload: AttackRequest) -> dict[str, Any]:
@@ -3697,7 +3424,10 @@ def agent_attack(payload: AttackRequest) -> dict[str, Any]:
 
 @app.post(
     "/agent/defend",
-    dependencies=[Depends(_api_key_dependency), Depends(_rate_limit_dependency)],
+    dependencies=[
+        Depends(security.api_key_dependency),
+        Depends(security.rate_limit_dependency),
+    ],
     include_in_schema=False,
 )
 def agent_defend(payload: DefendRequest) -> dict[str, Any]:
@@ -3753,7 +3483,10 @@ _aip_handlers = CommandHandlers(on_start=_aip_start)
 
 @app.post(
     "/rpc",
-    dependencies=[Depends(_api_key_dependency), Depends(_rate_limit_dependency)],
+    dependencies=[
+        Depends(security.api_key_dependency),
+        Depends(security.rate_limit_dependency),
+    ],
     include_in_schema=False,
 )
 async def rpc(request: Request) -> dict[str, Any]:

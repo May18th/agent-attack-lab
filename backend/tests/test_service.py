@@ -4,10 +4,11 @@ import time
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import config, service, state
+from agent_attack_lab import config, security, service, state
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
@@ -281,8 +282,8 @@ def test_same_origin_browser_login_authenticates_dashboard_and_mutations(
     monkeypatch.setattr(config, "browser_password", "browser-secret")
     monkeypatch.setattr(config, "browser_cookie_secure", False)
     monkeypatch.setattr(config, "protect_read_routes", False)
-    monkeypatch.setattr(service, "_browser_sessions", {})
-    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    monkeypatch.setattr(state, "browser_sessions", {})
+    monkeypatch.setattr(state, "browser_login_attempts", defaultdict(deque))
     browser = TestClient(service.app, base_url="https://api.example.test")
 
     login = browser.post(
@@ -1266,7 +1267,7 @@ def test_battle_store_score_upsert_is_idempotent_across_supported_dialects() -> 
         store._is_postgres = is_postgres
         store._is_mysql = is_mysql
         store._connection = connection
-        store._lock = service.Lock()
+        store._lock = Lock()
 
         store.save_score("battle-dialect", score)
         store.save_score("battle-dialect", {**score, "status": "updated"})
@@ -1820,8 +1821,8 @@ def test_browser_session_authenticates_web_api_without_exposing_api_key(
     monkeypatch.setattr(config, "browser_password", browser_password)
     monkeypatch.setattr(config, "browser_cookie_secure", False)
     monkeypatch.setattr(config, "protect_read_routes", False)
-    monkeypatch.setattr(service, "_browser_sessions", {})
-    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    monkeypatch.setattr(state, "browser_sessions", {})
+    monkeypatch.setattr(state, "browser_login_attempts", defaultdict(deque))
     browser = TestClient(service.app, follow_redirects=False)
     origin = "http://localhost:5173"
 
@@ -1877,14 +1878,14 @@ def test_browser_login_requires_configured_password_and_trusted_origin(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(config, "browser_password", "browser-secret")
-    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    monkeypatch.setattr(state, "browser_login_attempts", defaultdict(deque))
     untrusted = client.post(
         "/auth/session",
         json={"password": "browser-secret"},
         headers={"Origin": "https://attacker.example"},
     )
     assert untrusted.status_code == 403
-    assert not service._browser_origin_allowed(
+    assert not security.browser_origin_allowed(
         "https://demo-front-end.trycloudflare.com"
     )
 
@@ -1895,7 +1896,7 @@ def test_browser_login_requires_configured_password_and_trusted_origin(
 
 def test_browser_login_rate_limit_returns_retry_after(monkeypatch) -> None:
     monkeypatch.setattr(config, "browser_password", "browser-secret")
-    monkeypatch.setattr(service, "_browser_login_attempts", defaultdict(deque))
+    monkeypatch.setattr(state, "browser_login_attempts", defaultdict(deque))
     browser = TestClient(service.app)
     for _ in range(5):
         response = browser.post("/auth/session", json={"password": "wrong"})
@@ -1912,8 +1913,8 @@ def test_cloudflare_access_jwt_authenticates_without_browser_password(
     monkeypatch.setattr(config, "browser_password", "")
     monkeypatch.setattr(config, "cloudflare_access_configured", True)
     monkeypatch.setattr(
-        service,
-        "_verify_cloudflare_access_jwt",
+        security,
+        "verify_cloudflare_access_jwt",
         lambda token: token == "valid-access-jwt",
     )
 
@@ -1987,7 +1988,7 @@ def test_cloudflare_access_jwt_verifies_signature_claims_and_expiry(
         "https://team.example.cloudflareaccess.com",
     )
     monkeypatch.setattr(config, "cloudflare_access_audience", "audience-1")
-    monkeypatch.setattr(service, "_cloudflare_jwk_client", FakeJwkClient())
+    monkeypatch.setattr(state, "cloudflare_jwk_client", FakeJwkClient())
     now = int(time.time())
 
     def token(**claims: object) -> str:
@@ -2003,12 +2004,12 @@ def test_cloudflare_access_jwt_verifies_signature_claims_and_expiry(
             headers={"kid": "test-key"},
         )
 
-    assert service._verify_cloudflare_access_jwt(token(exp=now + 300)) is True
+    assert security.verify_cloudflare_access_jwt(token(exp=now + 300)) is True
     assert (
-        service._verify_cloudflare_access_jwt(token(aud="other", exp=now + 300))
+        security.verify_cloudflare_access_jwt(token(aud="other", exp=now + 300))
         is False
     )
-    assert service._verify_cloudflare_access_jwt(token(exp=now - 1)) is False
+    assert security.verify_cloudflare_access_jwt(token(exp=now - 1)) is False
 
 
 def test_browser_login_limit_uses_cloudflare_ip_only_from_loopback() -> None:
@@ -2029,8 +2030,8 @@ def test_browser_login_limit_uses_cloudflare_ip_only_from_loopback() -> None:
             }
         )
 
-    assert service._browser_client_ip(make_request("127.0.0.1")) == "203.0.113.9"
-    assert service._browser_client_ip(make_request("198.51.100.4")) == "198.51.100.4"
+    assert security.browser_client_ip(make_request("127.0.0.1")) == "203.0.113.9"
+    assert security.browser_client_ip(make_request("198.51.100.4")) == "198.51.100.4"
 
 
 def test_follow_sse_stream_emits_complete_event_history() -> None:

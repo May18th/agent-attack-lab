@@ -7,7 +7,7 @@ module see the rebinding. A name imported into another module keeps the old
 object and the test passes for the wrong reason.
 
 Immutable configuration (env-derived constants, CORS origins, API key) does
-not belong here; it stays in the service module until the config split.
+not belong here; it lives in ``config.py``.
 """
 
 from __future__ import annotations
@@ -35,6 +35,17 @@ rate_windows: dict[str, deque[float]] = defaultdict(deque)
 rate_lock = Lock()
 public_battle_rate_windows: dict[str, deque[float]] = defaultdict(deque)
 public_battle_rate_lock = Lock()
+
+# Browser session and login throttling state, owned by security.py.
+browser_sessions: dict[str, float] = {}
+browser_sessions_lock = Lock()
+browser_login_attempts: dict[str, deque[float]] = defaultdict(deque)
+browser_login_lock = Lock()
+cloudflare_jwk_client: Any | None = None
+cloudflare_jwk_lock = Lock()
+
+# Counters surfaced by /metrics.
+rate_limited_count = 0
 
 # Background task bookkeeping and de-duplication guards.
 recovery_tasks: set[asyncio.Task[Any]] = set()

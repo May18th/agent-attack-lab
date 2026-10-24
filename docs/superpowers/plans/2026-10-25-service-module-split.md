@@ -93,9 +93,11 @@ agent_attack_lab/
 
 ### S3 抽 `security.py`
 
-- 搬 Cloudflare Access JWT 校验、browser session（digest/issue/revoke/origin 校验）、登录限流、`_check_api_key`、四个 `*_dependency`。
-- 同步改 3 处 `service._verify_cloudflare_access_jwt`、1 处 `_browser_client_ip`、1 处 `_browser_origin_allowed`。
-- 验收：`/auth/session`、`/login` 相关测试全绿（`test_service.py` 里鉴权用例约 20 个）。
+- 搬 16 个函数：`_check_api_key`、`_verify_cloudflare_access_jwt`、`_browser_origin_allowed`、`_browser_session_digest`、`_has_browser_session`、`_issue_browser_session`、`_revoke_browser_session`、`_check_browser_session_origin`、`_check_browser_or_api_auth`、`_browser_client_ip`、`_browser_login_rate_limit`、`_api_key_dependency`、`_metrics_auth_dependency`、`_read_auth_dependency`、`_public_battle_rate_limit_dependency`、`_rate_limit_dependency`。
+- **可变状态不跟着走**，按 S1 的口径归 `state.py`：`browser_sessions` + 锁、`browser_login_attempts` + 锁、`cloudflare_jwk_client` + 锁、`rate_limited_count`（后者被 `/metrics` 读）。搬走后 `verify_cloudflare_access_jwt` 与 `rate_limit_dependency` 里的两行 `global` 必须删掉——写 `state.x` 是模块属性赋值，不需要 `global`。
+- 同步改测试 **14 处**：8 处打桩（`_browser_sessions` 2、`_browser_login_attempts` 4、`_cloudflare_jwk_client` 1、`_verify_cloudflare_access_jwt` 1）+ 6 处直接调用（`_verify_cloudflare_access_jwt` 3、`_browser_client_ip` 2、`_browser_origin_allowed` 1）。
+- 验收：193 绿 + 契约 md5 不变 + 接线实证（清空 `state.browser_sessions` 后会话立刻失效；打桩 `security.verify_cloudflare_access_jwt` 后鉴权放行；`state.rate_limited_count` 随 429 递增）。
+- 注意：本步实测迁出 265 行、`security.py` 290 行。**副作用依赖又出现一次**：`Lock` 随 `_browser_*_lock` 一起变成 service.py 里未使用的导入，被 `ruff --fix` 删掉，而 `test_service.py` 里有 `service.Lock()` —— 和 S2 的 `service.Path` 同一类，改成测试自己 `from threading import Lock`。以后每搬一块，先 grep 一遍 `service\.(被搬走的导入名)`。
 
 ### S4 抽 `events.py`
 
