@@ -18,8 +18,10 @@ from agent_attack_lab import (
     service,
     state,
 )
+from agent_attack_lab.acp_agents import ACPAgentError
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.routers import admin as admin_routes
+from agent_attack_lab.routers import battles as battle_routes
 from agent_attack_lab.routers import reports as report_routes
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
@@ -157,7 +159,7 @@ def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_ve
 ) -> None:
     store = BattleStore(str(tmp_path / "created-rounds.sqlite3"))
     monkeypatch.setattr(state, "battle_store", store)
-    monkeypatch.setattr(service, "configured_verify_mode", lambda: "off")
+    monkeypatch.setattr(battle_routes, "configured_verify_mode", lambda: "off")
     response = client.post(
         "/battles", json={"topic": "提示注入", "difficulty": "low", "rounds": 5}
     )
@@ -182,7 +184,7 @@ def test_simulated_compromise_is_persisted_and_explicitly_labeled(
 ) -> None:
     store = BattleStore(str(tmp_path / "simulated-verdict.sqlite3"))
     monkeypatch.setattr(state, "battle_store", store)
-    monkeypatch.setattr(service, "configured_verify_mode", lambda: "simulated")
+    monkeypatch.setattr(battle_routes, "configured_verify_mode", lambda: "simulated")
     response = client.post(
         "/battles", json={"topic": "general", "difficulty": "high", "rounds": 3}
     )
@@ -616,7 +618,7 @@ def test_sync_acp_failure_is_persisted_and_returns_battle_id(monkeypatch) -> Non
 
     async def failed_attack(_payload, *, correlation_id):
         assert correlation_id.startswith("call-")
-        raise service.ACPAgentError("remote detail must not be exposed")
+        raise ACPAgentError("remote detail must not be exposed")
 
     monkeypatch.setattr(battle_runner, "call_attacker", failed_attack)
     response = client.post(

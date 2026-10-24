@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from agent_attack_lab import battle_runner, config, models, service, state
@@ -85,7 +87,7 @@ def test_cancel_running_battle_is_explicit_and_idempotent() -> None:
 
 def test_battle_timeout_is_persisted_as_failed(monkeypatch) -> None:
     async def stuck_battle(_battle_id, _payload):
-        await service.asyncio.sleep(10)
+        await asyncio.sleep(10)
 
     state.battle_store.save(
         {
@@ -100,8 +102,6 @@ def test_battle_timeout_is_persisted_as_failed(monkeypatch) -> None:
     )
     monkeypatch.setattr(battle_runner, "run_battle_async", stuck_battle)
     monkeypatch.setattr(config, "battle_timeout_seconds", 0.01)
-
-    import asyncio
 
     asyncio.run(
         battle_runner.run_battle_with_tracking(
