@@ -6,7 +6,6 @@ from typing import Any
 
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 
-
 SCORING_VERSION = "frontend-v1"
 MAX_SCORE = 100
 
@@ -175,9 +174,7 @@ def score_battle(record: dict[str, Any], events: list[dict[str, Any]]) -> dict[s
         else:
             analysis_complete += bool(has_analysis_basis)
         fixed = defense.get("fixed", [])
-        if not fixed and not defense.get("caught") and not defense.get("risks"):
-            remediation_complete += 1
-        elif fixed and all(
+        if not fixed and not defense.get("caught") and not defense.get("risks") or fixed and all(
             isinstance(item, dict) and bool(item.get("action")) and bool(item.get("verificationSteps"))
             and bool(item.get("passCriteria")) and bool(item.get("failCriteria")) for item in fixed
         ):
@@ -238,6 +235,73 @@ def score_battle(record: dict[str, Any], events: list[dict[str, Any]]) -> dict[s
             "layerInterceptions": layer_interceptions,
         },
     }
+
+
+def score_battle_rounds(record: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Score each recorded round using only evidence associated with that round.
+
+    The attacker call is batch-scoped, so its completed call evidence is reused
+    for each generated sample. Defender call evidence is narrowed by the
+    correlation ID carried by the round event. Missing call evidence remains an
+    explicit ``insufficient_evidence`` result from :func:`score_battle`.
+    """
+    attacker_output = record.get("attackerOut")
+    samples = attacker_output.get("samples", []) if isinstance(attacker_output, dict) else []
+    if not isinstance(samples, list):
+        samples = []
+    defender_output = record.get("defenderOut")
+    defenses = defender_output if isinstance(defender_output, list) else []
+    round_numbers: set[int] = set(range(1, max(len(samples), len(defenses)) + 1))
+    for event in events:
+        value = _event_data(event).get("round")
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            round_numbers.add(number)
+
+    attacker_events = [
+        event for event in events
+        if _event_data(event).get("agentRole") == "attacker"
+    ]
+    results: list[dict[str, Any]] = []
+    for number in sorted(round_numbers):
+        round_events = [
+            event for event in events
+            if _event_data(event).get("round") == number
+        ]
+        defender_correlations = {
+            _event_data(event).get("correlationId")
+            for event in round_events
+            if _event_data(event).get("agentRole") == "defender"
+            or event.get("type") == "round.completed"
+        }
+        defender_events = [
+            event for event in events
+            if _event_data(event).get("agentRole") == "defender"
+            and _event_data(event).get("correlationId") in defender_correlations
+        ]
+        evidence_events = attacker_events + defender_events + round_events
+        sample = samples[number - 1] if number <= len(samples) and isinstance(samples[number - 1], dict) else {}
+        defense = defenses[number - 1] if number <= len(defenses) and isinstance(defenses[number - 1], dict) else {}
+        round_record = {
+            "status": record.get("status"),
+            "topic": record.get("topic"),
+            "attackerOut": {"samples": [sample]},
+            "defenderOut": [defense],
+        }
+        score = score_battle(round_record, evidence_events)
+        results.append({
+            "round": number,
+            "attacker": score["attacker"],
+            "defender": score["defender"],
+            "scores": {
+                "attacker": score["attacker"].get("score"),
+                "defender": score["defender"].get("score"),
+            },
+        })
+    return results
 
 
 def _role_score(role: str, categories: list[dict[str, Any]], message: str, has_call_evidence: bool) -> dict[str, Any]:
