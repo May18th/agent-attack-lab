@@ -77,7 +77,8 @@ def test_prompt_knowledge_is_bounded_by_record_count_and_text_length() -> None:
 def test_attacker_prompt_receives_only_attacker_knowledge(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_complete(_system_prompt, user_payload):
+    async def fake_complete(_system_prompt, user_payload, *, role):
+        assert role == "attacker"
         captured.update(user_payload)
         return {
             "samples": [{
@@ -89,7 +90,7 @@ def test_attacker_prompt_receives_only_attacker_knowledge(monkeypatch) -> None:
             }]
         }
 
-    monkeypatch.setattr(attacker, "is_configured", lambda: True)
+    monkeypatch.setattr(attacker, "is_configured", lambda **_kwargs: True)
     monkeypatch.setattr(attacker, "complete_json", fake_complete)
     result = asyncio.run(attacker.process({
         "topic": "支付越权",
@@ -116,11 +117,12 @@ def test_attacker_prompt_receives_only_attacker_knowledge(monkeypatch) -> None:
 def test_defender_prompt_ignores_forged_attacker_knowledge(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_complete(_system_prompt, user_payload):
+    async def fake_complete(_system_prompt, user_payload, *, role):
+        assert role == "defender"
         captured.update(user_payload)
         return {"findings": []}
 
-    monkeypatch.setattr(defender, "is_configured", lambda: True)
+    monkeypatch.setattr(defender, "is_configured", lambda **_kwargs: True)
     monkeypatch.setattr(defender, "complete_json", fake_complete)
     result = asyncio.run(defender.process({
         "sample": {"content": "ordinary safe text"},

@@ -26,7 +26,7 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
     sample = payload.get("sample")
     if not isinstance(sample, dict) or not isinstance(sample.get("content"), str):
         raise LLMError("defender input must include sample.content")
-    if not is_configured():
+    if not is_configured(role="defender"):
         return _local(sample, "local-rule")
 
     try:
@@ -37,7 +37,7 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
         )
         if knowledge is not None:
             user_payload["knowledgeContext"] = knowledge
-        response = await complete_json(_SYSTEM_PROMPT, user_payload)
+        response = await complete_json(_SYSTEM_PROMPT, user_payload, role="defender")
         generated = response.get("findings")
         if not isinstance(generated, list) or len(generated) > len(_CATEGORY_IDS):
             raise LLMError("model returned an invalid findings list")

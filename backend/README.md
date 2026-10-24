@@ -149,6 +149,13 @@ $env:no_proxy = "localhost,127.0.0.1,::1"
 
 当前实现请求 JSON Object，再由 Agent 本地校验返回结构；模型调用失败或输出不符合 Agent 契约时会标记并降级到本地规则。配置更新后运行 `.\restart.ps1`，并确认两个 Agent 的健康状态及战局来源标签。具体环境变量见 `.env.example`。
 
+可为攻击和防守角色分别配置 `AGENT_ATTACKER_LLM_*`、`AGENT_DEFENDER_LLM_*`；每个角色的
+`BASE_URL`、`API_KEY`、`MODEL` 必须同时存在才会启用独立端点，否则安全回退到共享的
+`AGENT_LLM_*` 配置。Arbiter、战报总结和规则候选另有显式开关与角色端点：
+`AGENT_ARBITER_LLM_ENABLED`、`AGENT_REPORT_LLM_ENABLED`、`AGENT_RULE_DISCOVERY_LLM_ENABLED`。
+规则候选接口只返回 `pending_human_approval`，不会自动写入正式规则库；战报与裁决中的证据
+必须能在提交样本原文中精确找到，模型失败或证据校验失败时继续使用本地规则结果。
+
 默认端口分别为 8788 和 8789，可用 `-AttackerPort`、`-DefenderPort` 修改；端口必须不同。公网部署前还需要分别部署并配置稳定 HTTPS 地址及平台要求的真实身份/认证材料，不能直接把上述 `127.0.0.1` 地址交给平台或队友。
 
 事件记录默认限制为 32 KB；超限样本会截短并添加 `dataTruncated` 标记，可通过 `AGENT_EVENT_DATA_MAX_BYTES` 调整，最小值为 1 KB。

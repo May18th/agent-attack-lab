@@ -29,7 +29,7 @@ def _local(payload: dict[str, Any], mode: str) -> dict[str, Any]:
 
 async def process(payload: dict[str, Any]) -> dict[str, Any]:
     request = AttackRequest.model_validate(payload)
-    if not is_configured():
+    if not is_configured(role="attacker"):
         return _local(request.model_dump(), "local-rule")
 
     try:
@@ -39,7 +39,7 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
         knowledge = trusted_attacker_context(payload.get("_knowledgeContext"), topic=request.topic)
         if knowledge is not None:
             user_payload["knowledgeContext"] = knowledge
-        response = await complete_json(prompt, user_payload)
+        response = await complete_json(prompt, user_payload, role="attacker")
         generated = response.get("samples")
         if not isinstance(generated, list) or len(generated) != expected_count:
             raise LLMError("model returned an invalid sample count")

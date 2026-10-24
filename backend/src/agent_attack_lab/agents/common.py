@@ -113,7 +113,7 @@ def create_agent_app(
             "status": "ok",
             "agent": name,
             "protocol": "AIP v2",
-            "agentMode": "llm" if llm_configured() else "local-rule",
+            "agentMode": "llm" if llm_configured(role=name) else "local-rule",
         }
 
     @app.post("/rpc")

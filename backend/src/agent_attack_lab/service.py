@@ -71,9 +71,14 @@ from agent_attack_lab.agent_logic import (
     defend,
     local_rule_case_count,
 )
+from agent_attack_lab.agents.arbiter import review_round
 from agent_attack_lab.agents.knowledge import (
     build_attacker_knowledge,
     build_defender_knowledge,
+)
+from agent_attack_lab.agents.reporter import summarize as summarize_report
+from agent_attack_lab.agents.rule_discovery import (
+    suggest_rule_candidate,
 )
 from agent_attack_lab.aip_compat import server_identity_options
 from agent_attack_lab.battle_audit import audit_battle
@@ -188,6 +193,22 @@ class AdminRuleRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     condition: str = Field(min_length=1, max_length=2000)
     action: Literal["拦截", "放行"] = "拦截"
+
+
+class RuleCandidateRequest(BaseModel):
+    topic: str = Field(min_length=1, max_length=200)
+    reviewDecision: Literal["true_positive"]
+    sampleContent: str = Field(min_length=1, max_length=8000)
+    reviewedEvidence: str = Field(min_length=5, max_length=500)
+    reviewerRationale: str = Field(min_length=1, max_length=800)
+
+    @field_validator("reviewedEvidence")
+    @classmethod
+    def reviewed_evidence_must_be_from_sample(cls, value: str, info: Any) -> str:
+        sample = info.data.get("sampleContent", "")
+        if value not in sample:
+            raise ValueError("reviewedEvidence 必须是 sampleContent 中的原文")
+        return value
 
 
 class BattleRecord(BaseModel):
@@ -2544,6 +2565,30 @@ def create_admin_rule(payload: AdminRuleRequest, request: Request) -> dict[str, 
     return item
 
 
+@app.post(
+    "/admin/rule-candidates/propose",
+    summary="根据人工复核结果生成规则候选",
+    description="仅返回 pending_human_approval 候选，不写入正式规则库；审核通过后由管理员通过 /admin/rules 单独录入。",
+    tags=["管理员资源"],
+)
+async def propose_admin_rule_candidate(
+    payload: RuleCandidateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    result = await suggest_rule_candidate(payload.model_dump())
+    _admin_write_audit(
+        request,
+        "admin.rule.candidate.proposed",
+        {
+            "topic": payload.topic,
+            "agentSource": result.get("agentSource"),
+            "requiresHumanApproval": True,
+        },
+    )
+    return result
+
+
 @app.patch("/admin/rules/{rule_id}", summary="编辑管理员防守规则", tags=["管理员资源"])
 def update_admin_rule(rule_id: str, payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
     _check_browser_or_api_auth(request)
@@ -2833,6 +2878,10 @@ async def create_battle(
     for index, (sample, defense, correlation_id) in enumerate(
         zip(attack_result["samples"], defense_results, defense_call_ids), start=1
     ):
+        verification = verify_round(sample, defense, mode=verification_mode)
+        verifications.append(verification)
+        arbiter_review = await review_round(sample, defense, verification)
+        defense["arbiterReview"] = arbiter_review
         add_event(
             "round.completed",
             "completed",
@@ -2846,11 +2895,10 @@ async def create_battle(
                 "analysisMode": defense.get("analysisMode"),
                 "verificationStatus": defense.get("verificationStatus"),
                 "scopeNotice": defense.get("scopeNotice"),
+                "arbiterReview": arbiter_review,
                 "correlationId": correlation_id,
             },
         )
-        verification = verify_round(sample, defense, mode=verification_mode)
-        verifications.append(verification)
         if verification["verified"]:
             add_event("attack.compromised", "completed", {
                 "round": index,
@@ -3214,6 +3262,7 @@ def _markdown_report(
     record: dict[str, Any],
     events: list[dict[str, Any]],
     internal_score: dict[str, Any],
+    report_summary: dict[str, Any] | None = None,
 ) -> str:
     attacker_score, defender_score = _scores(record)
     lines = [
@@ -3245,9 +3294,21 @@ def _markdown_report(
             for item in role_score["categories"]
         ],
         "",
-        "## 对抗过程",
-        "",
     ]
+    if report_summary is not None:
+        lines.extend([
+            "## LLM 战报总结",
+            "",
+            str(report_summary.get("summary", "")),
+            "",
+            f"- 结果来源：{report_summary.get('agentSource', 'unknown')}",
+            f"- 需要人工复核：{'是' if report_summary.get('needsHumanReview') else '否'}",
+            *[f"- 风险：{item}" for item in report_summary.get("keyRisks", [])],
+            *[f"- 证据：`{item}`" for item in report_summary.get("evidence", [])],
+            *[f"- 建议：{item}" for item in report_summary.get("recommendations", [])],
+            "",
+        ])
+    lines.extend(["## 对抗过程", ""])
     samples = record["attackerOut"].get("samples", [])
     defenses = record.get("defenderOut", [])
     for index, sample in enumerate(samples, start=1):
@@ -3277,7 +3338,7 @@ def _markdown_report(
     tags=["战报接口"],
     dependencies=[Depends(_read_auth_dependency)],
 )
-def battle_report(
+async def battle_report(
     battle_id: str,
     format: Literal["json", "markdown"] = Query(default="json"),
 ) -> Any:
@@ -3285,6 +3346,7 @@ def battle_report(
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     events = _battle_store.list_events(battle_id)
+    report_summary = await summarize_report(record, events)
     if format == "markdown":
         stored_internal_score = _battle_store.get_score(battle_id)
         return PlainTextResponse(
@@ -3303,6 +3365,7 @@ def battle_report(
         "events": events,
         "scores": {"attacker": attacker_score, "defender": defender_score},
         "internalScore": stored_internal_score if stored_internal_score is not None else _insufficient_internal_score(),
+        "summary": report_summary,
     }
 
 
