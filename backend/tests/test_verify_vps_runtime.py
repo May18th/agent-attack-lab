@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import shutil
 import subprocess
 
 import pytest
 
+from shell_guard import posix_shell
 
-BASH = shutil.which("bash")
+
+BASH = posix_shell()
 SCRIPT = Path(__file__).parents[1] / "scripts" / "verify-vps-runtime.sh"
 
 

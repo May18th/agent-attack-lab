@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from shell_guard import posix_shell
+
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "start-service.sh"
 DEPLOY_SCRIPT = Path(__file__).parents[1] / "scripts" / "deploy-production.sh"
@@ -55,7 +57,7 @@ def test_deploy_script_supports_codeload_source_releases() -> None:
     assert 'cp -a "$source_dir"/. "$release_dir"/' in source
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
+@pytest.mark.skipif(posix_shell() is None, reason="POSIX bash is required (set WUTONG_ENABLE_SHELL_TESTS=1 on Windows)")
 def test_start_service_prefers_release_src_on_pythonpath(tmp_path: Path) -> None:
     backend = tmp_path / "backend"
     scripts = backend / "scripts"
