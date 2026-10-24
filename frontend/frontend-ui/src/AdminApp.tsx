@@ -1,30 +1,22 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import './AdminApp.css'
 import {
   apiErrorMessage, cancelAdminBattle, deleteAdminBattle, getAdminBattleAudit, getAdminBattleDetail,
-  getAdminBattleEvents, getAdminBattleScore, getAdminDashboardSummary, getAdminExternalCases, getAdminMetrics,
+  getAdminBattleEvents, getAdminBattleRounds, getAdminBattleScore, getAdminDashboardSummary, getAdminExternalCases, getAdminMetrics,
   getAdminReport, getAdminSession, listAdminBattles, loginAdminSession, logoutAdminSession, retryAdminBattle,
-  type AdminBattle, type AdminBattleEvent, type AdminBattleListFilters, type AdminBattleScore, type AdminExternalCases,
+  type AdminBattle, type AdminBattleEvent, type AdminBattleListFilters, type AdminBattleRounds, type AdminBattleScore, type AdminExternalCases,
 } from './adminApi'
+import { AdminBattleDetail } from './AdminBattleDetail'
+import { DIFFICULTY_LABELS, STATUS_LABELS } from './adminLabels'
 import { AdminManagementPanel } from './AdminManagementPanel'
+import { AdminMetricsPanel } from './AdminMetricsPanel'
 import { ApiError } from './api'
 import { BattleTimeline3D } from './admin3d/BattleTimeline3D'
 
 const Admin3DWorkspace = lazy(() => import('./admin3d/Admin3DWorkspace').then((module) => ({ default: module.Admin3DWorkspace })))
 
 const PAGE_SIZE = 10
-const statusLabels: Record<string, string> = { pending: '等待中', running: '进行中', completed: '已完成', failed: '失败' }
-const difficultyLabels: Record<string, string> = { low: '低', mid: '中', high: '高' }
-const metricLabels: Record<string, string> = {
-  totalBattles: '总战局', completedBattles: '已完成', failedBattles: '失败', highDifficultyBattles: '高难度战局',
-  sampleCount: '攻击样本', ruleHitCount: '规则命中', riskCount: '风险项', recommendationCount: '防守建议',
-  uptimeSeconds: '运行时长（秒）', requests: '累计请求', errors: '错误数', averageLatencyMs: '平均延迟（毫秒）',
-  maxLatencyMs: '最大延迟（毫秒）', rate_limited: '限流请求', rateLimitPerMinute: '每分钟请求上限',
-  eventDataMaxBytes: '事件数据上限（字节）', recoveryTasks: '恢复任务', activeBattleTasks: '活跃战局任务',
-}
-const label = (value?: string, labels: Record<string, string> = statusLabels) => value ? labels[value] ?? value : '暂无'
-const metricLabel = (key: string) => metricLabels[key] ?? key
-const jsonPreview = (value: unknown) => JSON.stringify(value ?? {}, null, 2)
+const label = (value?: string, labels: Record<string, string> = STATUS_LABELS) => value ? labels[value] ?? value : '暂无'
 
 function SecurityLockIcon() {
   return <svg className="security-lock" role="img" aria-label="安全登录" viewBox="0 0 24 24" fill="none" aria-hidden="false"><path d="M7.5 10V7.75a4.5 4.5 0 0 1 9 0V10" /><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M12 14v2" /></svg>
@@ -45,6 +37,7 @@ function errorText(error: unknown): string {
 }
 
 export default function AdminApp() {
+  const showRawData = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1'
   const [session, setSession] = useState<{ enabled: boolean; authenticated: boolean } | null>(null)
   const [sessionError, setSessionError] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
@@ -63,10 +56,12 @@ export default function AdminApp() {
   const [eventPageInfo, setEventPageInfo] = useState({ total: 0, hasMore: false })
   const [cases, setCases] = useState<AdminExternalCases | null>(null)
   const [caseQuery, setCaseQuery] = useState('')
+  const [rounds, setRounds] = useState<AdminBattleRounds | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const detailRequestId = useRef(0)
+  const loadingMoreEventsRef = useRef(false)
   const selectedBattleRef = useRef(selected)
 
   const checkSession = useCallback(async () => {
@@ -124,15 +119,18 @@ export default function AdminApp() {
 
   const loadBattleDetails = useCallback(async (battle: AdminBattle, select = false) => {
     const requestId = ++detailRequestId.current
-    if (select) { setSelected(battle); setDetailData({}); setSelectedTimelineEvent(null); setTimelineQuery(''); setEventPageInfo({ total: 0, hasMore: false }) }
+    if (select) { setSelected(battle); setDetailData({}); setRounds(null); setSelectedTimelineEvent(null); setTimelineQuery(''); setEventPageInfo({ total: 0, hasMore: false }); loadingMoreEventsRef.current = false }
     const entries = await Promise.allSettled([
       getAdminBattleDetail(battle.id), getAdminBattleScore(battle.id), getAdminBattleEvents(battle.id),
-      getAdminBattleAudit(battle.id), getAdminReport(battle.id),
+      getAdminBattleAudit(battle.id), getAdminReport(battle.id), getAdminBattleRounds(battle.id),
     ])
-    const names = ['详情', '评分', '事件页', '审计', '报告']
+    const names = ['详情', '评分', '事件页', '审计', '报告', '回合']
     const data: Record<string, unknown> = {}
     entries.forEach((entry, index) => { if (entry.status === 'fulfilled') data[names[index]] = entry.value })
     if (requestId !== detailRequestId.current) return
+    const roundData = data['回合'] as AdminBattleRounds | undefined
+    delete data['回合']
+    setRounds(roundData ?? null)
     const eventPage = data['事件页'] as Awaited<ReturnType<typeof getAdminBattleEvents>> | undefined
     if (eventPage) {
       data['事件'] = eventPage.items
@@ -151,14 +149,16 @@ export default function AdminApp() {
     const battleId = selected?.id
     const currentEvents = detailData['事件'] as AdminBattleEvent[] | undefined
     const afterSequence = currentEvents?.at(-1)?.sequence ?? 0
-    if (!battleId || !eventPageInfo.hasMore) return
+    if (!battleId || !eventPageInfo.hasMore || loadingMoreEventsRef.current) return
     const requestId = detailRequestId.current
+    loadingMoreEventsRef.current = true
     try {
       const nextPage = await getAdminBattleEvents(battleId, afterSequence)
       if (requestId !== detailRequestId.current) return
       setDetailData((current) => ({ ...current, '事件': [...(current['事件'] as AdminBattleEvent[] ?? []), ...nextPage.items] }))
       setEventPageInfo({ total: nextPage.total, hasMore: nextPage.hasMore })
     } catch (e) { setError(errorText(e)) }
+    finally { loadingMoreEventsRef.current = false }
   }, [detailData, eventPageInfo.hasMore, selected])
 
   const selectedBattleId = selected?.id
@@ -216,7 +216,6 @@ export default function AdminApp() {
   }
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
-  const overviewItems = useMemo(() => Object.entries(summary ?? {}).filter(([, value]) => typeof value === 'number').slice(0, 8), [summary])
   if (!session) return <AuthFrame><div className="auth-mark"><SecurityLockIcon /><span>安全会话</span></div><h1>管理员后台 - 会话检查</h1><p className="auth-description">正在验证当前访问凭据，请稍候。</p>{sessionError && <p className="admin-error" role="alert">{sessionError}</p>}<button className="auth-secondary" onClick={() => void checkSession()}>重新检查会话</button></AuthFrame>
   if (session.enabled && !session.authenticated) return <AuthFrame><div className="auth-mark"><SecurityLockIcon /><span>安全会话</span></div><h1>管理员后台 - 管理员认证</h1><p className="auth-description">使用后台管理密码建立安全会话。</p><form onSubmit={(event) => void handlePasswordLogin(event)}><label htmlFor="admin-login-password">后台管理密码</label><input id="admin-login-password" type="password" autoComplete="current-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required maxLength={256} disabled={loginBusy} /><button className="auth-primary" type="submit" disabled={loginBusy} aria-busy={loginBusy}>{loginBusy ? '登录中…' : '登录管理后台'}</button></form>{sessionError && <p className="admin-error" role="alert">{sessionError}</p>}<button className="auth-secondary" type="button" onClick={() => void checkSession()} disabled={loginBusy}>我已完成认证，重新检查</button></AuthFrame>
 
@@ -241,10 +240,10 @@ export default function AdminApp() {
     </Suspense>
     <div id="admin-2d-workspace" className="admin-2d-workspace">
     <AdminManagementPanel battles={battles} onBattleCreated={handleBattleCreated} onError={setError} />
-    <section className="admin-module metrics"><h2>运行指标</h2><div className="metric-grid">{overviewItems.length ? overviewItems.map(([key, value]) => <div className="metric" key={key}><span>{metricLabel(key)}</span><strong>{String(value)}</strong></div>) : <div className="empty">暂无指标</div>}</div><details className="admin-raw-metrics"><summary>原始指标数据</summary><pre className="data-preview" aria-label="态势数据">{jsonPreview(metrics)}</pre></details></section>
-    <section className="admin-module"><div className="module-head"><h2>战局列表</h2><span>{total} 场</span></div><div className="filters"><input aria-label="搜索战局" placeholder="搜索主题或编号" value={query} onChange={(e) => { const value = e.target.value; setQuery(value); setPage(0); void loadList({ offset: 0, q: value }) }} onKeyDown={(e) => { if (e.key === 'Enter') void loadList({ offset: 0, q: query }) }} /><select aria-label="状态筛选" value={status} onChange={(e) => { const value = e.target.value; setStatus(value); setPage(0); void loadList({ offset: 0, status: value }) }}><option value="">全部状态</option>{Object.entries(statusLabels).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select><button onClick={() => void loadList({ offset: 0 })}>查询</button></div>{loading ? <p>正在加载战局…</p> : <div className="battle-table">{battles.length ? battles.map((battle) => <button className="battle-row" key={battle.id} aria-label={`查看${battle.topic}`} onClick={() => void selectBattle(battle)}><span>{battle.topic || '未命名战局'}</span><span>{label(battle.status)} · {label(battle.difficulty, difficultyLabels)}</span><span>{battle.code ?? battle.id}</span></button>) : <p className="empty">暂无战局</p>}</div>}<div className="pagination"><button disabled={page <= 0} onClick={() => { setPage(page - 1); void loadList({ offset: (page - 1) * PAGE_SIZE }) }}>上一页</button><span>第 {page + 1} / {pages} 页</span><button disabled={page + 1 >= pages} onClick={() => { setPage(page + 1); void loadList({ offset: (page + 1) * PAGE_SIZE }) }}>下一页</button></div></section>
-    <section className="admin-module"><div className="module-head"><h2>战局详情</h2>{selected && <span>{selected.code ?? selected.id}</span>}</div>{selected ? <><div className="detail-summary"><strong>{selected.topic || '未命名战局'}</strong><span>{label(selected.status)} · {label(selected.difficulty, difficultyLabels)}</span><div className="actions">{selected.status === 'failed' && <button disabled={busy} onClick={() => void runAction('retry')}>重试战局</button>}{(selected.status === 'pending' || selected.status === 'running') && <button disabled={busy} onClick={() => void runAction('cancel')}>取消战局</button>}{(selected.status === 'completed' || selected.status === 'failed') && <button className="danger" disabled={busy} onClick={() => void runAction('delete')}>删除战局</button>}</div></div><div className="detail-grid">{Object.entries(detailData).filter(([key]) => key !== '事件').map(([key, value]) => <details open key={key}><summary>{key}</summary><pre className="data-preview">{jsonPreview(value)}</pre></details>)}</div><BattleTimeline3D battle={selected} events={Array.isArray(detailData['事件']) ? detailData['事件'] as AdminBattleEvent[] : []} eventsTotal={eventPageInfo.total} hasMoreEvents={eventPageInfo.hasMore} onLoadMoreEvents={() => void loadMoreEvents()} audit={detailData['审计'] && typeof detailData['审计'] === 'object' ? detailData['审计'] as Record<string, unknown> : {}} score={detailData['评分'] as AdminBattleScore | null | undefined} selectedEvent={selectedTimelineEvent} onSearchQueryChange={setTimelineQuery} onSelectEvent={setSelectedTimelineEvent} /><span className="sr-only" aria-live="polite">{selectedTimelineEvent ? `当前选择事件 ${selectedTimelineEvent.sequence ?? ''} ${selectedTimelineEvent.type ?? selectedTimelineEvent.eventType ?? ''}` : ''}</span></> : <p className="empty">选择战局查看详情、评分、事件、审计和报告。</p>}</section>
-    <section className="admin-module"><div className="module-head"><h2>外部案例</h2><span>只读</span></div><div className="filters"><input aria-label="搜索外部案例" placeholder="搜索 CVE、厂商或产品" value={caseQuery} onChange={(e) => setCaseQuery(e.target.value)} /><button onClick={() => void loadCases()}>查询</button></div>{cases?.available === false ? <p className="empty">{cases.reason || '外部案例不可用'}</p> : cases?.items?.length ? <div className="case-list">{cases.items.map((item) => <article key={item.externalId}><strong>{item.externalId} · {item.title}</strong><p>{item.vendorProject} · {item.product} · {item.provenanceStatus}</p><a href={item.sourceUrl} target="_blank" rel="noreferrer">来源</a></article>)}</div> : <p className="empty">暂无匹配案例</p>}</section>
+    <AdminMetricsPanel summary={summary} metrics={metrics} />
+    <section className="admin-module"><div className="module-head"><h2>战局列表</h2><span>{total} 场</span></div><div className="filters"><input aria-label="搜索战局" placeholder="搜索主题或编号" value={query} onChange={(e) => { const value = e.target.value; setQuery(value); setPage(0); void loadList({ offset: 0, q: value }) }} onKeyDown={(e) => { if (e.key === 'Enter') void loadList({ offset: 0, q: query }) }} /><select aria-label="状态筛选" value={status} onChange={(e) => { const value = e.target.value; setStatus(value); setPage(0); void loadList({ offset: 0, status: value }) }}><option value="">全部状态</option>{Object.entries(STATUS_LABELS).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select><button onClick={() => void loadList({ offset: 0 })}>查询</button></div>{loading ? <p>正在加载战局…</p> : <div className="battle-table">{battles.length ? battles.map((battle) => <button className="battle-row" key={battle.id} aria-label={`查看${battle.topic}`} onClick={() => void selectBattle(battle)}><span>{battle.topic || '未命名战局'}</span><span>{label(battle.status)} · {label(battle.difficulty, DIFFICULTY_LABELS)} · {battle.rounds ?? 3} 轮</span><span>{battle.code ?? battle.id}</span></button>) : <p className="empty">暂无战局</p>}</div>}<div className="pagination"><button disabled={page <= 0} onClick={() => { setPage(page - 1); void loadList({ offset: (page - 1) * PAGE_SIZE }) }}>上一页</button><span>第 {page + 1} / {pages} 页</span><button disabled={page + 1 >= pages} onClick={() => { setPage(page + 1); void loadList({ offset: (page + 1) * PAGE_SIZE }) }}>下一页</button></div></section>
+    <section className="admin-module"><div className="module-head"><h2>战局详情</h2>{selected && <span>{selected.code ?? selected.id}</span>}</div>{selected ? <><div className="detail-summary"><strong>{selected.topic || '未命名战局'}</strong><span>{label(selected.status)} · {label(selected.difficulty, DIFFICULTY_LABELS)}</span><div className="actions">{selected.status === 'failed' && <button disabled={busy} onClick={() => void runAction('retry')}>重试战局</button>}{(selected.status === 'pending' || selected.status === 'running') && <button disabled={busy} onClick={() => void runAction('cancel')}>取消战局</button>}{(selected.status === 'completed' || selected.status === 'failed') && <button className="danger" disabled={busy} onClick={() => void runAction('delete')}>删除战局</button>}</div></div><AdminBattleDetail battle={selected} rounds={rounds} score={detailData['评分'] as AdminBattleScore | null | undefined} events={Array.isArray(detailData['事件']) ? detailData['事件'] as AdminBattleEvent[] : []} audit={detailData['审计'] && typeof detailData['审计'] === 'object' ? detailData['审计'] as Record<string, unknown> : {}} detailData={detailData} showRawData={showRawData} hasMoreEvents={eventPageInfo.hasMore} onLoadMoreEvents={() => void loadMoreEvents()} selectedEvent={selectedTimelineEvent} onSelectEvent={setSelectedTimelineEvent} /><BattleTimeline3D battle={selected} events={Array.isArray(detailData['事件']) ? detailData['事件'] as AdminBattleEvent[] : []} eventsTotal={eventPageInfo.total} hasMoreEvents={eventPageInfo.hasMore} onLoadMoreEvents={() => void loadMoreEvents()} audit={detailData['审计'] && typeof detailData['审计'] === 'object' ? detailData['审计'] as Record<string, unknown> : {}} score={detailData['评分'] as AdminBattleScore | null | undefined} selectedEvent={selectedTimelineEvent} onSearchQueryChange={setTimelineQuery} onSelectEvent={setSelectedTimelineEvent} /><span className="sr-only" aria-live="polite">{selectedTimelineEvent ? `当前选择事件 ${selectedTimelineEvent.sequence ?? ''} ${selectedTimelineEvent.type ?? selectedTimelineEvent.eventType ?? ''}` : ''}</span></> : <p className="empty">选择战局查看详情、评分、事件、审计和报告。</p>}</section>
+    <details className="admin-module external-case-module" aria-label="外部案例"><summary className="module-head"><h2>外部案例</h2><span>只读</span></summary><div className="external-case-content"><div className="filters"><input aria-label="搜索外部案例" placeholder="搜索 CVE、厂商或产品" value={caseQuery} onChange={(e) => setCaseQuery(e.target.value)} /><button onClick={() => void loadCases()}>查询</button></div>{cases?.available === false ? <p className="empty">{cases.reason || '外部案例不可用'}</p> : cases?.items?.length ? <div className="case-list">{cases.items.map((item) => <article key={item.externalId}><strong>{item.externalId} · {item.title}</strong><p>{item.vendorProject} · {item.product} · {item.provenanceStatus}</p><a href={item.sourceUrl} target="_blank" rel="noreferrer">来源</a></article>)}</div> : <p className="empty">暂无匹配案例</p>}</div></details>
     </div>
   </main>
 }
