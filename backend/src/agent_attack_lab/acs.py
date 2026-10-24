@@ -34,7 +34,10 @@ def build_acs(*, name: str, description: str, skill_id: str) -> AgentCapabilityS
     if not contact_name or not contact_email:
         raise RuntimeError("请设置 AGENT_CONTACT_NAME 和 AGENT_CONTACT_EMAIL")
     placeholders = ("平台分配", "真实AIC", "你的真实", "填写真实", "example.com")
-    if any(value in f"{organization} {contact_name} {contact_email}" for value in placeholders):
+    if any(
+        value in f"{organization} {contact_name} {contact_email}"
+        for value in placeholders
+    ):
         raise RuntimeError("组织、联系人和邮箱仍包含占位文本，请替换为真实信息")
 
     return AgentCapabilitySpec(
@@ -76,7 +79,9 @@ def main() -> None:
     parser.add_argument("--skill-id", required=True)
     parser.add_argument("--output", type=Path, default=Path("acs.json"))
     args = parser.parse_args()
-    acs = build_acs(name=args.name, description=args.description, skill_id=args.skill_id)
+    acs = build_acs(
+        name=args.name, description=args.description, skill_id=args.skill_id
+    )
     args.output.write_text(acs.to_json(indent=2), encoding="utf-8")
     print(f"已生成 {args.output}")
 

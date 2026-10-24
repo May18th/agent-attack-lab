@@ -71,26 +71,32 @@ def test_mysql_store_uses_mysql_pool_schema_and_queries(monkeypatch) -> None:
     statements = [statement for statement, _parameters in engine.calls]
     assert any("id VARCHAR(191) PRIMARY KEY" in statement for statement in statements)
     assert any("attacker_out LONGTEXT" in statement for statement in statements)
-    assert any("ON DUPLICATE KEY UPDATE" in statement for statement in statements) is False
+    assert (
+        any("ON DUPLICATE KEY UPDATE" in statement for statement in statements) is False
+    )
 
-    store.save({
-        "id": "battle-1",
-        "difficulty": "low",
-        "topic": "登录安全",
-        "status": "completed",
-        "createdAt": "2026-10-08T00:00:00+00:00",
-        "attackerOut": {"samples": []},
-        "defenderOut": [],
-    })
-    store.save_event({
-        "id": "event-1",
-        "battleId": "battle-1",
-        "sequence": 1,
-        "type": "battle.completed",
-        "status": "completed",
-        "createdAt": "2026-10-08T00:00:00+00:00",
-        "data": {},
-    })
+    store.save(
+        {
+            "id": "battle-1",
+            "difficulty": "low",
+            "topic": "登录安全",
+            "status": "completed",
+            "createdAt": "2026-10-08T00:00:00+00:00",
+            "attackerOut": {"samples": []},
+            "defenderOut": [],
+        }
+    )
+    store.save_event(
+        {
+            "id": "event-1",
+            "battleId": "battle-1",
+            "sequence": 1,
+            "type": "battle.completed",
+            "status": "completed",
+            "createdAt": "2026-10-08T00:00:00+00:00",
+            "data": {},
+        }
+    )
     assert store.list(limit=10, offset=20) == []
     assert store.get("battle-1") is None
     assert store.count(query="登录") == 0
@@ -98,9 +104,17 @@ def test_mysql_store_uses_mysql_pool_schema_and_queries(monkeypatch) -> None:
 
     statements = [statement for statement, _parameters in engine.calls]
     assert sum("ON DUPLICATE KEY UPDATE" in statement for statement in statements) == 2
-    assert any("ORDER BY created_at DESC LIMIT %s OFFSET %s" in statement for statement in statements)
+    assert any(
+        "ORDER BY created_at DESC LIMIT %s OFFSET %s" in statement
+        for statement in statements
+    )
     assert any("WHERE id = %s" in statement for statement in statements)
-    assert any("DELETE FROM battle_events WHERE battle_id = %s" in statement for statement in statements)
-    assert any("DELETE FROM battles WHERE id = %s" in statement for statement in statements)
+    assert any(
+        "DELETE FROM battle_events WHERE battle_id = %s" in statement
+        for statement in statements
+    )
+    assert any(
+        "DELETE FROM battles WHERE id = %s" in statement for statement in statements
+    )
     store.close()
     assert engine.disposed is True

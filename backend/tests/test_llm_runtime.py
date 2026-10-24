@@ -47,7 +47,9 @@ def test_complete_json_uses_deepseek_json_object_format(monkeypatch) -> None:
     assert json.loads(captured["body"]["messages"][1]["content"]) == {"topic": "test"}
 
 
-def test_arbiter_can_use_role_specific_chat_completions_configuration(monkeypatch) -> None:
+def test_arbiter_can_use_role_specific_chat_completions_configuration(
+    monkeypatch,
+) -> None:
     captured: dict[str, object] = {}
 
     class FakeResponse:

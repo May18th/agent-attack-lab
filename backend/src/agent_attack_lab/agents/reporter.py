@@ -15,7 +15,10 @@ evidence 必须从某个 sample.content 原样复制至少 5 个字符的连续�
 
 def _model_enabled() -> bool:
     return os.getenv("AGENT_REPORT_LLM_ENABLED", "0").strip().lower() in {
-        "1", "true", "yes", "on"
+        "1",
+        "true",
+        "yes",
+        "on",
     }
 
 
@@ -33,7 +36,9 @@ def _texts(values: Any, *, limit: int, max_length: int) -> list[str]:
     return result
 
 
-def _report_input(record: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+def _report_input(
+    record: dict[str, Any], events: list[dict[str, Any]]
+) -> dict[str, Any]:
     attacker_out = record.get("attackerOut") or {}
     samples = attacker_out.get("samples", []) if isinstance(attacker_out, dict) else []
     defenses = record.get("defenderOut", [])
@@ -41,42 +46,58 @@ def _report_input(record: dict[str, Any], events: list[dict[str, Any]]) -> dict[
     if isinstance(samples, list):
         for index, sample in enumerate(samples[:10], start=1):
             if isinstance(sample, dict):
-                projected_samples.append({
-                    "round": index,
-                    "content": str(sample.get("content") or "")[:2000],
-                    "severity": str(sample.get("severity") or "")[:32],
-                })
+                projected_samples.append(
+                    {
+                        "round": index,
+                        "content": str(sample.get("content") or "")[:2000],
+                        "severity": str(sample.get("severity") or "")[:32],
+                    }
+                )
     projected_defenses = []
     if isinstance(defenses, list):
         for defense in defenses[:10]:
             if not isinstance(defense, dict):
                 continue
-            caught = defense.get("caught") if isinstance(defense.get("caught"), list) else []
-            risks = defense.get("risks") if isinstance(defense.get("risks"), list) else []
-            fixed = defense.get("fixed") if isinstance(defense.get("fixed"), list) else []
-            projected_defenses.append({
-                "caught": [
-                    {"reason": str(item.get("reason") or "")[:500],
-                     "matchedText": [str(value)[:500] for value in item.get("matchedText", [])[:5] if isinstance(value, str)]}
-                    for item in caught[:10]
-                    if isinstance(item, dict)
-                ],
-                "risks": [
-                    str(item.get("reason") or "")[:500]
-                    for item in risks[:10]
-                    if isinstance(item, dict)
-                ],
-                "fixed": [
-                    str(item.get("action") or "")[:800]
-                    for item in fixed[:10]
-                    if isinstance(item, dict)
-                ],
-                "arbiterReview": {
-                    key: defense["arbiterReview"].get(key)
-                    for key in ("verdict", "needsHumanReview")
-                    if isinstance(defense.get("arbiterReview"), dict)
-                },
-            })
+            caught = (
+                defense.get("caught") if isinstance(defense.get("caught"), list) else []
+            )
+            risks = (
+                defense.get("risks") if isinstance(defense.get("risks"), list) else []
+            )
+            fixed = (
+                defense.get("fixed") if isinstance(defense.get("fixed"), list) else []
+            )
+            projected_defenses.append(
+                {
+                    "caught": [
+                        {
+                            "reason": str(item.get("reason") or "")[:500],
+                            "matchedText": [
+                                str(value)[:500]
+                                for value in item.get("matchedText", [])[:5]
+                                if isinstance(value, str)
+                            ],
+                        }
+                        for item in caught[:10]
+                        if isinstance(item, dict)
+                    ],
+                    "risks": [
+                        str(item.get("reason") or "")[:500]
+                        for item in risks[:10]
+                        if isinstance(item, dict)
+                    ],
+                    "fixed": [
+                        str(item.get("action") or "")[:800]
+                        for item in fixed[:10]
+                        if isinstance(item, dict)
+                    ],
+                    "arbiterReview": {
+                        key: defense["arbiterReview"].get(key)
+                        for key in ("verdict", "needsHumanReview")
+                        if isinstance(defense.get("arbiterReview"), dict)
+                    },
+                }
+            )
     return {
         "topic": str(record.get("topic") or "未知主题")[:200],
         "difficulty": str(record.get("difficulty") or "")[:32],
@@ -97,7 +118,12 @@ def _local_summary(data: dict[str, Any]) -> dict[str, Any]:
     defenses = data["defenses"]
     caught_count = sum(len(item.get("caught", [])) for item in defenses)
     evidence = _texts(
-        [value for defense in defenses for finding in defense["caught"] for value in finding["matchedText"]],
+        [
+            value
+            for defense in defenses
+            for finding in defense["caught"]
+            for value in finding["matchedText"]
+        ],
         limit=5,
         max_length=500,
     )
@@ -112,8 +138,7 @@ def _local_summary(data: dict[str, Any]) -> dict[str, Any]:
         max_length=800,
     )
     human_review = data["verdict"] == "undetermined" or any(
-        defense["arbiterReview"].get("needsHumanReview") is True
-        for defense in defenses
+        defense["arbiterReview"].get("needsHumanReview") is True for defense in defenses
     )
     verdict_text = {
         "attacker_won": "验证结果标记为攻击方获胜",
@@ -143,20 +168,34 @@ def _validate(result: Any, data: dict[str, Any]) -> dict[str, Any]:
     key_risks = result.get("keyRisks")
     recommendations = result.get("recommendations")
     evidence = result.get("evidence")
-    if not isinstance(key_risks, list) or len(key_risks) > 5 or any(
-        not isinstance(item, str) or not item.strip() or len(item) > 500 for item in key_risks
+    if (
+        not isinstance(key_risks, list)
+        or len(key_risks) > 5
+        or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 500
+            for item in key_risks
+        )
     ):
         raise LLMError("report risks are invalid")
-    if not isinstance(recommendations, list) or len(recommendations) > 5 or any(
-        not isinstance(item, str) or not item.strip() or len(item) > 800 for item in recommendations
+    if (
+        not isinstance(recommendations, list)
+        or len(recommendations) > 5
+        or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 800
+            for item in recommendations
+        )
     ):
         raise LLMError("report recommendations are invalid")
     sample_content = [sample["content"] for sample in data["samples"]]
-    if not isinstance(evidence, list) or len(evidence) > 5 or any(
-        not isinstance(item, str)
-        or len(item) < 5
-        or not any(item in content for content in sample_content)
-        for item in evidence
+    if (
+        not isinstance(evidence, list)
+        or len(evidence) > 5
+        or any(
+            not isinstance(item, str)
+            or len(item) < 5
+            or not any(item in content for content in sample_content)
+            for item in evidence
+        )
     ):
         raise LLMError("report evidence was not found in submitted samples")
     needs_review = result.get("needsHumanReview")
@@ -173,7 +212,9 @@ def _validate(result: Any, data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def summarize(record: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+async def summarize(
+    record: dict[str, Any], events: list[dict[str, Any]]
+) -> dict[str, Any]:
     data = _report_input(record, events)
     fallback = _local_summary(data)
     if not _model_enabled() or not is_configured(role="report"):

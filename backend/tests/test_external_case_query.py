@@ -67,7 +67,9 @@ def test_query_supports_vendor_and_product_filters(tmp_path: Path) -> None:
     assert query_external_cases(database, product="Other Product")["total"] == 0
 
 
-def test_query_deduplicates_cisa_and_nvd_by_cve_and_prefers_cisa(tmp_path: Path) -> None:
+def test_query_deduplicates_cisa_and_nvd_by_cve_and_prefers_cisa(
+    tmp_path: Path,
+) -> None:
     database = tmp_path / "external.sqlite3"
     cisa = _catalog()
     import_catalog(
@@ -79,16 +81,20 @@ def test_query_deduplicates_cisa_and_nvd_by_cve_and_prefers_cisa(tmp_path: Path)
     nvd = {
         "catalogVersion": "NVD snapshot",
         "vulnerabilities": [
-            {"cve": {
-                "id": "CVE-2099-0099",
-                "published": "2026-10-12T00:00:00.000Z",
-                "descriptions": [{"lang": "en", "value": "NVD duplicate record."}],
-            }},
-            {"cve": {
-                "id": "CVE-2099-0100",
-                "published": "2026-10-12T00:00:00.000Z",
-                "descriptions": [{"lang": "en", "value": "NVD-only record."}],
-            }},
+            {
+                "cve": {
+                    "id": "CVE-2099-0099",
+                    "published": "2026-10-12T00:00:00.000Z",
+                    "descriptions": [{"lang": "en", "value": "NVD duplicate record."}],
+                }
+            },
+            {
+                "cve": {
+                    "id": "CVE-2099-0100",
+                    "published": "2026-10-12T00:00:00.000Z",
+                    "descriptions": [{"lang": "en", "value": "NVD-only record."}],
+                }
+            },
         ],
     }
     payload = json.dumps(nvd, sort_keys=True).encode()
@@ -103,7 +109,9 @@ def test_query_deduplicates_cisa_and_nvd_by_cve_and_prefers_cisa(tmp_path: Path)
     assert duplicate["items"][0]["source"]["publisher"] == "CISA"
 
 
-def test_query_matches_all_sources_before_returning_preferred_record(tmp_path: Path) -> None:
+def test_query_matches_all_sources_before_returning_preferred_record(
+    tmp_path: Path,
+) -> None:
     database = tmp_path / "external.sqlite3"
     cisa = _catalog()
     import_catalog(
@@ -114,11 +122,17 @@ def test_query_matches_all_sources_before_returning_preferred_record(tmp_path: P
     )
     nvd = {
         "catalogVersion": "NVD snapshot",
-        "vulnerabilities": [{"cve": {
-            "id": "CVE-2099-0099",
-            "published": "2026-10-12T00:00:00.000Z",
-            "descriptions": [{"lang": "en", "value": "NVD-only searchable phrase."}],
-        }}],
+        "vulnerabilities": [
+            {
+                "cve": {
+                    "id": "CVE-2099-0099",
+                    "published": "2026-10-12T00:00:00.000Z",
+                    "descriptions": [
+                        {"lang": "en", "value": "NVD-only searchable phrase."}
+                    ],
+                }
+            }
+        ],
     }
     payload = json.dumps(nvd, sort_keys=True).encode()
     import_nvd_catalog(database, payload=payload, catalog=nvd)

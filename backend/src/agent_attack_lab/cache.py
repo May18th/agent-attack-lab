@@ -34,7 +34,9 @@ class RedisJsonCache:
                     health_check_interval=30,
                 )
             except ImportError:
-                logger.warning("AGENT_REDIS_URL configured but redis package is unavailable")
+                logger.warning(
+                    "AGENT_REDIS_URL configured but redis package is unavailable"
+                )
 
     @property
     def configured(self) -> bool:
@@ -52,7 +54,10 @@ class RedisJsonCache:
         except Exception as exc:  # noqa: BLE001 - Redis errors must never break the API.
             self._retry_after = time.monotonic() + 30
             if not self._warned_unavailable:
-                logger.warning("Redis cache unavailable; falling back to database: %s", type(exc).__name__)
+                logger.warning(
+                    "Redis cache unavailable; falling back to database: %s",
+                    type(exc).__name__,
+                )
                 self._warned_unavailable = True
             return default
 
@@ -62,7 +67,7 @@ class RedisJsonCache:
             return None
         try:
             return json.loads(value)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             self.delete(key)
             return None
 

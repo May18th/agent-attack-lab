@@ -41,12 +41,15 @@ def test_supported_server_identity_binding_options_are_preserved(handler) -> Non
 
 def test_disabled_identity_binding_keeps_legacy_sdk_compatible() -> None:
     assert not supports_server_identity_binding(legacy_handler)
-    assert server_identity_options(
-        legacy_handler,
-        local_aic=None,
-        enabled=False,
-        setting_name="AGENT_IDENTITY_BINDING_ENABLED",
-    ) == {}
+    assert (
+        server_identity_options(
+            legacy_handler,
+            local_aic=None,
+            enabled=False,
+            setting_name="AGENT_IDENTITY_BINDING_ENABLED",
+        )
+        == {}
+    )
 
 
 @pytest.mark.parametrize(

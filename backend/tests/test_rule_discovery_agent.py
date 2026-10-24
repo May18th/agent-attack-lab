@@ -15,7 +15,9 @@ def _request() -> dict[str, str]:
     }
 
 
-def test_rule_discovery_returns_a_pending_candidate_without_persisting(monkeypatch) -> None:
+def test_rule_discovery_returns_a_pending_candidate_without_persisting(
+    monkeypatch,
+) -> None:
     async def fake_complete(_system_prompt, user_payload, *, role):
         assert role == "rule"
         assert user_payload["reviewDecision"] == "true_positive"
@@ -39,7 +41,9 @@ def test_rule_discovery_returns_a_pending_candidate_without_persisting(monkeypat
     assert "id" not in result["candidate"]
 
 
-def test_rule_discovery_rejects_candidate_action_inconsistent_with_review(monkeypatch) -> None:
+def test_rule_discovery_rejects_candidate_action_inconsistent_with_review(
+    monkeypatch,
+) -> None:
     async def inconsistent(_system_prompt, _user_payload, *, role):
         return {
             "name": "bad candidate",

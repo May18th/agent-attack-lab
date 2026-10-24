@@ -11,17 +11,42 @@ def _example(topic: str, role: str, source_battle: str) -> dict:
     if role == "attacker":
         messages = [
             {"role": "system", "content": "system"},
-            {"role": "user", "content": json.dumps({"topic": topic, "difficulty": "low"})},
-            {"role": "assistant", "content": json.dumps({"samples": [{"content": "synthetic", "severity": "low", "type": "defect"}]} )},
+            {
+                "role": "user",
+                "content": json.dumps({"topic": topic, "difficulty": "low"}),
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "samples": [
+                            {
+                                "content": "synthetic",
+                                "severity": "low",
+                                "type": "defect",
+                            }
+                        ]
+                    }
+                ),
+            },
         ]
     else:
         content = "synthetic evidence"
         messages = [
             {"role": "system", "content": "system"},
-            {"role": "user", "content": json.dumps({"sample": {"topic": topic, "content": content}})},
-            {"role": "assistant", "content": json.dumps({"findings": [{"evidence": "evidence"}]})},
+            {
+                "role": "user",
+                "content": json.dumps({"sample": {"topic": topic, "content": content}}),
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps({"findings": [{"evidence": "evidence"}]}),
+            },
         ]
-    return {"messages": messages, "metadata": {"topic": topic, "sourceBattle": source_battle}}
+    return {
+        "messages": messages,
+        "metadata": {"topic": topic, "sourceBattle": source_battle},
+    }
 
 
 def test_clean_removes_noise_and_preserves_valid_topics(tmp_path: Path) -> None:
@@ -32,7 +57,10 @@ def test_clean_removes_noise_and_preserves_valid_topics(tmp_path: Path) -> None:
         _example("验收A-支付接口越权", "attacker", "battle-a"),
         _example("通用安全测试", "attacker", "battle-b"),
     ]
-    (source / "attacker_train.jsonl").write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+    (source / "attacker_train.jsonl").write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
 
     report = clean(source, target)
 

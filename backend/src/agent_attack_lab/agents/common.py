@@ -12,7 +12,9 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
 
 from acps_sdk.aip import (
     Product,

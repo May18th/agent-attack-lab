@@ -7,7 +7,12 @@ def test_event_contains_frontend_replay_contract_metadata() -> None:
         1,
         "round.completed",
         "completed",
-        {"round": 2, "layerIndex": 1, "classification": "blocked", "scores": {"defender": 80}},
+        {
+            "round": 2,
+            "layerIndex": 1,
+            "classification": "blocked",
+            "scores": {"defender": 80},
+        },
     )
     data = event["data"]
     assert data["stageId"] == "A6"

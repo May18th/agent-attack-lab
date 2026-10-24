@@ -34,14 +34,19 @@ def test_start_service_is_executable_in_git() -> None:
 def test_deploy_script_verifies_running_release_context() -> None:
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
-    assert 'unit_fragment_path=$(systemctl --user show "${services[0]}" -p FragmentPath --value)' in source
+    assert (
+        'unit_fragment_path=$(systemctl --user show "${services[0]}" -p FragmentPath --value)'
+        in source
+    )
     assert 'user_unit_dir=$(dirname "$unit_fragment_path")' in source
     assert 'path="$user_unit_dir/$service.d/production-release.conf"' in source
-    assert 'path="$user_unit_dir/$service.service.d/production-release.conf"' not in source
+    assert (
+        'path="$user_unit_dir/$service.service.d/production-release.conf"' not in source
+    )
     assert 'systemctl --user show "$service" -p MainPID --value' in source
     assert 'systemctl --user show "$service" -p FragmentPath -p DropInPaths' in source
     assert 'systemctl --user cat "$service"' in source
-    assert 'wait_for_active() {' in source
+    assert "wait_for_active() {" in source
     assert 'journalctl --user -u "$service" -n 50 --no-pager' in source
     assert 'readlink -f "/proc/$pid/cwd"' in source
     assert 'expected_pythonpath="$release_backend/src"' in source
@@ -50,12 +55,15 @@ def test_deploy_script_verifies_running_release_context() -> None:
 def test_deploy_script_supports_codeload_source_releases() -> None:
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
-    assert 'source_dir=${DEPLOY_SOURCE_DIR:-}' in source
-    assert 'source release has an unexpected commit' in source
+    assert "source_dir=${DEPLOY_SOURCE_DIR:-}" in source
+    assert "source release has an unexpected commit" in source
     assert 'cp -a "$source_dir"/. "$release_dir"/' in source
 
 
-@pytest.mark.skipif(posix_shell() is None, reason="POSIX bash is required (set WUTONG_ENABLE_SHELL_TESTS=1 on Windows)")
+@pytest.mark.skipif(
+    posix_shell() is None,
+    reason="POSIX bash is required (set WUTONG_ENABLE_SHELL_TESTS=1 on Windows)",
+)
 def test_start_service_prefers_release_src_on_pythonpath(tmp_path: Path) -> None:
     backend = tmp_path / "backend"
     scripts = backend / "scripts"
@@ -68,7 +76,7 @@ def test_start_service_prefers_release_src_on_pythonpath(tmp_path: Path) -> None
     (scripts / SCRIPT.name).chmod(0o755)
     python_bin.write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%s' \"${PYTHONPATH:-}\" > \"$PYTHONPATH_CAPTURE\"\n",
+        'printf \'%s\' "${PYTHONPATH:-}" > "$PYTHONPATH_CAPTURE"\n',
         encoding="utf-8",
     )
     python_bin.chmod(0o755)

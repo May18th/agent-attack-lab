@@ -15,7 +15,10 @@ evidence 必须逐字来自 sampleContent 且逐字来自 reviewedEvidence；act
 
 def _model_enabled() -> bool:
     return os.getenv("AGENT_RULE_DISCOVERY_LLM_ENABLED", "0").strip().lower() in {
-        "1", "true", "yes", "on"
+        "1",
+        "true",
+        "yes",
+        "on",
     }
 
 
@@ -84,7 +87,9 @@ async def suggest_rule_candidate(payload: dict[str, Any]) -> dict[str, Any]:
                 "reviewDecision": "true_positive",
                 "sampleContent": _string(payload.get("sampleContent"), limit=8000),
                 "reviewedEvidence": _string(payload.get("reviewedEvidence"), limit=500),
-                "reviewerRationale": _string(payload.get("reviewerRationale"), limit=800),
+                "reviewerRationale": _string(
+                    payload.get("reviewerRationale"), limit=800
+                ),
             },
             role="rule",
         )
