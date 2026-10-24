@@ -68,6 +68,9 @@ def test_cancel_running_battle_is_explicit_and_idempotent() -> None:
 
     assert response.status_code == 202
     assert response.json()["status"] == "failed"
+    cancelled_score = service._battle_store.get_score("battle-cancel-contract")
+    assert cancelled_score is not None
+    assert cancelled_score["version"]
     assert client.post("/battles/battle-cancel-contract/cancel").status_code == 409
     audit = client.get("/battles/battle-cancel-contract/audit")
     assert audit.status_code == 200
@@ -106,3 +109,6 @@ def test_battle_timeout_is_persisted_as_failed(monkeypatch) -> None:
 
     assert service._battle_store.get("battle-timeout-contract")["status"] == "failed"
     assert service._battle_store.list_events("battle-timeout-contract")[-1]["type"] == "battle.timeout"
+    timeout_score = service._battle_store.get_score("battle-timeout-contract")
+    assert timeout_score is not None
+    assert timeout_score["version"]

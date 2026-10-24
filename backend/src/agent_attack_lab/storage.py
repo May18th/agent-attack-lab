@@ -151,6 +151,62 @@ class BattleStore:
             self._initialize_sqlite_schema()
         else:
             self._initialize_postgres_schema()
+        self._ensure_battle_code_schema()
+        self._initialize_admin_library_schema()
+
+    def _ensure_battle_code_schema(self) -> None:
+        """Add optional battle metadata columns and the human-readable code sequence."""
+        if self._is_postgres:
+            self._connection.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS code VARCHAR(16) NULL")
+            self._connection.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS rounds INTEGER NOT NULL DEFAULT 3")
+            self._connection.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS verdict VARCHAR(32) NULL")
+            self._connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_battles_code ON battles (code)")
+            self._connection.execute("CREATE TABLE IF NOT EXISTS battle_code_sequence (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)")
+            self._connection.execute("INSERT INTO battle_code_sequence (id, value) VALUES (1, 0) ON CONFLICT (id) DO NOTHING")
+        elif self._is_mysql:
+            columns = self._connection.execute("SHOW COLUMNS FROM battles LIKE 'code'").fetchall()
+            if not columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN code VARCHAR(16) NULL")
+            columns = {row["Field"] for row in self._connection.execute("SHOW COLUMNS FROM battles").fetchall()}
+            if "rounds" not in columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN rounds INTEGER NOT NULL DEFAULT 3")
+            if "verdict" not in columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN verdict VARCHAR(32) NULL")
+            indexes = {row["Key_name"] for row in self._connection.execute("SHOW INDEX FROM battles").fetchall()}
+            if "uq_battles_code" not in indexes:
+                self._connection.execute("CREATE UNIQUE INDEX uq_battles_code ON battles (code)")
+            self._connection.execute("CREATE TABLE IF NOT EXISTS battle_code_sequence (id INTEGER PRIMARY KEY, value INTEGER NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            self._connection.execute("INSERT IGNORE INTO battle_code_sequence (id, value) VALUES (1, 0)")
+        else:
+            columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(battles)").fetchall()}
+            if "code" not in columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN code VARCHAR(16) NULL")
+            if "rounds" not in columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN rounds INTEGER NOT NULL DEFAULT 3")
+            if "verdict" not in columns:
+                self._connection.execute("ALTER TABLE battles ADD COLUMN verdict VARCHAR(32) NULL")
+            self._connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_battles_code ON battles (code)")
+            self._connection.execute("CREATE TABLE IF NOT EXISTS battle_code_sequence (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)")
+            self._connection.execute("INSERT OR IGNORE INTO battle_code_sequence (id, value) VALUES (1, 0)")
+        self._connection.commit()
+
+    def next_battle_code(self) -> str:
+        """Atomically allocate the next human-readable battle code."""
+        with self._lock:
+            if self._is_postgres:
+                row = self._connection.execute(
+                    "UPDATE battle_code_sequence SET value = value + 1 WHERE id = 1 RETURNING value"
+                ).fetchone()
+            elif self._is_mysql:
+                with self._engine.begin() as connection:
+                    connection.exec_driver_sql("UPDATE battle_code_sequence SET value = value + 1 WHERE id = 1")
+                    result = connection.exec_driver_sql("SELECT value FROM battle_code_sequence WHERE id = %s", (1,))
+                    row = result.mappings().first()
+            else:
+                self._connection.execute("UPDATE battle_code_sequence SET value = value + 1 WHERE id = 1")
+                row = self._connection.execute("SELECT value FROM battle_code_sequence WHERE id = " + self._placeholder, (1,)).fetchone()
+            self._connection.commit()
+        return f"A-{int(row['value']):03d}"
 
     def _initialize_sqlite_schema(self) -> None:
         self._connection.execute(
@@ -160,6 +216,7 @@ class BattleStore:
             """
             CREATE TABLE IF NOT EXISTS battles (
                 id TEXT PRIMARY KEY,
+                code VARCHAR(16) UNIQUE NULL,
                 difficulty TEXT NOT NULL,
                 topic TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -250,6 +307,67 @@ class BattleStore:
         )
         self._connection.commit()
 
+    def _initialize_admin_library_schema(self) -> None:
+        """Create administrator-managed sample and rule libraries."""
+        if self._is_postgres:
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_samples (
+                    id VARCHAR(191) PRIMARY KEY, topic TEXT NOT NULL, content TEXT NOT NULL,
+                    source TEXT NOT NULL, use_count INTEGER NOT NULL DEFAULT 0,
+                    created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_rules (
+                    id VARCHAR(191) PRIMARY KEY, name TEXT NOT NULL, condition TEXT NOT NULL,
+                    action TEXT NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0,
+                    created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL
+                )
+                """
+            )
+        elif self._is_mysql:
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_samples (
+                    id VARCHAR(191) PRIMARY KEY, topic TEXT NOT NULL, content TEXT NOT NULL,
+                    source TEXT NOT NULL, use_count INTEGER NOT NULL DEFAULT 0,
+                    created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_rules (
+                    id VARCHAR(191) PRIMARY KEY, name TEXT NOT NULL, `condition` TEXT NOT NULL,
+                    action TEXT NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0,
+                    created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+        else:
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_samples (
+                    id TEXT PRIMARY KEY, topic TEXT NOT NULL, content TEXT NOT NULL,
+                    source TEXT NOT NULL, use_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                )
+                """
+            )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_rules (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, condition TEXT NOT NULL,
+                    action TEXT NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                )
+                """
+            )
+        self._connection.commit()
+
     def _initialize_postgres_schema(self) -> None:
         self._connection.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
@@ -258,6 +376,7 @@ class BattleStore:
             """
             CREATE TABLE IF NOT EXISTS battles (
                 id TEXT PRIMARY KEY,
+                code VARCHAR(16) UNIQUE NULL,
                 difficulty TEXT NOT NULL,
                 topic TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -356,6 +475,7 @@ class BattleStore:
             """
             CREATE TABLE IF NOT EXISTS battles (
                 id VARCHAR(191) PRIMARY KEY,
+                code VARCHAR(16) UNIQUE NULL,
                 difficulty VARCHAR(16) NOT NULL,
                 topic TEXT NOT NULL,
                 status VARCHAR(32) NOT NULL,
@@ -455,41 +575,44 @@ class BattleStore:
     def save(self, record: dict[str, Any]) -> None:
         with self._lock:
             values = (
-                record["id"], record["difficulty"], record["topic"], record["status"],
+                record["id"], record.get("code"), record["difficulty"], record["topic"], record["status"],
                 record["createdAt"], json.dumps(record["attackerOut"], ensure_ascii=False),
-                json.dumps(record["defenderOut"], ensure_ascii=False),
+                json.dumps(record["defenderOut"], ensure_ascii=False), record.get("rounds", 3), record.get("verdict"),
             )
             if self._is_postgres:
                 self._connection.execute(
                     """
                     INSERT INTO battles
-                    (id, difficulty, topic, status, created_at, attacker_out, defender_out)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (id, code, difficulty, topic, status, created_at, attacker_out, defender_out, rounds, verdict)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET difficulty=EXCLUDED.difficulty,
                     topic=EXCLUDED.topic, status=EXCLUDED.status, created_at=EXCLUDED.created_at,
-                    attacker_out=EXCLUDED.attacker_out, defender_out=EXCLUDED.defender_out
+                    attacker_out=EXCLUDED.attacker_out, defender_out=EXCLUDED.defender_out, code=EXCLUDED.code,
+                    rounds=EXCLUDED.rounds, verdict=EXCLUDED.verdict
                     """, values,
                 )
             elif self._is_mysql:
                 self._connection.execute(
                     """
                     INSERT INTO battles
-                    (id, difficulty, topic, status, created_at, attacker_out, defender_out)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (id, code, difficulty, topic, status, created_at, attacker_out, defender_out, rounds, verdict)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE difficulty=VALUES(difficulty), topic=VALUES(topic),
                     status=VALUES(status), created_at=VALUES(created_at),
-                    attacker_out=VALUES(attacker_out), defender_out=VALUES(defender_out)
+                    attacker_out=VALUES(attacker_out), defender_out=VALUES(defender_out), code=VALUES(code),
+                    rounds=VALUES(rounds), verdict=VALUES(verdict)
                     """, values,
                 )
             else:
                 self._connection.execute(
                     """
                     INSERT INTO battles
-                    (id, difficulty, topic, status, created_at, attacker_out, defender_out)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, code, difficulty, topic, status, created_at, attacker_out, defender_out, rounds, verdict)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET difficulty=excluded.difficulty,
                     topic=excluded.topic, status=excluded.status, created_at=excluded.created_at,
-                    attacker_out=excluded.attacker_out, defender_out=excluded.defender_out
+                    attacker_out=excluded.attacker_out, defender_out=excluded.defender_out, code=excluded.code,
+                    rounds=excluded.rounds, verdict=excluded.verdict
                     """, values,
                 )
             self._connection.commit()
@@ -698,6 +821,136 @@ class BattleStore:
             row = self._connection.execute("SELECT COUNT(*) AS total FROM audit_events").fetchone()
         return int(row["total"])
 
+    @staticmethod
+    def _library_record(row: dict[str, Any], kind: str) -> dict[str, Any]:
+        if kind == "sample":
+            return {
+                "id": row["id"], "topic": row["topic"], "content": row["content"],
+                "source": row["source"], "useCount": int(row["use_count"]),
+                "createdAt": row["created_at"], "updatedAt": row["updated_at"],
+            }
+        return {
+            "id": row["id"], "name": row["name"], "condition": row["condition"],
+            "action": row["action"], "hitCount": int(row["hit_count"]),
+            "createdAt": row["created_at"], "updatedAt": row["updated_at"],
+        }
+
+    def save_admin_sample(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).isoformat()
+        record = {
+            "id": str(payload.get("id") or f"sample-{os.urandom(8).hex()}"),
+            "topic": str(payload.get("topic") or "通用安全测试").strip(),
+            "content": str(payload.get("content") or "").strip(),
+            "source": str(payload.get("source") or "管理员录入").strip(),
+            "use_count": int(payload.get("useCount") or 0), "created_at": now, "updated_at": now,
+        }
+        with self._lock:
+            values = tuple(record.values())
+            if self._is_postgres:
+                sql = "INSERT INTO admin_samples (id, topic, content, source, use_count, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s)"
+            elif self._is_mysql:
+                sql = "INSERT INTO admin_samples (id, topic, content, source, use_count, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s)"
+            else:
+                sql = "INSERT INTO admin_samples (id, topic, content, source, use_count, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
+            self._connection.execute(sql, values)
+            self._connection.commit()
+        return self._library_record(record, "sample")
+
+    def list_admin_samples(self, query: str | None = None, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if query:
+            operator = "ILIKE" if self._is_postgres else "LIKE"
+            clauses.append(f"(topic {operator} {self._placeholder} OR content {operator} {self._placeholder} OR source {operator} {self._placeholder})")
+            value = f"%{query}%"
+            params.extend([value, value, value])
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        params.extend([limit, offset])
+        with self._lock:
+            rows = self._connection.execute("SELECT * FROM admin_samples" + where + " ORDER BY created_at DESC LIMIT " + self._placeholder + " OFFSET " + self._placeholder, params).fetchall()
+        return [self._library_record(row, "sample") for row in rows]
+
+    def update_admin_sample(self, sample_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
+        allowed = {"topic": "topic", "content": "content", "source": "source", "useCount": "use_count"}
+        updates = [(column, changes[key]) for key, column in allowed.items() if key in changes]
+        if not updates:
+            rows = self.list_admin_samples()
+            return next((item for item in rows if item["id"] == sample_id), None)
+        updates.append(("updated_at", datetime.now(timezone.utc).isoformat()))
+        assignments = ", ".join(f"{column} = {self._placeholder}" for column, _ in updates)
+        params = [value for _, value in updates] + [sample_id]
+        with self._lock:
+            self._connection.execute("UPDATE admin_samples SET " + assignments + " WHERE id = " + self._placeholder, params)
+            self._connection.commit()
+        return next((item for item in self.list_admin_samples() if item["id"] == sample_id), None)
+
+    def delete_admin_sample(self, sample_id: str) -> bool:
+        with self._lock:
+            result = self._connection.execute("DELETE FROM admin_samples WHERE id = " + self._placeholder, (sample_id,))
+            self._connection.commit()
+        return bool(getattr(result, "rowcount", 1))
+
+    def save_admin_rule(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).isoformat()
+        record = {
+            "id": str(payload.get("id") or f"rule-{os.urandom(8).hex()}"),
+            "name": str(payload.get("name") or "未命名规则").strip(),
+            "condition": str(payload.get("condition") or "").strip(),
+            "action": str(payload.get("action") or "拦截").strip(),
+            "hit_count": int(payload.get("hitCount") or 0), "created_at": now, "updated_at": now,
+        }
+        with self._lock:
+            values = tuple(record.values())
+            sql = "INSERT INTO admin_rules (id, name, condition, action, hit_count, created_at, updated_at) VALUES (" + ",".join([self._placeholder] * 7) + ")"
+            self._connection.execute(sql, values)
+            self._connection.commit()
+        return self._library_record(record, "rule")
+
+    def list_admin_rules(self, query: str | None = None, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if query:
+            operator = "ILIKE" if self._is_postgres else "LIKE"
+            clauses.append(f"(name {operator} {self._placeholder} OR condition {operator} {self._placeholder})")
+            params.extend([f"%{query}%", f"%{query}%"])
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        params.extend([limit, offset])
+        with self._lock:
+            rows = self._connection.execute("SELECT * FROM admin_rules" + where + " ORDER BY created_at DESC LIMIT " + self._placeholder + " OFFSET " + self._placeholder, params).fetchall()
+        return [self._library_record(row, "rule") for row in rows]
+
+    def update_admin_rule(self, rule_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
+        allowed = {"name": "name", "condition": "condition", "action": "action", "hitCount": "hit_count"}
+        updates = [(column, changes[key]) for key, column in allowed.items() if key in changes]
+        if not updates:
+            return next((item for item in self.list_admin_rules() if item["id"] == rule_id), None)
+        updates.append(("updated_at", datetime.now(timezone.utc).isoformat()))
+        assignments = ", ".join(f"{column} = {self._placeholder}" for column, _ in updates)
+        params = [value for _, value in updates] + [rule_id]
+        with self._lock:
+            self._connection.execute("UPDATE admin_rules SET " + assignments + " WHERE id = " + self._placeholder, params)
+            self._connection.commit()
+        return next((item for item in self.list_admin_rules() if item["id"] == rule_id), None)
+
+    def delete_admin_rule(self, rule_id: str) -> bool:
+        with self._lock:
+            result = self._connection.execute("DELETE FROM admin_rules WHERE id = " + self._placeholder, (rule_id,))
+            self._connection.commit()
+        return bool(getattr(result, "rowcount", 1))
+
+    def list_audit_events_filtered(self, *, from_time: str | None = None, to_time: str | None = None, actor_role: str | None = None, event_type: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for column, value, operator in (("created_at", from_time, ">="), ("created_at", to_time, "<="), ("actor_role", actor_role, "="), ("event_type", event_type, "=")):
+            if value:
+                clauses.append(f"{column} {operator} {self._placeholder}")
+                params.append(value)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        params.append(limit)
+        with self._lock:
+            rows = self._connection.execute("SELECT * FROM audit_events" + where + " ORDER BY created_at DESC, id DESC LIMIT " + self._placeholder, params).fetchall()
+        return [{"id": row["id"], "eventType": row["event_type"], "requestId": row["request_id"], "battleId": row["battle_id"], "correlationId": row["correlation_id"], "actorRole": row["actor_role"], "status": row["status"], "createdAt": row["created_at"], "data": json.loads(row["data"])} for row in rows]
+
     def get_idempotency(self, key: str) -> dict[str, str] | None:
         with self._lock:
             row = self._connection.execute(
@@ -773,9 +1026,9 @@ class BattleStore:
             clauses.append("status = ?")
             params.append(status)
         if query:
-            clauses.append("(topic LIKE ? OR id LIKE ?)")
+            clauses.append("(topic LIKE ? OR id LIKE ? OR code LIKE ?)")
             pattern = f"%{query}%"
-            params.extend([pattern, pattern])
+            params.extend([pattern, pattern, pattern])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.extend([limit, offset])
         placeholder = self._placeholder
@@ -907,9 +1160,9 @@ class BattleStore:
             clauses.append("status = ?")
             params.append(status)
         if query:
-            clauses.append("(topic LIKE ? OR id LIKE ?)")
+            clauses.append("(topic LIKE ? OR id LIKE ? OR code LIKE ?)")
             pattern = f"%{query}%"
-            params.extend([pattern, pattern])
+            params.extend([pattern, pattern, pattern])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         placeholder = self._placeholder
         where = where.replace("?", placeholder)
@@ -957,6 +1210,10 @@ class BattleStore:
             "averageAgentCallLatencyMs": 0,
             "attackerCallCount": 0,
             "defenderCallCount": 0,
+            "attackGenerated": 0,
+            "defenderDetected": 0,
+            "fixesSuggested": 0,
+            "strategyChecks": 0,
         }
         call_latencies: list[int] = []
         for event in call_events:
@@ -999,44 +1256,64 @@ class BattleStore:
             samples = attacker_out.get("samples", [])
             defenses = json.loads(row["defender_out"])
             summary["sampleCount"] += len(samples)
+            summary["attackGenerated"] += len(samples)
             summary["simulationSampleCount"] += sum(
                 sample.get("simulation") is True for sample in samples
             )
             summary["ruleHitCount"] += sum(
                 len(defense.get("caught", [])) for defense in defenses
             )
+            summary["defenderDetected"] += sum(len(defense.get("caught", [])) for defense in defenses)
             summary["riskCount"] += sum(
                 len(defense.get("risks", [])) for defense in defenses
             )
             summary["recommendationCount"] += sum(
                 len(defense.get("fixed", [])) for defense in defenses
             )
+            summary["fixesSuggested"] += sum(len(defense.get("fixed", [])) for defense in defenses)
+            # TODO 战略检测口径：当前以 round.completed 事件数量作为策略检测次数。
             if attacker_out.get("agentSource") == "acp" or str(attacker_out.get("agentSource", "")).startswith("acp-") or any(
                 defense.get("agentSource") == "acp" or str(defense.get("agentSource", "")).startswith("acp-") for defense in defenses
             ):
                 summary["acpCallBattles"] += 1
+        with self._lock:
+            round_row = self._connection.execute(
+                "SELECT COUNT(*) AS total FROM battle_events WHERE event_type = " + self._placeholder,
+                ("round.completed",),
+            ).fetchone()
+        summary["strategyChecks"] = int(round_row["total"])
         return summary
 
     def close(self) -> None:
-        if self._closed:
-            return
-        if self._pool is not None:
-            self._pool.close()
-            self._pool = None
-        if self._engine is not None:
-            self._engine.dispose()
-            self._engine = None
-        if not self._is_postgres and not self._is_mysql:
-            self._connection.close()
-        self._closed = True
+        # Serialize shutdown with every store operation. Background workers run
+        # queries through asyncio.to_thread(); closing the SQLite connection
+        # while one of them is mid-execute causes a native access violation on
+        # Windows, which no Python-level guard can catch. Holding the same lock
+        # used by the operations guarantees we only close when the connection
+        # is idle.
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._pool is not None:
+                self._pool.close()
+                self._pool = None
+            if self._engine is not None:
+                self._engine.dispose()
+                self._engine = None
+            if not self._is_postgres and not self._is_mysql:
+                self._connection.close()
 
     @staticmethod
     def _to_record(row: Any) -> dict[str, Any]:
         return {
             "id": row["id"],
+            "code": row["code"] if "code" in row.keys() else None,
             "difficulty": row["difficulty"],
             "topic": row["topic"],
             "status": row["status"],
+            "rounds": row["rounds"] if "rounds" in row.keys() else 3,
+            "verdict": row["verdict"] if "verdict" in row.keys() else None,
             "createdAt": row["created_at"],
             "attackerOut": json.loads(row["attacker_out"]),
             "defenderOut": json.loads(row["defender_out"]),

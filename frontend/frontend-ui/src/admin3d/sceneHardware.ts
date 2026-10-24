@@ -1,7 +1,7 @@
 import {
-  BufferGeometry, CatmullRomCurve3, Color, ConeGeometry, CylinderGeometry, EdgesGeometry, ExtrudeGeometry,
+  BoxGeometry, BufferGeometry, CatmullRomCurve3, Color, ConeGeometry, CylinderGeometry, EdgesGeometry, ExtrudeGeometry,
   Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Mesh, MeshPhysicalMaterial,
-  MeshStandardMaterial, Object3D, OctahedronGeometry, Shape, TorusGeometry, TubeGeometry, Vector3,
+  MeshStandardMaterial, Object3D, OctahedronGeometry, Shape, SphereGeometry, TorusGeometry, TubeGeometry, Vector3,
 } from 'three'
 import type { AdminSceneEdge, AdminSceneNode } from './sceneModel'
 
@@ -82,13 +82,28 @@ export function createTopologyNode(node: AdminSceneNode): Group {
   })
 
   let shell: Mesh
-  if (node.kind === 'defender' || node.kind === 'defender-asset') {
+  if (node.kind === 'defender') {
     shell = addMesh(group, `carrier:${node.id}`, shieldGeometry(), outer, [0, 0.69, -0.08])
+    for (let index = 0; index < 3; index += 1) {
+      addMesh(group, `fortress-tower:${index}`, new BoxGeometry(0.2, 0.5 + (index === 1 ? 0.18 : 0), 0.36), outer.clone(), [(index - 1) * 0.39, 0.3, -0.05])
+    }
+  } else if (node.kind === 'defender-asset') {
+    shell = addMesh(group, `carrier:${node.id}`, new BoxGeometry(0.3, 0.72, 0.38), outer, [0, 0.47, 0])
+    for (let index = 0; index < 3; index += 1) {
+      const rack = addMesh(group, `server-rack:${index}`, new BoxGeometry(0.22, 0.66, 0.36), outer.clone(), [(index - 1) * 0.28, 0.42, 0.12])
+      rack.userData.clusterIndex = index
+    }
   } else if (node.kind === 'scheduler') {
     shell = addMesh(group, `carrier:${node.id}`, new CylinderGeometry(0.38, 0.42, 0.5, 6, 1), outer, [0, 0.66, 0])
-  } else if (node.kind === 'attacker' || node.kind === 'attack-jump') {
+  } else if (node.kind === 'attacker') {
     shell = addMesh(group, `carrier:${node.id}`, new OctahedronGeometry(0.56, 0), outer, [0, 0.68, 0])
     shell.rotation.set(0.18, Math.PI / 4, 0.12)
+    const weapon = addMesh(group, 'attack-weapon', new ConeGeometry(0.15, 0.56, 6), coreMaterial, [0.56, 0.72, 0])
+    weapon.rotation.z = -Math.PI / 2
+  } else if (node.kind === 'attack-jump') {
+    shell = addMesh(group, `carrier:${node.id}`, new CylinderGeometry(0.34, 0.4, 0.55, 8), outer, [0, 0.62, 0])
+    addMesh(group, 'relay-antenna', new CylinderGeometry(0.025, 0.025, 0.42, 6), coreMaterial, [0, 1.1, 0])
+    addMesh(group, 'relay-signal', new SphereGeometry(0.085, 8, 6), coreMaterial, [0, 1.34, 0])
   } else if (node.kind === 'timeline-event') {
     shell = addMesh(group, `event-signal:${node.id}`, new CylinderGeometry(0.14, 0.14, 0.12, 6), outer, [0, 0.18, 0])
   } else {
@@ -156,6 +171,24 @@ export function createTopologyNode(node: AdminSceneNode): Group {
   group.userData.visualState = 'normal'
   group.userData.nodeMaterials = { metal, outer, core: coreMaterial }
   return group
+}
+
+export function setFiberProgressState(group: Group, state: 'completed' | 'current' | 'pending'): void {
+  group.userData.pathProgress = state
+  const { jacket, inner, arrow } = group.userData.materials as { jacket: MeshPhysicalMaterial; inner: MeshPhysicalMaterial; arrow: MeshPhysicalMaterial }
+  const color = state === 'current' ? '#ff5058' : state === 'completed' ? '#36434b' : '#71808b'
+  jacket.color.set(color)
+  jacket.emissive.set(color)
+  jacket.opacity = state === 'current' ? 0.48 : state === 'completed' ? 0.11 : 0.2
+  jacket.emissiveIntensity = state === 'current' ? 1.15 : 0.12
+  inner.color.set(color)
+  inner.emissive.set(color)
+  inner.opacity = state === 'current' ? 1 : state === 'completed' ? 0.12 : 0.24
+  inner.emissiveIntensity = state === 'current' ? 2.2 : 0.16
+  arrow.color.set(color)
+  arrow.emissive.set(color)
+  arrow.opacity = state === 'current' ? 1 : state === 'completed' ? 0.16 : 0.3
+  arrow.emissiveIntensity = state === 'current' ? 2 : 0.2
 }
 
 export type SceneFiber = { group: Group; curve: CatmullRomCurve3 }
@@ -291,8 +324,9 @@ export function statusFromNode(node: AdminSceneNode): 'normal' | 'scanning' | 'c
 export function isExplicitlyCompromised(node: AdminSceneNode): boolean {
   const source = node.source as unknown as Record<string, unknown> | null
   const data = source?.data && typeof source.data === 'object' ? source.data as Record<string, unknown> : source
-  const value = `${String(data?.eventType ?? data?.type ?? '')} ${String(data?.description ?? data?.event ?? '')}`
-  return /compromis|breach|exploited|被攻陷|入侵成功/i.test(value)
+  const type = String(source?.eventType ?? source?.type ?? data?.eventType ?? data?.type ?? '')
+  const value = `${type} ${String(data?.description ?? data?.event ?? '')}`
+  return data?.targetVerified === true && /compromis|breach|exploited|被攻陷|入侵成功/i.test(value)
 }
 
 export function nodeDisplayIp(node: AdminSceneNode): string {
@@ -319,6 +353,7 @@ export function nodeTypeLabel(node: AdminSceneNode): string {
   if (node.kind === 'defender-asset') return '防守内网资产'
   if (node.kind === 'battle') return '战局节点'
   if (node.kind === 'external-case') return '案例信号'
+  if (node.kind === 'security-barrier') return '分层防护屏障'
   return '事件信号'
 }
 

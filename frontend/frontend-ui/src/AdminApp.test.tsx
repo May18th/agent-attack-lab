@@ -6,19 +6,41 @@ import { ApiError } from './api'
 
 vi.mock('./adminApi', async () => {
   const actual = await vi.importActual<typeof import('./adminApi')>('./adminApi')
-  return { ...actual, getAdminSession: vi.fn(), logoutAdminSession: vi.fn(), getAdminDashboardSummary: vi.fn(), getAdminMetrics: vi.fn(), listAdminBattles: vi.fn(), getAdminExternalCases: vi.fn(), getAdminBattleDetail: vi.fn(), getAdminBattleScore: vi.fn(), getAdminBattleEvents: vi.fn(), getAdminBattleAudit: vi.fn(), getAdminReport: vi.fn(), retryAdminBattle: vi.fn(), cancelAdminBattle: vi.fn(), deleteAdminBattle: vi.fn() }
+  return { ...actual, getAdminSession: vi.fn(), loginAdminSession: vi.fn(), logoutAdminSession: vi.fn(), getAdminDashboardSummary: vi.fn(), getAdminMetrics: vi.fn(), listAdminBattles: vi.fn(), getAdminExternalCases: vi.fn(), getAdminBattleDetail: vi.fn(), getAdminBattleScore: vi.fn(), getAdminBattleEvents: vi.fn(), getAdminBattleAudit: vi.fn(), getAdminReport: vi.fn(), retryAdminBattle: vi.fn(), cancelAdminBattle: vi.fn(), deleteAdminBattle: vi.fn(), listAdminSamples: vi.fn(), createAdminSample: vi.fn(), updateAdminSample: vi.fn(), deleteAdminSample: vi.fn(), listAdminRules: vi.fn(), createAdminRule: vi.fn(), updateAdminRule: vi.fn(), deleteAdminRule: vi.fn(), listAdminAuditLogs: vi.fn() }
 })
 
 const battle = { id: 'b-1', difficulty: 'high' as const, topic: '测试战局', status: 'failed', createdAt: '2026-10-18T00:00:00Z', attackerOut: { samples: [] }, defenderOut: [] }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks() })
 
 describe('AdminApp', () => {
-  it('shows Cloudflare Access guidance when unauthenticated', async () => {
+  it('shows password authentication when unauthenticated', async () => {
     vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: false })
     render(<AdminApp />)
-    expect((await screen.findAllByText(/Cloudflare Access/)).length).toBeGreaterThan(0)
+    expect(await screen.findByRole('heading', { name: '管理员后台 - 管理员认证' })).toBeInTheDocument()
+    expect(screen.getByText('使用后台管理密码建立安全会话。')).toBeInTheDocument()
+    expect(screen.getByLabelText('后台管理密码')).toHaveAttribute('type', 'password')
+    expect(screen.getByRole('img', { name: '全息网络拓扑' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: '安全登录' })).toBeInTheDocument()
+    expect(document.querySelector('.holo-server')).toBeInTheDocument()
+    expect(document.querySelector('.holo-key')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /重新检查/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '退出会话' })).not.toBeInTheDocument()
+  })
+
+  it('logs in with the administrator password and shows the workspace', async () => {
+    vi.mocked(adminApi.getAdminSession)
+      .mockResolvedValueOnce({ enabled: true, authenticated: false })
+      .mockResolvedValueOnce({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.loginAdminSession).mockResolvedValue()
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    render(<AdminApp />)
+    fireEvent.change(await screen.findByLabelText('后台管理密码'), { target: { value: 'secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '登录管理后台' }))
+    await waitFor(() => expect(adminApi.loginAdminSession).toHaveBeenCalledWith('secret'))
+    expect(await screen.findByText('运行指标')).toBeInTheDocument()
   })
 
   it('rechecks the session when the access button is clicked', async () => {
@@ -51,6 +73,46 @@ describe('AdminApp', () => {
     await waitFor(() => expect(adminApi.listAdminBattles).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'needle' })))
   })
 
+  it('manages samples from the sample library tab with a modal editor', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.listAdminSamples).mockResolvedValue({ items: [{ id: 's-1', topic: '提示注入', content: '忽略规则', source: '测试', useCount: 2, createdAt: '', updatedAt: '' }], total: 1 })
+    vi.mocked(adminApi.createAdminSample).mockResolvedValue({ id: 's-2', topic: '越狱', content: '新样本', source: '管理员', useCount: 0, createdAt: '', updatedAt: '' })
+    render(<AdminApp />)
+    await screen.findByText('运行指标')
+    fireEvent.click(screen.getByRole('tab', { name: '样本库' }))
+    expect(await screen.findByText('提示注入')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '新增样本' }))
+    expect(screen.getByRole('dialog', { name: '新增样本' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('样本主题'), { target: { value: '越狱' } })
+    fireEvent.change(screen.getByLabelText('样本内容'), { target: { value: '新样本' } })
+    fireEvent.change(screen.getByLabelText('样本来源'), { target: { value: '管理员' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存样本' }))
+    await waitFor(() => expect(adminApi.createAdminSample).toHaveBeenCalledWith({ topic: '越狱', content: '新样本', source: '管理员' }))
+  })
+
+  it('searches rules and exposes audit log tab', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.listAdminRules).mockResolvedValue({ items: [{ id: 'r-1', name: '越权拦截', condition: 'role != admin', action: '拦截', hitCount: 1, createdAt: '', updatedAt: '' }], total: 1 })
+    vi.mocked(adminApi.listAdminAuditLogs).mockResolvedValue([{ id: 'a-1', eventType: 'rule.updated', status: 'success', createdAt: '2026-01-01', data: {} }])
+    render(<AdminApp />)
+    await screen.findByText('运行指标')
+    fireEvent.click(screen.getByRole('tab', { name: '规则库' }))
+    expect(await screen.findByText('越权拦截')).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索规则' }), { target: { value: '越权' } })
+    fireEvent.click(screen.getByRole('button', { name: '查询规则' }))
+    await waitFor(() => expect(adminApi.listAdminRules).toHaveBeenLastCalledWith('越权'))
+    fireEvent.click(screen.getByRole('tab', { name: '审计日志' }))
+    expect(await screen.findByText('rule.updated')).toBeInTheDocument()
+  })
+
   it('allows access when browser authentication is disabled', async () => {
     vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: false, authenticated: false })
     vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
@@ -59,7 +121,7 @@ describe('AdminApp', () => {
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     render(<AdminApp />)
     expect(await screen.findByText('运行指标')).toBeInTheDocument()
-    expect(screen.queryByText(/Cloudflare Access/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '管理员后台 - 管理员认证' })).not.toBeInTheDocument()
   })
 
   it('confirms and retries failed battles', async () => {

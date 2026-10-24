@@ -98,6 +98,93 @@ def test_dashboard_is_chinese_html() -> None:
     assert "OpenAPI JSON" not in response.text
 
 
+def test_attack_rounds_default_bounds_and_unique_deterministic_expansion() -> None:
+    assert AttackRequest().rounds == 3
+    assert len(attack(AttackRequest(topic="SQL 注入", rounds=1))["samples"]) == 1
+    expanded = attack(AttackRequest(topic="SQL 注入", rounds=5))["samples"]
+    assert len(expanded) == 5
+    assert len({sample["testCaseId"] for sample in expanded}) == 5
+    assert [sample["round"] for sample in expanded] == [1, 2, 3, 4, 5]
+    assert len(attack(AttackRequest(topic="SQL 注入", rounds=10))["samples"]) == 10
+    for invalid in (0, 11):
+        try:
+            AttackRequest(rounds=invalid)
+        except Exception as error:
+            assert "rounds" in str(error)
+        else:
+            raise AssertionError(f"rounds={invalid} must be rejected")
+
+
+def test_battle_round_count_is_persisted_and_validated_by_api(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "round-count.sqlite3"))
+    record = {
+        "id": "round-persisted", "code": "A-001", "difficulty": "low", "topic": "测试",
+        "status": "pending", "rounds": 5, "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": []}, "defenderOut": [],
+    }
+    store.save(record)
+    assert store.get("round-persisted")["rounds"] == 5
+    assert service.BattleRequest().rounds == 3
+    for invalid in (0, 11):
+        response = client.post("/battles", json={"rounds": invalid})
+        assert response.status_code == 422
+    store.close()
+
+
+def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_verification(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "created-rounds.sqlite3"))
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "configured_verify_mode", lambda: "off")
+    response = client.post("/battles", json={"topic": "提示注入", "difficulty": "low", "rounds": 5})
+    assert response.status_code == 201
+    battle = response.json()
+    assert battle["rounds"] == 5
+    assert battle["verdict"] == "undetermined"
+    assert len(battle["attackerOut"]["samples"]) == 5
+    assert len({sample["testCaseId"] for sample in battle["attackerOut"]["samples"]}) == 5
+    assert client.get(f"/battles/{battle['id']}/rounds").json()["total"] == 5
+    assert not any(event["type"] == "attack.compromised" for event in store.list_events(battle["id"]))
+    store.close()
+
+
+def test_simulated_compromise_is_persisted_and_explicitly_labeled(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "simulated-verdict.sqlite3"))
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "configured_verify_mode", lambda: "simulated")
+    response = client.post("/battles", json={"topic": "general", "difficulty": "high", "rounds": 3})
+    battle = response.json()
+    events = store.list_events(battle["id"])
+    compromised = [event for event in events if event["type"] == "attack.compromised"]
+    assert battle["verdict"] == "attacker_won"
+    assert compromised
+    assert all(event["data"]["simulated"] is True for event in compromised)
+    round_results = client.get(f"/battles/{battle['id']}/rounds").json()["rounds"]
+    assert any(item.get("compromised", {}).get("simulated") is True for item in round_results)
+    store.close()
+
+
+def test_recovery_and_retry_reuse_persisted_round_count(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "round-recovery.sqlite3"))
+    store.save({
+        "id": "round-recovery", "code": "A-010", "difficulty": "low", "topic": "通用安全测试",
+        "status": "pending", "rounds": 7, "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": []}, "defenderOut": [],
+    })
+    captured: list[int] = []
+
+    async def fake_run(_battle_id: str, payload: service.BattleRequest) -> None:
+        captured.append(payload.rounds)
+
+    monkeypatch.setattr(service, "_run_battle_with_tracking", fake_run)
+    async def recover() -> None:
+        async with service._lifespan(service.app):
+            await asyncio.sleep(0)
+    monkeypatch.setattr(service, "_battle_store", store)
+    asyncio.run(recover())
+    assert captured == [7]
+    store.close()
+
+
 def test_dashboard_prefills_query_params_and_escapes_topic() -> None:
     for difficulty in ("low", "mid", "high"):
         response = client.get(
@@ -173,6 +260,23 @@ def test_attack_by_difficulty() -> None:
     ]
     assert "ORD-2048" in body["samples"][0]["content"]
     assert "customer_id" in body["samples"][2]["content"]
+
+
+def test_file_upload_and_webhook_topics_produce_distinct_attack_and_defense_evidence() -> None:
+    file_sample = attack(AttackRequest(difficulty="low", topic="文件上传安全"))["samples"][0]
+    webhook_sample = attack(AttackRequest(difficulty="low", topic="Webhook 回调安全"))["samples"][0]
+
+    assert file_sample["testCaseId"] == "FILE-UPLOAD-PATH-001"
+    assert "../" in file_sample["content"]
+    assert "文件路径" in file_sample["scenario"]
+    assert webhook_sample["testCaseId"] == "WEBHOOK-SSRF-001"
+    assert "127.0.0.1" in webhook_sample["content"]
+    assert "回调目标" in webhook_sample["scenario"]
+
+    file_findings = defend(DefendRequest(sample=file_sample))["caught"]
+    webhook_findings = defend(DefendRequest(sample=webhook_sample))["caught"]
+    assert [item["ruleId"] for item in file_findings] == ["LAB-FILE-PATH-001"]
+    assert [item["ruleId"] for item in webhook_findings] == ["LAB-WEBHOOK-SSRF-001"]
 
 
 def test_attack_rejects_unknown_difficulty() -> None:
@@ -268,6 +372,9 @@ def test_sync_acp_failure_is_persisted_and_returns_battle_id(monkeypatch) -> Non
     assert failure["data"]["dispatchMode"] == "acp"
     assert failure["data"]["errorType"] == "ACPAgentError"
     assert "remote detail" not in response.text
+    failed_score = service._battle_store.get_score(battle_id)
+    assert failed_score is not None
+    assert failed_score["version"]
 
 
 def test_background_battle_persists_staged_events() -> None:
@@ -307,6 +414,9 @@ def test_background_battle_persists_staged_events() -> None:
     assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     assert all(event["battleId"] == battle_id for event in events)
     assert all(event["status"] for event in events)
+    completed_score = service._battle_store.get_score(battle_id)
+    assert completed_score is not None
+    assert completed_score["version"]
 
 
 def test_external_case_route_is_read_only_and_keeps_provenance(tmp_path, monkeypatch) -> None:
@@ -444,6 +554,64 @@ def test_battle_events_report_filters_and_leaderboard() -> None:
     assert client.get("/metrics").json()["events"] >= len(events.json())
 
 
+def test_score_route_does_not_compute_or_expose_live_score_without_persisted_snapshot(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "score-no-snapshot.sqlite3"))
+    store.save({
+        "id": "battle-no-score-snapshot",
+        "difficulty": "mid",
+        "topic": "无评分快照",
+        "status": "completed",
+        "rounds": 1,
+        "createdAt": "2026-10-19T00:00:00+00:00",
+        "attackerOut": {"samples": [{"type": "sample"}]},
+        "defenderOut": [],
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "score_battle", lambda *_args: {
+        "version": "test-live-score",
+        "status": "scored",
+        "attacker": {"status": "scored", "score": 99, "maxScore": 100, "categories": []},
+        "defender": {"status": "scored", "score": 99, "maxScore": 100, "categories": []},
+    })
+
+    response = client.get("/battles/battle-no-score-snapshot/score")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "insufficient_evidence"
+    assert body["attacker"]["score"] is None
+    assert body["defender"]["score"] is None
+    assert store.get_score("battle-no-score-snapshot") is None
+
+
+def test_markdown_report_does_not_compute_or_expose_live_score_without_persisted_snapshot(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "markdown-no-snapshot.sqlite3"))
+    store.save({
+        "id": "battle-markdown-no-score-snapshot",
+        "difficulty": "mid",
+        "topic": "无评分快照战报",
+        "status": "completed",
+        "createdAt": "2026-10-19T00:00:00+00:00",
+        "attackerOut": {"samples": [{"type": "sample"}]},
+        "defenderOut": [],
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "score_battle", lambda *_args: {
+        "version": "test-live-score",
+        "status": "scored",
+        "attacker": {"status": "scored", "score": 99, "maxScore": 100, "categories": []},
+        "defender": {"status": "scored", "score": 99, "maxScore": 100, "categories": []},
+    })
+
+    response = client.get("/reports/battle-markdown-no-score-snapshot?format=markdown")
+
+    assert response.status_code == 200
+    assert "test-live-score" not in response.text
+    assert "99/100" not in response.text
+    assert "证据不足" in response.text
+    assert store.get_score("battle-markdown-no-score-snapshot") is None
+
+
 def test_battle_events_support_cursor_pagination_and_server_side_filters(monkeypatch, tmp_path) -> None:
     store = BattleStore(str(tmp_path / "replay-events.sqlite3"))
     store.save({
@@ -515,12 +683,15 @@ def test_battle_store_persists_records(tmp_path) -> None:
     database = tmp_path / "battles.sqlite3"
     record = {
         "id": "battle-persisted",
+        "code": None,
         "difficulty": "low",
         "topic": "持久化测试",
         "status": "completed",
         "createdAt": "2026-10-06T00:00:00+00:00",
         "attackerOut": {"samples": []},
         "defenderOut": [],
+        "rounds": 3,
+        "verdict": None,
     }
     first_store = BattleStore(str(database))
     first_store.save(record)
@@ -562,9 +733,46 @@ def test_battle_store_persists_and_clears_score_snapshots(tmp_path) -> None:
     })
     store.save_score("battle-score", score)
     assert store.get_score("battle-score") == score
-    assert store.list_scores(["battle-score", "missing"]) == {"battle-score": score}
+    updated_score = {**score, "status": "updated"}
+    store.save_score("battle-score", updated_score)
+    assert store.get_score("battle-score") == updated_score
+    assert store._connection.execute(
+        "SELECT COUNT(*) FROM battle_scores WHERE battle_id = ?", ("battle-score",)
+    ).fetchone()[0] == 1
+    assert store.list_scores(["battle-score", "missing"]) == {"battle-score": updated_score}
     store.delete("battle-score")
     assert store.get_score("battle-score") is None
+
+
+def test_battle_store_score_upsert_is_idempotent_across_supported_dialects() -> None:
+    class RecordingConnection:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def execute(self, statement, parameters=()):
+            self.calls.append((statement, parameters))
+
+        def commit(self) -> None:
+            return
+
+    score = {"version": "internal-agent-v2", "status": "scored"}
+    for is_postgres, is_mysql, expected_clause in (
+        (True, False, "ON CONFLICT (battle_id) DO UPDATE"),
+        (False, True, "ON DUPLICATE KEY UPDATE"),
+    ):
+        connection = RecordingConnection()
+        store = BattleStore.__new__(BattleStore)
+        store._is_postgres = is_postgres
+        store._is_mysql = is_mysql
+        store._connection = connection
+        store._lock = service.Lock()
+
+        store.save_score("battle-dialect", score)
+        store.save_score("battle-dialect", {**score, "status": "updated"})
+
+        assert len(connection.calls) == 2
+        assert all(expected_clause in statement for statement, _ in connection.calls)
+        assert all(parameters[0] == "battle-dialect" for _, parameters in connection.calls)
 
 
 def test_battle_store_event_cursor_and_batch_reads(tmp_path) -> None:
@@ -628,6 +836,10 @@ def test_battle_store_dashboard_summary_aggregates_saved_outputs(tmp_path) -> No
         "averageAgentCallLatencyMs": 0,
         "attackerCallCount": 0,
         "defenderCallCount": 0,
+        "attackGenerated": 2,
+        "defenderDetected": 1,
+        "fixesSuggested": 1,
+        "strategyChecks": 0,
     }
 
 
@@ -710,6 +922,10 @@ def test_dashboard_summary_uses_saved_battle_data(tmp_path, monkeypatch) -> None
         "averageAgentCallLatencyMs": 0,
         "attackerCallCount": 0,
         "defenderCallCount": 0,
+        "attackGenerated": 1,
+        "defenderDetected": 1,
+        "fixesSuggested": 0,
+        "strategyChecks": 0,
         "ruleLibraryCaseCount": 3,
         "owaspLlmRuleCount": 10,
     }
@@ -756,11 +972,13 @@ def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(tmp_path, m
     import sqlite3
 
     connection = sqlite3.connect(database)
-    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261018_0003"
+    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261024_0005"
     assert connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'battle_scores'"
     ).fetchone()[0] == "battle_scores"
     assert connection.execute("SELECT COUNT(*) FROM battles").fetchone()[0] == 0
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(battles)")}
+    assert {"rounds", "verdict"}.issubset(columns)
 
 
 def test_sqlite_store_handles_concurrent_writes(tmp_path) -> None:
@@ -1047,7 +1265,7 @@ def test_lifespan_resumes_interrupted_battle(tmp_path, monkeypatch) -> None:
 
     async def recover() -> None:
         async with service._lifespan(service.app):
-            for _ in range(40):
+            for _ in range(120):
                 record = service._battle_store.get(battle_id)
                 if record and record["status"] == "completed":
                     return
@@ -1099,8 +1317,102 @@ def test_lifespan_resumes_all_interrupted_battles_beyond_first_page(monkeypatch)
     assert len(resumed) == 205
 
 
+def test_lifespan_backfills_missing_terminal_scores_without_overwriting_existing(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "battle-score-backfill.sqlite3"))
+    legacy = {
+        "id": "battle-score-legacy",
+        "difficulty": "low",
+        "topic": "旧战局评分",
+        "status": "completed",
+        "createdAt": "2026-10-07T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    }
+    existing = {**legacy, "id": "battle-score-existing"}
+    store.save(legacy)
+    store.save(existing)
+    existing_score = {
+        "version": "historical-score-v1",
+        "status": "scored",
+        "attacker": {"score": 88},
+        "defender": {"score": 91},
+    }
+    store.save_score(existing["id"], existing_score)
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(store, "close", lambda: None)
+    monkeypatch.setattr(service._redis_cache, "close", lambda: None)
+
+    async def start_and_wait() -> None:
+        async with service._lifespan(service.app):
+            for _ in range(50):
+                if store.get_score(legacy["id"]) is not None:
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError("missing terminal score was not backfilled")
+
+    asyncio.run(start_and_wait())
+    assert store.get_score(existing["id"]) == existing_score
+    backfilled_score = store.get_score(legacy["id"])
+    assert backfilled_score is not None
+    assert service._backfill_missing_internal_scores(limit=10) == 0
+    assert store.get_score(existing["id"]) == existing_score
+    assert store.get_score(legacy["id"]) == backfilled_score
+    assert store._connection.execute(
+        "SELECT COUNT(*) FROM battle_scores WHERE battle_id = ?", (legacy["id"],)
+    ).fetchone()[0] == 1
+
+
 def test_unknown_battle_returns_404() -> None:
     assert client.get("/battles/battle-does-not-exist").status_code == 404
+
+
+def test_rounds_endpoint_aggregates_events_and_stats(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "rounds.sqlite3"))
+    store.save({
+        "id": "battle-rounds",
+        "code": "A-001",
+        "difficulty": "low",
+        "topic": "通用安全测试",
+        "status": "completed",
+        "rounds": 1,
+        "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": [{"type": "x", "content": "payload"}]},
+        "defenderOut": [{"caught": [{"reason": "命中"}], "risks": [], "fixed": [{"action": "修复"}] }],
+    })
+    for sequence, event_type, data in (
+        (1, "round.started", {"round": 1}),
+        (2, "attack.sample.generated", {"round": 1, "sample": {"content": "payload"}}),
+        (3, "round.completed", {"round": 1, "caught": [{"reason": "命中"}], "risks": [], "fixed": [{"action": "修复"}], "durationMs": 1600}),
+    ):
+        store.save_event({"id": f"round-event-{sequence}", "battleId": "battle-rounds", "sequence": sequence, "type": event_type, "status": "completed", "createdAt": f"2026-10-24T00:00:0{sequence}+00:00", "data": data})
+    monkeypatch.setattr(service, "_battle_store", store)
+    response = client.get("/battles/battle-rounds/rounds")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["rounds"][0]["durationMs"] == 1600
+    assert body["rounds"][0]["scores"]["attacker"] is None
+    assert body["stats"] == {"attackGenerated": 1, "defenderDetected": 1, "fixesSuggested": 1, "strategyChecks": 1}
+
+
+def test_admin_resource_crud_and_audit_filters() -> None:
+    sample = client.post("/admin/samples", json={"topic": "提示注入", "content": "ignore previous", "source": "测试"})
+    assert sample.status_code == 201
+    sample_id = sample.json()["id"]
+    assert client.get("/admin/samples", params={"q": "提示"}).json()[0]["id"] == sample_id
+    updated_sample = client.patch(f"/admin/samples/{sample_id}", json={"topic": "提示注入", "content": "updated", "source": "测试"})
+    assert updated_sample.status_code == 200
+    assert updated_sample.json()["content"] == "updated"
+    rule = client.post("/admin/rules", json={"name": "提示词保护", "condition": "ignore previous", "action": "拦截"})
+    assert rule.status_code == 201
+    rule_id = rule.json()["id"]
+    assert client.get("/admin/rules").json()[0]["id"] == rule_id
+    assert client.patch(f"/admin/rules/{rule_id}", json={"name": "提示词保护", "condition": "ignore previous", "action": "放行"}).json()["action"] == "放行"
+    logs = client.get("/admin/audit-logs", params={"operation": "admin.sample.created"})
+    assert logs.status_code == 200
+    assert logs.json()[0]["data"]["sampleId"] == sample_id
+    assert client.delete(f"/admin/samples/{sample_id}").status_code == 204
+    assert client.delete(f"/admin/rules/{rule_id}").status_code == 204
 
 
 def test_battle_audit_route_returns_read_only_integrity_report() -> None:

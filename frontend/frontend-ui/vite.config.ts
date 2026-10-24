@@ -10,5 +10,15 @@ export default defineConfig(() => ({
       '6586b7f3.r16.cpolar.top',
       '.trycloudflare.com',
     ],
+    proxy: {
+      '/__preview_api': {
+        target: 'https://preview-api.yuanyiagentzhandui.cn',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/__preview_api/, ''),
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => proxyReq.removeHeader('origin'))
+        },
+      },
+    },
   },
 }))

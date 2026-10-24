@@ -1,7 +1,11 @@
 import type { AdminBattle, AdminBattleEvent, AdminMetrics } from '../adminApi'
 import type { ExternalCase } from '../api'
+import type { AdminBattleScore } from '../adminApi'
 
-export type AdminSceneNodeKind = 'attacker' | 'defender' | 'scheduler' | 'battle' | 'external-case' | 'timeline-event' | 'attack-jump' | 'defender-asset'
+const SECURITY_BARRIER_LABELS = ['输入标准化清洗', '推理引导', '工具动作管控', '审计监测恢复']
+const SECURITY_BARRIER_COLORS = ['#00D4AA', '#9B59B6', '#F39C12', '#E74C3C']
+
+export type AdminSceneNodeKind = 'attacker' | 'defender' | 'scheduler' | 'battle' | 'external-case' | 'timeline-event' | 'attack-jump' | 'defender-asset' | 'security-barrier'
 export type AdminSceneActorRole = 'attacker' | 'defender' | 'system' | 'unknown'
 export type AdminSceneStatus = 'pending' | 'running' | 'completed' | 'failed' | 'unknown'
 export type AdminSceneNode = {
@@ -12,8 +16,11 @@ export type AdminSceneNode = {
   color: string
   position: [number, number, number]
   actorRole?: AdminSceneActorRole
+  barrierIndex?: number
   networkState?: 'normal' | 'compromised'
+  evidenceEvents?: AdminBattleEvent[]
   timestamp?: string
+  relatedCases?: ExternalCase[]
   source: AdminBattle | AdminBattleEvent | ExternalCase | AdminMetrics | null
 }
 export type AdminSceneEdge = {
@@ -28,6 +35,29 @@ export type AdminSceneModel = {
   nodes: AdminSceneNode[]
   edges: AdminSceneEdge[]
   statusColors: Record<AdminSceneStatus, string>
+  topic?: string
+  difficulty?: string
+  sampleCount?: number
+  score?: AdminBattleScore | null
+}
+
+export type SecurityPathTheme = {
+  name: string
+  focusedLayers: number[]
+}
+
+export const SECURITY_PATH_THEMES: Array<{ match: RegExp; theme: SecurityPathTheme }> = [
+  { match: /提示注入|工单注入|工单备注注入|越狱诱导|偏见注入/i, theme: { name: '输入诱导类攻击', focusedLayers: [1, 2] } },
+  { match: /上下文投毒/i, theme: { name: '上下文投毒', focusedLayers: [1, 2] } },
+  { match: /sql\s*注入|数据窃取/i, theme: { name: 'SQL 注入 / 数据窃取', focusedLayers: [1, 3] } },
+  { match: /权限校验|权限提升|越权测试|越权/i, theme: { name: '权限校验 / 越权测试', focusedLayers: [2, 3] } },
+  { match: /工具调用滥用|工具滥用/i, theme: { name: '工具调用滥用', focusedLayers: [2, 3] } },
+  { match: /通用安全测试/i, theme: { name: '通用安全测试', focusedLayers: [1, 2, 3, 4] } },
+]
+
+export function securityPathTheme(topic?: string): SecurityPathTheme {
+  const value = String(topic ?? '')
+  return SECURITY_PATH_THEMES.find((entry) => entry.match.test(value))?.theme ?? { name: value || '通用攻防路径', focusedLayers: [1, 2, 3, 4] }
 }
 
 export type ReplayEventCueKind = 'probe' | 'attack' | 'exploit' | 'compromised' | 'session' | 'defense-request' | 'defense' | 'other'
@@ -42,7 +72,10 @@ export function replayEventCue(event: Pick<AdminBattleEvent, 'eventType' | 'type
     const caught = Array.isArray(event.data?.caught) ? event.data.caught.length : 0
     return { kind: 'defense', label: caught ? `防守命中 ${caught} 项` : '防守未命中', color: '#57e8c7' }
   }
-  if (/compromis|breach|被攻陷|沦陷|入侵成功/.test(value)) return { kind: 'compromised', label: '节点沦陷', color: '#ff4e64' }
+  if (/compromis|breach|被攻陷|沦陷|入侵成功/.test(value)) {
+    if (event.data?.targetVerified === true) return { kind: 'compromised', label: '已验证沦陷', color: '#ff435f' }
+    return { kind: 'exploit', label: '穿透未验证', color: '#F39C12' }
+  }
   if (/fail|失败|error|异常/.test(value)) return { kind: 'other', label: '战局失败', color: '#ff4e64' }
   if (/exploit|漏洞利用|利用成功/.test(value)) return { kind: 'exploit', label: '漏洞利用', color: '#ff815e' }
   if (/probe|scan|port.scan|端口扫描|扫描探测/.test(value)) return { kind: 'probe', label: '扫描探测', color: '#00dfdc' }
@@ -232,9 +265,10 @@ function eventRound(event: AdminBattleEvent): number | undefined {
 }
 
 export function buildAdminSceneModel(input: BuildAdminSceneModelInput): AdminSceneModel {
+  const relatedCases = input.externalCases.slice(0, 8)
   const roleNodes: AdminSceneNode[] = [
-    { id: 'role:attacker', kind: 'attacker', label: '攻击方', status: 'unknown', color: '#ed8b42', position: [-3, 0, 0], source: null },
-    { id: 'role:defender', kind: 'defender', label: '防守方', status: 'unknown', color: '#55a7d1', position: [3, 0, 0], source: null },
+    { id: 'role:attacker', kind: 'attacker', label: '攻击方', status: 'unknown', color: '#ed8b42', position: [-3, 0, 0], relatedCases, source: null },
+    { id: 'role:defender', kind: 'defender', label: '防守方', status: 'unknown', color: '#55a7d1', position: [3, 0, 0], relatedCases, source: null },
     { id: 'role:scheduler', kind: 'scheduler', label: '调度中心', status: 'unknown', color: '#b6a3d8', position: [0, 0.5, -2], source: input.metrics },
   ]
   const capacity = MAX_NODES - roleNodes.length
@@ -252,16 +286,7 @@ export function buildAdminSceneModel(input: BuildAdminSceneModelInput): AdminSce
       timestamp: battle.createdAt, source: battle,
     }
   })
-  const caseCapacity = Math.max(0, capacity - Math.min(battleNodes.length, capacity))
-  const caseNodes: AdminSceneNode[] = [...input.externalCases]
-    .sort((a, b) => timestamp(b.dateAdded) - timestamp(a.dateAdded))
-    .slice(0, caseCapacity)
-    .map((item, index) => ({
-      id: `case:${item.externalId}`, kind: 'external-case', label: item.externalId, status: 'unknown', color: statusColors.unknown,
-      position: [Math.cos(index * 2.4) * (4.2 + index * 0.05), 0, Math.sin(index * 2.4) * (4.2 + index * 0.05)],
-      timestamp: item.dateAdded, source: item,
-    }))
-  const nodes = [...roleNodes, ...battleNodes.slice(0, capacity), ...caseNodes].slice(0, MAX_NODES)
+  const nodes = [...roleNodes, ...battleNodes.slice(0, capacity)].slice(0, MAX_NODES)
   const edges: AdminSceneEdge[] = []
   for (const node of nodes) {
     if (node.kind !== 'battle' || edges.length >= MAX_EDGES) continue
@@ -274,20 +299,33 @@ export function buildAdminSceneModel(input: BuildAdminSceneModelInput): AdminSce
   return { nodes, edges: edges.slice(0, MAX_EDGES), statusColors }
 }
 
-export function buildBattleTimelineSceneModel(battle: AdminBattle, events: AdminBattleEvent[]): AdminSceneModel {
+export function buildBattleTimelineSceneModel(battle: AdminBattle, events: AdminBattleEvent[], externalCases: ExternalCase[] = [], score?: AdminBattleScore | null): AdminSceneModel {
+  const relatedCases = externalCases.slice(0, 8)
   const orderedEvents = events
     .map((event, index) => ({ event, index }))
     .sort((left, right) => (left.event.sequence ?? Number.MAX_SAFE_INTEGER) - (right.event.sequence ?? Number.MAX_SAFE_INTEGER) || left.index - right.index)
   const roleNodes: AdminSceneNode[] = [
-    { id: 'role:attacker', kind: 'attacker', label: '攻击方', actorRole: 'attacker', status: 'unknown', color: '#63b4ff', position: [-4.9, 0.15, 0], source: null },
-    { id: 'role:defender', kind: 'defender', label: '防守方', actorRole: 'defender', status: 'unknown', color: '#57e8c7', position: [4.9, 0.15, 0], source: null },
+    { id: 'role:attacker', kind: 'attacker', label: '攻击方', actorRole: 'attacker', status: 'unknown', color: '#63b4ff', position: [-12.5, 0.15, 0], relatedCases, source: battle },
+    { id: 'role:defender', kind: 'defender', label: '防守方', actorRole: 'defender', status: 'unknown', color: '#57e8c7', position: [12.5, 0.15, 0], relatedCases, source: battle },
   ]
+  const defenseCompleted = orderedEvents.find(({ event }) => eventType(event) === 'defense.completed')?.event ?? null
+  const roundEvidence = orderedEvents
+    .map(({ event }) => event)
+    .filter((event) => eventType(event) === 'round.completed')
+  const assetStatus: AdminSceneStatus = defenseCompleted ? 'completed' : sceneStatus(battle.status)
+  const compromisedAssetIds = new Set(orderedEvents.flatMap(({ event }) => {
+    if (eventType(event) !== 'attack.compromised' || event.data?.targetVerified !== true) return []
+    const targetAssetId = event.data.targetAssetId
+    return [targetAssetId === 'network:asset:1' || targetAssetId === 'network:asset:2' || targetAssetId === 'network:asset:3'
+      ? targetAssetId
+      : 'network:asset:3']
+  }))
   const networkNodes: AdminSceneNode[] = [
-    { id: 'network:jump:1', kind: 'attack-jump', label: '攻击跳板', networkState: 'compromised', actorRole: 'attacker', status: 'completed', color: '#63b4ff', position: [-2.8, 0.15, -1.4], source: null },
-    { id: 'network:jump:2', kind: 'attack-jump', label: '攻击跳板', networkState: 'compromised', actorRole: 'attacker', status: 'completed', color: '#63b4ff', position: [-2.8, 0.15, 1.4], source: null },
-    { id: 'network:asset:1', kind: 'defender-asset', label: '防守内网', networkState: 'normal', actorRole: 'defender', status: 'unknown', color: '#57e8c7', position: [2.8, 0.15, -1.6], source: null },
-    { id: 'network:asset:2', kind: 'defender-asset', label: '防守内网', networkState: 'normal', actorRole: 'defender', status: 'unknown', color: '#57e8c7', position: [2.8, 0.15, 0], source: null },
-    { id: 'network:asset:3', kind: 'defender-asset', label: '防守内网', networkState: 'normal', actorRole: 'defender', status: 'unknown', color: '#57e8c7', position: [2.8, 0.15, 1.6], source: null },
+    { id: 'network:jump:1', kind: 'attack-jump', label: '攻击跳板', networkState: 'compromised', actorRole: 'attacker', status: 'completed', color: '#63b4ff', position: [-7.8, 0.15, -1.2], relatedCases, source: battle },
+    { id: 'network:jump:2', kind: 'attack-jump', label: '攻击跳板', networkState: 'compromised', actorRole: 'attacker', status: 'completed', color: '#63b4ff', position: [-5.2, 0.15, 1.2], relatedCases, source: battle },
+    { id: 'network:asset:1', kind: 'defender-asset', label: '防守内网', networkState: compromisedAssetIds.has('network:asset:1') ? 'compromised' : 'normal', actorRole: 'defender', status: assetStatus, color: '#57e8c7', position: [6.6, 0.15, -2.4], relatedCases, source: battle },
+    { id: 'network:asset:2', kind: 'defender-asset', label: '防守内网', networkState: compromisedAssetIds.has('network:asset:2') ? 'compromised' : 'normal', actorRole: 'defender', status: assetStatus, color: '#57e8c7', position: [6.6, 0.15, 0], relatedCases, source: battle },
+    { id: 'network:asset:3', kind: 'defender-asset', label: '防守内网', networkState: compromisedAssetIds.has('network:asset:3') ? 'compromised' : 'normal', actorRole: 'defender', status: assetStatus, color: '#57e8c7', position: [6.6, 0.15, 2.4], relatedCases, source: battle },
   ]
   const eventNodes: AdminSceneNode[] = orderedEvents.map(({ event, index }, order) => {
     const sequence = event.sequence ?? index + 1
@@ -303,12 +341,27 @@ export function buildBattleTimelineSceneModel(battle: AdminBattle, events: Admin
       timestamp: event.timestamp, source: event,
     }
   })
-  const nodes = [...roleNodes, ...networkNodes, ...eventNodes]
+  const barrierNodes: AdminSceneNode[] = SECURITY_BARRIER_LABELS.map((label, index) => ({
+    id: `security:barrier:${index + 1}`,
+    kind: 'security-barrier',
+    label,
+    status: 'unknown',
+    color: SECURITY_BARRIER_COLORS[index],
+    barrierIndex: index + 1,
+    position: [-3.6 + index * 2.4, 0.15, 0],
+    relatedCases,
+    evidenceEvents: roundEvidence,
+    source: defenseCompleted,
+  }))
+  const nodes = [...roleNodes, ...networkNodes, ...barrierNodes, ...eventNodes]
   const edges: AdminSceneEdge[] = []
   const networkPaths: Array<[string, string]> = [
-    ['role:attacker', 'network:jump:1'], ['role:attacker', 'network:jump:2'],
-    ['network:jump:1', 'network:asset:1'], ['network:jump:1', 'network:asset:2'],
-    ['network:jump:2', 'network:asset:2'], ['network:jump:2', 'network:asset:3'],
+    ['role:attacker', 'network:jump:1'],
+    ['network:jump:2', 'security:barrier:1'],
+    ['security:barrier:1', 'security:barrier:2'],
+    ['security:barrier:2', 'security:barrier:3'],
+    ['security:barrier:3', 'security:barrier:4'],
+    ['security:barrier:4', 'network:asset:1'], ['security:barrier:4', 'network:asset:2'], ['security:barrier:4', 'network:asset:3'],
     ['network:asset:1', 'role:defender'], ['network:asset:2', 'role:defender'], ['network:asset:3', 'role:defender'],
   ]
   edges.push(...networkPaths.map(([from, to], index) => ({
@@ -403,5 +456,8 @@ export function buildBattleTimelineSceneModel(battle: AdminBattle, events: Admin
       (eventOrder.get(left.from) ?? 0) - (eventOrder.get(right.from) ?? 0)
       || (eventOrder.get(left.to) ?? 0) - (eventOrder.get(right.to) ?? 0)),
   ]
-  return { nodes, edges: orderedEdges, statusColors }
+  const attackCompleted = orderedEvents.find((item) => eventType(item.event) === 'attack.completed')?.event
+  const rawSampleCount = attackCompleted?.data?.sampleCount
+  const sampleCount = typeof rawSampleCount === 'number' && Number.isFinite(rawSampleCount) ? Math.max(0, Math.floor(rawSampleCount)) : undefined
+  return { nodes, edges: orderedEdges, statusColors, topic: battle.topic, difficulty: battle.difficulty, sampleCount, score }
 }

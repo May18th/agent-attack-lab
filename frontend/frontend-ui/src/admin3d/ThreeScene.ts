@@ -1,7 +1,7 @@
 import {
-  ACESFilmicToneMapping, AmbientLight, BufferGeometry, Color, CylinderGeometry, Float32BufferAttribute,
+  ACESFilmicToneMapping, AmbientLight, BufferGeometry, CatmullRomCurve3, Color, Float32BufferAttribute,
   FogExp2, GridHelper, Group, HemisphereLight, Mesh, MeshPhysicalMaterial, Object3D,
-  PerspectiveCamera, PointLight, Points, PointsMaterial, Raycaster, Scene, SphereGeometry,
+  PerspectiveCamera, PointLight, Points, PointsMaterial, Raycaster, Scene,
   Vector2, Vector3, WebGLRenderer,
 } from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
@@ -9,15 +9,32 @@ import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
-import { replayEventCue, type AdminSceneModel, type AdminSceneNode } from './sceneModel'
-import { createFiberLink, createTopologyNode, disposeSceneObject, isExplicitlyCompromised, nodeDisplayIp, nodeStatusLabel, nodeTypeLabel, setFiberState, setTopologyNodeState, statusFromNode } from './sceneHardware'
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js'
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
+import type { Pass } from 'three/addons/postprocessing/Pass.js'
+import { replayEventCue, securityPathTheme, type AdminSceneModel, type AdminSceneNode } from './sceneModel'
+import { createFiberLink, createTopologyNode, disposeSceneObject, isExplicitlyCompromised, nodeDisplayIp, nodeStatusLabel, nodeTypeLabel, setFiberProgressState, setFiberState, setTopologyNodeState, statusFromNode } from './sceneHardware'
+import { attackRouteFiberIds, createSecurityRoute, routeProgressAtPoint, routeProgressBoundaries, selectEventFiberRoute } from './NetworkLayout'
+import { EventCuePlayer, eventStatusBadges, eventTargetRole, updateStatusBadge } from './SceneEvents'
+import { applySecurityTheme, BarrierFeedbackPlayer, clearBarrierFeedback, createSecurityBarriers, type SecurityBarriers } from './BarrierRenderer'
+import { PacketPlayer } from './PacketPlayer'
+import type { AdminBattleScore } from '../adminApi'
 
 const EVENT_ANIMATION_DURATION_MS = 2500
-
 export function getReplayBloomProfile(denseScene: boolean): { strength: number; radius: number; threshold: number } {
   return denseScene
     ? { strength: 0.24, radius: 0.22, threshold: 0.34 }
     : { strength: 0.4, radius: 0.32, threshold: 0.34 }
+}
+
+export function getReplayPostprocessingPasses(scene: Scene, camera: PerspectiveCamera, width: number, height: number, denseScene: boolean): Pass[] {
+  const profile = getReplayBloomProfile(denseScene)
+  return [
+    new RenderPass(scene, camera),
+    new UnrealBloomPass(new Vector2(width, height), profile.strength, profile.radius, profile.threshold),
+    new SMAAPass(),
+    new OutputPass(),
+  ]
 }
 
 export class WebGLUnavailableError extends Error {
@@ -28,6 +45,12 @@ export class WebGLUnavailableError extends Error {
 export type ThreeSceneOptions = {
   onSelectNode?: (node: AdminSceneNode) => void
   rendererFactory?: () => WebGLRenderer
+}
+
+function attackTargetAssetId(data: Record<string, unknown>, compromised: boolean): string {
+  const targetAssetId = data.targetAssetId
+  if (targetAssetId === 'network:asset:1' || targetAssetId === 'network:asset:2' || targetAssetId === 'network:asset:3') return targetAssetId
+  return compromised ? 'network:asset:3' : 'network:asset:1'
 }
 
 function createStarField(): Points {
@@ -46,30 +69,6 @@ function createStarField(): Points {
   return points
 }
 
-function updateStatusBadge(element: HTMLElement, state: 'normal' | 'probing' | 'attacked' | 'compromised' | 'controlled', label: string): void {
-  const namespace = 'http://www.w3.org/2000/svg'
-  const svg = document.createElementNS(namespace, 'svg')
-  svg.setAttribute('viewBox', '0 0 16 16')
-  svg.setAttribute('width', '9')
-  svg.setAttribute('height', '9')
-  svg.setAttribute('aria-hidden', 'true')
-  svg.classList.add('admin3d-status-icon')
-  const add = (tag: 'circle' | 'path', attributes: Record<string, string>) => {
-    const shape = document.createElementNS(namespace, tag)
-    Object.entries(attributes).forEach(([key, value]) => shape.setAttribute(key, value))
-    svg.appendChild(shape)
-  }
-  if (state === 'normal') add('circle', { cx: '7', cy: '7', r: '4.5' })
-  else if (state === 'controlled' || state === 'compromised') add('path', { d: 'm4 4 8 8 M12 4l-8 8' })
-  else if (state === 'probing') {
-    add('circle', { cx: '6.5', cy: '6.5', r: '4' })
-    add('path', { d: 'M9.5 9.5 14 14' })
-  } else if (state === 'attacked') add('path', { d: 'M8 2 14 13H2L8 2Z M8 6v3 M8 11v.2' })
-  element.className = `admin3d-node-status is-${state}`
-  element.setAttribute('aria-label', label)
-  element.replaceChildren(svg)
-}
-
 export class ThreeScene {
   private renderer?: WebGLRenderer
   private composer?: EffectComposer
@@ -82,8 +81,10 @@ export class ThreeScene {
   private model?: AdminSceneModel
   private activeNodeId?: string
   private playbackMarker?: Group
+  private packetPlayer?: PacketPlayer
   private playbackTarget?: Vector3
   private playbackPath?: ReturnType<typeof createFiberLink>['curve']
+  private playbackRoute?: CatmullRomCurve3
   private playbackProgress = 0
   private playbackReversed = false
   private playbackStartedAt = 0
@@ -91,10 +92,7 @@ export class ThreeScene {
   private packetUnits: Group[] = []
   private playbackFrame = 0
   private pulseFrame = 0
-  private eventCueFrame = 0
   private impactFrame = 0
-  private eventCueRemaining = 0
-  private eventCueLastFrame = 0
   private playbackPaused = true
   private ambientFrame = 0
   private lastAmbientRenderAt = 0
@@ -103,20 +101,38 @@ export class ThreeScene {
   private fiberCurves = new Map<string, ReturnType<typeof createFiberLink>['curve']>()
   private targetFiberId?: string
   private labels: CSS2DObject[] = []
-  private eventCueLabel?: CSS2DObject
+  private readonly eventCue = new EventCuePlayer(() => this.render())
   private selectedDeviceLabel?: CSS2DObject
   private statusBadges = new Map<string, CSS2DObject>()
+  private securityBarriers = new Map<number, Group>()
+  private securityBarrierLabels = new Map<number, CSS2DObject>()
+  private securityBarrierStats = new Map<number, CSS2DObject>()
+  private barrierCollection: SecurityBarriers = { groups: this.securityBarriers, labels: this.securityBarrierLabels, stats: this.securityBarrierStats }
+  private readonly barrierFeedback = new BarrierFeedbackPlayer(() => this.render())
+  private focusedFiberIds = new Set<string>()
+  private activeAttackRouteIds: string[] = []
+  private activeAttackRouteBoundaries: number[] = []
+  private playbackOutcome?: { status: 'intercepted' | 'penetrated' | 'compromised'; barrierIndex: number; intercepted?: number; total?: number; targetAssetId: string; triggerProgress: number }
+  private barrierFeedbackTriggered = false
+  private securityTheme = securityPathTheme()
+  private nodeQuery = ''
   private readonly raycaster = new Raycaster()
   private readonly pointer = new Vector2()
+  private onSelectNode?: (node: AdminSceneNode) => void
   private onClick?: (event: MouseEvent) => void
+  private viewLockedNodeId?: string
+  private onContextMenu?: (event: MouseEvent) => void
+  private onLabelClickRoot?: HTMLElement
   private onResize?: () => void
   private generation = 0
   private denseScene = false
+  private defaultCameraDistance = 8.8
 
   mount(container: HTMLElement, model: AdminSceneModel, options: ThreeSceneOptions = {}): void {
     this.dispose()
     this.container = container
     this.model = model
+    this.onSelectNode = options.onSelectNode
     try {
       this.renderer = options.rendererFactory ? options.rendererFactory() : new WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
     } catch {
@@ -137,6 +153,12 @@ export class ThreeScene {
     this.labelRenderer.setSize(width, height)
     this.labelRenderer.domElement.className = 'admin3d-label-layer'
     this.labelRenderer.domElement.setAttribute('aria-hidden', 'true')
+    // CSS2D labels sit above the WebGL canvas. Delegate from the renderer root so
+    // clicks on nested text nodes (and labels recreated during update()) cannot be lost.
+    this.onLabelClickRoot = this.labelRenderer.domElement
+    this.onLabelClickRoot.addEventListener('click', this.onLabelClick, true)
+    this.onContextMenu = (event) => this.handleContextMenu(event)
+    this.onLabelClickRoot.addEventListener('contextmenu', this.onContextMenu, true)
     container.appendChild(this.labelRenderer.domElement)
 
     this.scene = new Scene()
@@ -159,17 +181,24 @@ export class ThreeScene {
     gridMaterials.forEach((material) => { material.transparent = true; material.opacity = 0.25; material.depthWrite = false })
     this.scene.add(grid)
 
-    this.playbackMarker = this.createEnergyPacket()
+    this.packetPlayer = new PacketPlayer()
+    this.playbackMarker = this.packetPlayer.marker
+    this.packetUnits = this.packetPlayer.units
     this.scene.add(this.playbackMarker)
 
     this.camera = new PerspectiveCamera(42, width / height, 0.1, 160)
-    this.camera.position.set(0, 5, 8.8)
+    const xPositions = model.nodes.map((node) => node.position[0])
+    const sceneSpan = xPositions.length ? Math.max(...xPositions) - Math.min(...xPositions) : 0
+    const aspect = width / Math.max(height, 1)
+    this.defaultCameraDistance = Math.min(68, Math.max(8.8, sceneSpan / (2 * Math.tan((42 * Math.PI / 180) / 2) * Math.max(aspect, 0.5)) * 1.12))
+    const cameraElevation = 34 * Math.PI / 180
+    this.camera.position.set(0, 0.1 + this.defaultCameraDistance * Math.sin(cameraElevation), this.defaultCameraDistance * Math.cos(cameraElevation))
     this.controls = new OrbitControls(this.camera, this.renderer.domElement)
     this.controls.target.set(0, 0.1, 0)
     this.controls.enableDamping = true
     this.controls.dampingFactor = 0.065
     this.controls.minDistance = 3.5
-    this.controls.maxDistance = 38
+    this.controls.maxDistance = 70
     this.controls.maxPolarAngle = Math.PI * 0.48
     this.controls.update()
     this.controls.addEventListener('change', this.render)
@@ -180,6 +209,7 @@ export class ThreeScene {
     window.addEventListener('resize', this.onResize)
     this.onClick = (event) => this.select(event, options.onSelectNode)
     this.renderer.domElement.addEventListener('click', this.onClick)
+    this.renderer.domElement.addEventListener('contextmenu', this.onContextMenu)
     this.startAmbientBreathing()
     this.render()
   }
@@ -191,21 +221,30 @@ export class ThreeScene {
       this.scene?.remove(group)
       disposeSceneObject(group)
     })
+    this.securityBarriers.forEach((group) => {
+      this.scene?.remove(group)
+      disposeSceneObject(group)
+    })
     this.fiberGroups.forEach((group) => {
       this.scene?.remove(group)
       disposeSceneObject(group)
     })
     this.hardwareGroups.clear()
+    this.securityBarriers.clear()
     this.fiberGroups.clear()
     this.fiberCurves.clear()
     this.targetFiberId = undefined
-    if (this.eventCueLabel) { this.scene.remove(this.eventCueLabel); this.eventCueLabel.element.remove() }
+    this.eventCue.clear(this.scene)
     if (this.selectedDeviceLabel) { this.scene.remove(this.selectedDeviceLabel); this.selectedDeviceLabel.element.remove() }
     this.statusBadges.forEach((badge) => { this.scene?.remove(badge); badge.element.remove() })
     this.statusBadges.clear()
     this.labels.forEach((label) => { this.scene?.remove(label); label.element.remove() })
     this.labels = []
     this.selectedDeviceLabel = undefined
+    this.securityBarrierLabels.forEach((label) => { this.scene?.remove(label); label.element.remove() })
+    this.securityBarrierLabels.clear()
+    this.securityBarrierStats.forEach((label) => { this.scene?.remove(label); label.element.remove() })
+    this.securityBarrierStats.clear()
 
     this.denseScene = model.nodes.length > 24
     if (this.bloomPass) {
@@ -215,21 +254,31 @@ export class ThreeScene {
       this.bloomPass.threshold = profile.threshold
     }
     for (const node of model.nodes) {
-      if (node.kind === 'timeline-event') continue
+      if (node.kind === 'timeline-event' || node.kind === 'security-barrier') continue
       const group = createTopologyNode(node)
       setTopologyNodeState(group, statusFromNode(node))
       this.hardwareGroups.set(node.id, group)
       this.scene.add(group)
-      if (node.kind === 'attacker' || node.kind === 'defender' || node.kind === 'scheduler' || node.kind === 'attack-jump' || node.kind === 'defender-asset') {
+      if (node.kind === 'attacker' || node.kind === 'defender' || node.kind === 'scheduler' || node.kind === 'attack-jump' || node.kind === 'defender-asset' || node.kind === 'external-case') {
         const element = document.createElement('div')
         const labelKind = node.kind === 'attack-jump' ? 'attack-jump' : node.kind === 'defender-asset' ? 'defender-asset' : node.kind
         element.className = `admin3d-node-label admin3d-node-label--${labelKind}`
+        element.dataset.sceneNodeId = node.id
         element.style.setProperty('--node-color', node.color)
         const title = document.createElement('strong')
         title.textContent = node.label
         element.appendChild(title)
+         if ((node.kind === 'attacker' || node.kind === 'defender') && model.score) {
+           const roleScore: AdminBattleScore['attacker'] | undefined = node.kind === 'attacker' ? model.score.attacker : model.score.defender
+           if (typeof roleScore?.score === 'number' && typeof roleScore.maxScore === 'number') {
+             const score = document.createElement('span')
+             score.className = 'admin3d-node-score'
+             score.textContent = `评分 ${roleScore.score}/${roleScore.maxScore}`
+             element.appendChild(score)
+           }
+         }
         const label = new CSS2DObject(element)
-        label.position.set(node.position[0], node.position[1] + (node.kind === 'attack-jump' || node.kind === 'defender-asset' ? 0.94 : 1.12), node.position[2])
+        label.position.set(node.position[0], node.position[1] + (node.kind === 'attack-jump' || node.kind === 'defender-asset' ? 0.94 : node.kind === 'external-case' ? 0.86 : 1.12), node.position[2])
         this.scene.add(label)
         this.labels.push(label)
         const badgeElement = document.createElement('span')
@@ -243,12 +292,21 @@ export class ThreeScene {
       }
     }
 
+    this.barrierCollection = createSecurityBarriers(this.scene, model)
+    this.securityBarriers = this.barrierCollection.groups
+    this.securityBarrierLabels = this.barrierCollection.labels
+    this.securityBarrierStats = this.barrierCollection.stats
+    this.securityTheme = securityPathTheme(model.topic)
+    applySecurityTheme(this.barrierCollection, this.securityTheme)
     const nodeById = new Map(model.nodes.map((node) => [node.id, node]))
     model.edges.slice(0, 512).forEach((edge, index) => {
       const from = nodeById.get(edge.from)
       const to = nodeById.get(edge.to)
-      const fromGroup = this.hardwareGroups.get(edge.from)
-      const toGroup = this.hardwareGroups.get(edge.to)
+      const barrierGroup = (id: string) => id.startsWith('security:barrier:')
+        ? this.securityBarriers.get(Number(id.split(':').at(-1)) - 1)
+        : undefined
+      const fromGroup = this.hardwareGroups.get(edge.from) ?? barrierGroup(edge.from)
+      const toGroup = this.hardwareGroups.get(edge.to) ?? barrierGroup(edge.to)
       if (!from || !to || !fromGroup || !toGroup) return
       const fromPosition = fromGroup.position
       const toPosition = toGroup.position
@@ -268,6 +326,7 @@ export class ThreeScene {
     this.activeNodeId = id
     const node = this.model?.nodes.find((item) => item.id === id)
     const targetPath = node ? this.ensureTargetFiber(node) : (this.ensureTargetFiber(undefined), undefined)
+    this.preparePlaybackFeedback(node)
     this.applyActiveNode()
     this.applySelectedDeviceLabel()
     this.applyStatusBadges()
@@ -284,11 +343,11 @@ export class ThreeScene {
         this.render()
         return
       }
-      this.setPacketCount(node)
-      this.setPacketTheme(node)
-      const path = targetPath
+      this.packetPlayer?.setCount(node, this.model)
+      this.packetPlayer?.setTheme(node)
+      const path = this.playbackRoute ?? targetPath
       const target = path?.getPointAt(this.playbackReversed ? 0 : 1) ?? new Vector3(...node.position).add(new Vector3(0, 0.82, 0))
-      this.positionPacketUnits(path, 0, target)
+      this.packetPlayer?.position(path, 0, target, this.playbackReversed)
       this.playbackMarker.visible = true
       this.animateMarker(target, path, this.playbackReversed)
     } else {
@@ -301,6 +360,13 @@ export class ThreeScene {
     }
   }
 
+  /** Mirrors the 2D event search in the 3D view by dimming unrelated nodes and links. */
+  setNodeQuery(query: string): void {
+    this.nodeQuery = query.trim().toLocaleLowerCase()
+    this.applySearchQuery()
+    this.render()
+  }
+
   setPlaybackPaused(paused: boolean): void {
     if (this.playbackPaused === paused) return
     this.playbackPaused = paused
@@ -310,55 +376,61 @@ export class ThreeScene {
         cancelAnimationFrame(this.playbackFrame)
         this.playbackFrame = 0
       }
-      cancelAnimationFrame(this.eventCueFrame)
-      this.eventCueFrame = 0
-      if (this.eventCueLabel) this.eventCueLabel.element.dataset.paused = 'true'
+      this.eventCue.setPaused(true)
       return
     }
     if (this.playbackAnimationRequested && this.playbackMarker?.visible && this.playbackTarget && !this.playbackFrame) {
       this.runPlaybackAnimation(this.playbackTarget, this.playbackPath, this.playbackProgress)
     }
-    if (this.eventCueLabel && this.eventCueRemaining > 0) {
-      this.eventCueLabel.element.dataset.paused = 'false'
-      this.eventCueLastFrame = performance.now()
-      this.eventCueFrame = requestAnimationFrame(this.advanceEventCue)
-    }
+    this.eventCue.setPaused(false)
   }
 
   resetCamera(): void {
     if (!this.camera || !this.controls) return
-    this.camera.position.set(0, 5, 8.8)
+    this.viewLockedNodeId = undefined
+    this.controls.enabled = true
+    const cameraElevation = 34 * Math.PI / 180
+    this.camera.position.set(0, 0.1 + this.defaultCameraDistance * Math.sin(cameraElevation), this.defaultCameraDistance * Math.cos(cameraElevation))
     this.controls.target.set(0, 0.1, 0)
     this.controls.update()
     this.render()
+  }
+
+  /** Releases the node focus without changing the selected node details. */
+  unlockView(): void {
+    const wasLocked = this.viewLockedNodeId !== undefined
+    this.viewLockedNodeId = undefined
+    if (this.controls) this.controls.enabled = true
+    if (wasLocked || this.renderer) this.render()
   }
 
   dispose(): void {
     this.generation += 1
     cancelAnimationFrame(this.playbackFrame)
     cancelAnimationFrame(this.pulseFrame)
-    cancelAnimationFrame(this.eventCueFrame)
     cancelAnimationFrame(this.impactFrame)
+    this.barrierFeedback.cancel()
     cancelAnimationFrame(this.ambientFrame)
     if (this.onResize) window.removeEventListener('resize', this.onResize)
     if (this.renderer?.domElement && this.onClick) this.renderer.domElement.removeEventListener('click', this.onClick)
+    if (this.renderer?.domElement && this.onContextMenu) this.renderer.domElement.removeEventListener('contextmenu', this.onContextMenu)
+    this.onLabelClickRoot?.removeEventListener('click', this.onLabelClick, true)
+    if (this.onLabelClickRoot && this.onContextMenu) this.onLabelClickRoot.removeEventListener('contextmenu', this.onContextMenu, true)
     this.hardwareGroups.forEach((group) => disposeSceneObject(group))
+    this.securityBarriers.forEach((group) => disposeSceneObject(group))
     this.fiberGroups.forEach((group) => disposeSceneObject(group))
     this.hardwareGroups.clear()
+    this.securityBarriers.clear()
     this.fiberGroups.clear()
     this.fiberCurves.clear()
-    this.playbackMarker?.traverse((object) => {
-      if (object instanceof Mesh) {
-        object.geometry.dispose()
-        const material = Array.isArray(object.material) ? object.material : [object.material]
-        material.forEach((item) => item.dispose())
-      }
-    })
-    if (this.eventCueLabel) this.eventCueLabel.element.remove()
+    this.packetPlayer?.dispose()
+    this.eventCue.clear(this.scene)
     if (this.selectedDeviceLabel) this.selectedDeviceLabel.element.remove()
     this.statusBadges.forEach((badge) => badge.element.remove())
     this.statusBadges.clear()
     this.labels.forEach((label) => label.element.remove())
+    this.securityBarrierLabels.forEach((label) => label.element.remove())
+    this.securityBarrierStats.forEach((label) => label.element.remove())
     if (this.scene) {
       this.scene.traverse((object) => {
         if (object instanceof GridHelper || object instanceof Points) {
@@ -382,65 +454,65 @@ export class ThreeScene {
     this.controls = undefined
     this.container = undefined
     this.model = undefined
+    this.nodeQuery = ''
     this.activeNodeId = undefined
     this.playbackMarker = undefined
+    this.packetPlayer = undefined
     this.playbackTarget = undefined
     this.playbackPath = undefined
+    this.playbackRoute = undefined
     this.playbackProgress = 0
     this.playbackStartedAt = 0
     this.playbackAnimationRequested = false
     this.packetUnits = []
-    this.eventCueLabel = undefined
     this.selectedDeviceLabel = undefined
     this.playbackFrame = 0
     this.pulseFrame = 0
-    this.eventCueFrame = 0
     this.impactFrame = 0
-    this.eventCueRemaining = 0
-    this.eventCueLastFrame = 0
     this.playbackPaused = true
     this.ambientFrame = 0
     this.lastAmbientRenderAt = 0
     this.denseScene = false
+    this.securityBarrierLabels.clear()
+    this.securityBarrierStats.clear()
+    this.focusedFiberIds.clear()
+    this.activeAttackRouteIds = []
+    this.activeAttackRouteBoundaries = []
+    this.playbackOutcome = undefined
+    this.barrierFeedbackTriggered = false
     this.onClick = undefined
+    this.onContextMenu = undefined
+    this.viewLockedNodeId = undefined
+    this.onLabelClickRoot = undefined
+    this.onSelectNode = undefined
     this.onResize = undefined
   }
 
-  private createEnergyPacket(): Group {
-    const packet = new Group()
-    packet.name = 'replay-packet'
-    for (let unitIndex = 0; unitIndex < 6; unitIndex += 1) {
-      const unit = new Group()
-      unit.name = `replay-packet-unit-${unitIndex}`
-      const scale = 1 - unitIndex * 0.055
-      const shell = new Mesh(new CylinderGeometry(0.095 * scale, 0.095 * scale, 0.16 * scale, 6), new MeshPhysicalMaterial({ color: '#8feaff', emissive: '#22caff', emissiveIntensity: 1.7, transparent: true, opacity: 0.72, metalness: 0.16, roughness: 0.18, clearcoat: 1 }))
-      shell.name = unitIndex === 0 ? 'replay-packet-shell' : `replay-packet-shell-${unitIndex}`
-      unit.add(shell)
-      const core = new Mesh(new SphereGeometry(0.042 * scale, 10, 8), new MeshPhysicalMaterial({ color: '#ffffff', emissive: '#8feeff', emissiveIntensity: 2.6, roughness: 0.12 }))
-      core.name = unitIndex === 0 ? 'replay-packet-core' : `replay-packet-core-${unitIndex}`
-      unit.add(core)
-      const trailCount = unitIndex === 0 ? 3 : 1
-      for (let index = 0; index < trailCount; index += 1) {
-        const trail = new Mesh(new CylinderGeometry(0.035 - index * 0.007, 0.035 - index * 0.007, 0.1, 6), new MeshPhysicalMaterial({ color: '#43caff', emissive: '#29bbff', emissiveIntensity: 1.2 - index * 0.25, transparent: true, opacity: 0.48 - index * 0.1, metalness: 0.1, roughness: 0.2, depthWrite: false }))
-        trail.name = `replay-packet-trail-${unitIndex}-${index}`
-        trail.position.y = -0.13 - index * 0.08
-        unit.add(trail)
-      }
-      packet.add(unit)
-      this.packetUnits.push(unit)
-    }
-    packet.visible = false
-    return packet
+  resetSecurityPath(): void {
+    this.playbackOutcome = undefined
+    this.barrierFeedbackTriggered = false
+    this.focusedFiberIds.clear()
+    this.activeAttackRouteIds = []
+    this.activeAttackRouteBoundaries = []
+    clearBarrierFeedback(this.scene, this.barrierCollection)
+    this.packetUnits.forEach((unit) => { unit.visible = false })
+    if (this.playbackMarker) this.playbackMarker.visible = false
+    applySecurityTheme(this.barrierCollection, this.securityTheme)
+    this.applyActiveNode()
+    this.render()
+  }
+
+  getSecurityTheme(): { name: string; focusedLayers: number[] } {
+    return { name: this.securityTheme.name, focusedLayers: [...this.securityTheme.focusedLayers] }
   }
 
   private initializeBloom(width: number, height: number): void {
     if (!this.renderer || !this.scene || !this.camera) return
     try {
       this.composer = new EffectComposer(this.renderer)
-      this.composer.addPass(new RenderPass(this.scene, this.camera))
-      const profile = getReplayBloomProfile(this.denseScene)
-      this.bloomPass = new UnrealBloomPass(new Vector2(width, height), profile.strength, profile.radius, profile.threshold)
-      this.composer.addPass(this.bloomPass)
+      const passes = getReplayPostprocessingPasses(this.scene, this.camera, width, height, this.denseScene)
+      this.bloomPass = passes[1] as UnrealBloomPass
+      passes.forEach((pass) => this.composer?.addPass(pass))
     } catch {
       this.composer?.dispose()
       this.composer = undefined
@@ -482,13 +554,167 @@ export class ThreeScene {
     this.render()
   }
 
+  private preparePlaybackFeedback(node?: AdminSceneNode): void {
+    clearBarrierFeedback(this.scene, this.barrierCollection)
+    this.playbackRoute = undefined
+    this.playbackOutcome = undefined
+    this.barrierFeedbackTriggered = false
+    if (this.packetPlayer) this.packetPlayer.visualState = 'attack'
+    this.focusedFiberIds.clear()
+    if (node?.kind !== 'timeline-event') return
+    const source = node.source as { eventType?: string; type?: string; data?: Record<string, unknown> } | null
+    const cue = source ? replayEventCue(source) : undefined
+    const eventType = String(source?.eventType ?? source?.type ?? '').toLowerCase()
+    const isDefenseCompleted = eventType === 'defense.completed'
+    if (!cue || (!['probe', 'attack', 'exploit', 'compromised'].includes(cue.kind) && !isDefenseCompleted)) return
+    const data = source?.data ?? {}
+    const targetAssetId = attackTargetAssetId(data, cue.kind === 'compromised')
+    const layerInterceptions = data.layerInterceptions && typeof data.layerInterceptions === 'object'
+      ? data.layerInterceptions as { layers?: unknown; total?: unknown }
+      : undefined
+    const layerStats = Array.isArray(layerInterceptions?.layers)
+      ? layerInterceptions.layers.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+      : []
+    const blockedLayer = layerStats.find((item) => typeof item.blocked === 'number' && Number.isFinite(item.blocked) && item.blocked > 0)
+    const selectedLayer = blockedLayer ?? layerStats.find((item) => typeof item.layer === 'number')
+    const configuredLayer = selectedLayer?.layer ?? [data.layer, data.layerIndex, data.securityLayer, data.blockedLayer].find((value) => typeof value === 'number')
+    const barrierIndex = typeof configuredLayer === 'number'
+      ? Math.max(0, Math.min(3, configuredLayer > 0 ? configuredLayer - 1 : configuredLayer))
+      : undefined
+    const verifiedCompromise = cue.kind === 'compromised' && data.targetVerified === true
+    const penetrated = data.penetrated === true
+    const interceptedValue = selectedLayer?.blocked ?? data.interceptedCount
+    const intercepted = typeof interceptedValue === 'number' && Number.isFinite(interceptedValue) ? Math.max(0, interceptedValue) : undefined
+    const reachedValue = selectedLayer?.reached ?? selectedLayer?.total
+    const total = typeof reachedValue === 'number' && Number.isFinite(reachedValue)
+      ? Math.max(0, reachedValue)
+      : typeof layerInterceptions?.total === 'number' && Number.isFinite(layerInterceptions.total)
+        ? Math.max(0, layerInterceptions.total)
+        : undefined
+    this.playbackRoute = createSecurityRoute(this.hardwareGroups, this.securityBarriers, targetAssetId)
+    this.activeAttackRouteIds = attackRouteFiberIds(targetAssetId)
+    const routeNodes = ['network:jump:1', 'network:jump:2', 'security:barrier:1', 'security:barrier:2', 'security:barrier:3', 'security:barrier:4', targetAssetId, 'role:defender']
+    this.activeAttackRouteBoundaries = routeProgressBoundaries(this.playbackRoute, routeNodes.flatMap((id) => {
+      const group = this.hardwareGroups.get(id) ?? (id.startsWith('security:barrier:') ? this.securityBarriers.get(Number(id.split(':').at(-1))! - 1) : undefined)
+      return group ? [group.position.clone().add(new Vector3(0, 0.68, 0))] : []
+    }))
+    this.activeAttackRouteIds.forEach((id) => this.focusedFiberIds.add(id))
+    const target = this.hardwareGroups.get(targetAssetId)
+    const targetProgress = target ? routeProgressAtPoint(this.playbackRoute, target.position) : undefined
+    if (verifiedCompromise) {
+      if (targetProgress === undefined) return
+      this.playbackOutcome = { status: 'compromised', barrierIndex: barrierIndex ?? 3, targetAssetId, triggerProgress: targetProgress }
+      return
+    }
+    if (barrierIndex === undefined || intercepted === undefined || total === undefined || (!penetrated && intercepted <= 0)) return
+    const barrier = this.securityBarriers.get(barrierIndex)
+    const barrierProgress = barrier ? routeProgressAtPoint(this.playbackRoute, barrier.position) : undefined
+    const triggerProgress = penetrated ? targetProgress : barrierProgress
+    if (triggerProgress === undefined) return
+    this.playbackOutcome = { status: penetrated ? 'penetrated' : 'intercepted', barrierIndex, intercepted: Math.min(total, intercepted), total, targetAssetId, triggerProgress }
+  }
+
+  private startBarrierPulse(index: number, outcome: 'intercepted' | 'penetrated', intercepted?: number, total?: number): void {
+    cancelAnimationFrame(this.impactFrame)
+    this.impactFrame = 0
+    this.barrierFeedback.pulse(this.scene, this.barrierCollection, this.securityTheme, index, outcome, intercepted, total)
+  }
+
+  private startDefenseCompletionFlash(): void {
+    cancelAnimationFrame(this.impactFrame)
+    this.impactFrame = 0
+    this.barrierFeedback.flashDefense(this.barrierCollection, this.securityTheme)
+  }
+
+  private updatePlaybackFeedback(progress: number): void {
+    this.updateAttackRouteProgress(progress)
+    const outcome = this.playbackOutcome
+    if (!outcome || this.barrierFeedbackTriggered) return
+    if (progress < outcome.triggerProgress) return
+    this.barrierFeedbackTriggered = true
+    if (outcome.status === 'intercepted') {
+      this.packetPlayer?.setVisualState('intercepted')
+      this.startBarrierPulse(outcome.barrierIndex, outcome.status, outcome.intercepted, outcome.total)
+      this.packetPlayer?.position(this.playbackRoute, outcome.triggerProgress, new Vector3(), this.playbackReversed)
+    } else if (outcome.status === 'penetrated') {
+      this.packetPlayer?.setVisualState('penetrated')
+      this.startBarrierPulse(outcome.barrierIndex, outcome.status, outcome.intercepted, outcome.total)
+      this.startIndicatorPulse([{ id: outcome.targetAssetId, compromised: false }])
+    } else {
+      this.packetPlayer?.setVisualState('compromised')
+      this.startIndicatorPulse([{ id: outcome.targetAssetId, compromised: true }])
+    }
+  }
+
+  private updateAttackRouteProgress(progress: number): void {
+    if (!this.activeAttackRouteIds.length) return
+    const normalizedProgress = Math.max(0, Math.min(1, progress))
+    const currentIndex = this.activeAttackRouteBoundaries.findIndex((boundary) => normalizedProgress < boundary)
+    this.activeAttackRouteIds.forEach((id, index) => {
+      const fiber = this.fiberGroups.get(id)
+      if (!fiber) return
+      setFiberProgressState(fiber, currentIndex === -1 || index < currentIndex ? 'completed' : index === currentIndex ? 'current' : 'pending')
+    })
+  }
+
+  private applySearchQuery(): void {
+    if (!this.model) return
+    const query = this.nodeQuery
+    const nodeText = (node: AdminSceneNode): string => `${node.label} ${JSON.stringify(node.source ?? '')}`.toLocaleLowerCase()
+    const matchedNodeIds = new Set(this.model.nodes.filter((node) => !query || nodeText(node).includes(query)).map((node) => node.id))
+    const focusedRouteIds = new Set<string>()
+    if (query && this.activeNodeId) {
+      this.fiberGroups.forEach((group) => {
+        if (group.userData.focused === false) return
+        const edge = group.userData.edge as { from: string; to: string } | undefined
+        if (edge) { focusedRouteIds.add(edge.from); focusedRouteIds.add(edge.to) }
+      })
+    }
+    const visibleNodeIds = new Set([...matchedNodeIds, ...focusedRouteIds])
+    this.hardwareGroups.forEach((group, id) => {
+      const dimmed = Boolean(query) && !visibleNodeIds.has(id)
+      group.userData.searchDimmed = dimmed
+      group.traverse((object) => {
+        if (!('material' in object)) return
+        const materials = Array.isArray(object.material) ? object.material : [object.material]
+        materials.forEach((material) => {
+          if (!material || typeof material.opacity !== 'number') return
+          const baseOpacity = typeof material.userData.admin3dSearchOpacity === 'number'
+            ? material.userData.admin3dSearchOpacity
+            : (material.userData.admin3dSearchOpacity = material.opacity)
+          material.opacity = dimmed ? baseOpacity * 0.16 : baseOpacity
+        })
+      })
+    })
+    this.labels.forEach((label) => {
+      const id = label.element.dataset.sceneNodeId
+      label.element.style.opacity = !query || (id && visibleNodeIds.has(id)) ? '1' : '0.18'
+    })
+  }
+
   private applyActiveNode(): void {
     if (!this.model) return
     const active = this.model.nodes.find((node) => node.id === this.activeNodeId)
     const eventSource = active?.kind === 'timeline-event' ? active.source as { eventType?: string; type?: string; data?: Record<string, unknown> } : null
     const cue = eventSource ? replayEventCue(eventSource) : undefined
+    const compromisedTargetAssetId = cue?.kind === 'compromised'
+      ? attackTargetAssetId(eventSource?.data ?? {}, true)
+      : undefined
     const activeActor = active?.kind === 'timeline-event' ? active.actorRole : undefined
-    const targetRole = active ? this.eventTargetRole(active, cue?.kind) : undefined
+    const targetRole = active ? eventTargetRole(active, cue?.kind) : undefined
+    const activeType = String(eventSource?.eventType ?? eventSource?.type ?? '')
+    this.securityBarriers.forEach((group, index) => {
+      const node = this.model?.nodes.find((item) => item.id === `security:barrier:${index + 1}`)
+      const material = (group.userData.materials as MeshPhysicalMaterial[] | undefined)?.[0]
+      if (!node || !material) return
+      const themeFocused = !active || this.securityTheme.focusedLayers.includes(index + 1)
+      const searchDimmed = Boolean(this.nodeQuery) && !this.model?.nodes.some((item) => item.kind === 'timeline-event' && JSON.stringify(item.source).toLocaleLowerCase().includes(this.nodeQuery))
+      const opacity = themeFocused && !searchDimmed ? 0.58 : 0.14
+      ;((group.userData.materials as MeshPhysicalMaterial[] | undefined) ?? []).forEach((item) => { item.opacity = opacity })
+      group.userData.themeDimmed = !themeFocused
+      if (activeType === 'defense.completed' && themeFocused) material.emissiveIntensity = 1.2
+      else material.emissiveIntensity = 0.48
+    })
     for (const node of this.model.nodes) {
       const group = this.hardwareGroups.get(node.id)
       if (!group) continue
@@ -510,7 +736,11 @@ export class ThreeScene {
       if (internalTeamEvent && activeActor === 'defender' && (node.id === 'network:asset:1' || node.id === 'network:asset:2' || node.id === 'network:asset:3')) state = 'scanning'
       if (node.id === 'network:asset:1' && cue?.kind === 'probe') state = 'scanning'
       if (node.id === 'network:asset:1' && (cue?.kind === 'attack' || cue?.kind === 'exploit')) state = 'attacking'
-      if (node.id === 'network:asset:3' && cue?.kind === 'compromised') state = 'compromised'
+      if (node.id === compromisedTargetAssetId) state = 'compromised'
+      if (activeType === 'battle.created' && node.id === 'role:attacker') state = 'scanning'
+      if (activeType === 'attack.started' && node.id === 'network:jump:1') state = 'attacking'
+      if (activeType === 'attack.completed' && node.id === 'network:jump:2') state = 'attacking'
+      if (activeType === 'battle.completed' && node.id === 'role:defender') state = 'scanning'
       if (selected && node.kind !== 'timeline-event') state = 'selected'
       if (node.kind === 'timeline-event' && selected && isExplicitlyCompromised(node)) state = 'compromised'
       group.scale.setScalar(selected && node.kind !== 'timeline-event' ? 1.06 : 1)
@@ -519,14 +749,16 @@ export class ThreeScene {
     this.fiberGroups.forEach((group) => {
       const edge = group.userData.edge as { id: string; from: string; to: string; kind?: string }
       const participates = active?.kind === 'timeline-event'
-        && (edge.id === this.targetFiberId || edge.from === active.id || edge.to === active.id)
+        && (edge.id === this.targetFiberId || this.focusedFiberIds.has(edge.id) || edge.from === active.id || edge.to === active.id)
       const focused = active?.kind !== 'timeline-event' || participates
       const state = !focused ? 'idle' : cue?.kind === 'defense' ? 'defending' : cue?.kind === 'compromised' ? 'compromised'
         : cue?.kind === 'attack' || cue?.kind === 'exploit' ? 'attacking'
           : cue?.kind === 'probe' || cue?.kind === 'defense-request' ? 'scanning' : 'idle'
       setFiberState(group, state, focused, focused && edge.id === this.targetFiberId && this.playbackReversed)
     })
+    this.updateAttackRouteProgress(this.playbackProgress)
     if (active?.kind === 'timeline-event') {
+      if (activeType === 'defense.completed') this.startDefenseCompletionFlash()
       const targets: Array<{ id: string; compromised: boolean }> = []
       if (activeActor === 'attacker' || activeActor === 'defender') targets.push({ id: `role:${activeActor}`, compromised: false })
       if ((cue?.kind === 'defense-request' || cue?.kind === 'defense') && targetRole) targets.push({ id: `role:${targetRole}`, compromised: false })
@@ -538,7 +770,7 @@ export class ThreeScene {
         targets.push({ id: 'network:asset:1', compromised: false }, { id: 'network:asset:2', compromised: false }, { id: 'network:asset:3', compromised: false })
       }
       if (cue?.kind === 'compromised' && targetRole) targets.push({ id: `role:${targetRole}`, compromised: true })
-      if (cue?.kind === 'compromised') targets.push({ id: 'network:asset:3', compromised: true })
+      if (compromisedTargetAssetId) targets.push({ id: compromisedTargetAssetId, compromised: true })
       this.startIndicatorPulse(targets)
       if (cue?.kind === 'exploit' && targetRole) this.startImpactFlash(this.hardwareGroups.get('network:asset:2'))
     } else {
@@ -546,49 +778,13 @@ export class ThreeScene {
       this.pulseFrame = 0
       cancelAnimationFrame(this.impactFrame)
       this.impactFrame = 0
+      this.barrierFeedback.cancel()
     }
-  }
-
-  private eventTargetRole(node: AdminSceneNode, kind?: string): 'attacker' | 'defender' | undefined {
-    const source = node.source as { data?: { targetRole?: unknown } } | null
-    const explicit = source?.data?.targetRole
-    if (explicit === 'attacker' || explicit === 'defender') return explicit
-    if (kind === 'defense-request') return 'defender'
-    if (kind === 'defense') return 'attacker'
-    if (kind && kind !== 'other' && kind !== 'session' && (node.actorRole === 'attacker' || node.actorRole === 'defender')) {
-      return node.actorRole === 'attacker' ? 'defender' : 'attacker'
-    }
-    return undefined
+    this.applySearchQuery()
   }
 
   private applyStatusBadges(): void {
-    const active = this.model?.nodes.find((node) => node.id === this.activeNodeId && node.kind === 'timeline-event')
-    const source = active?.source as { eventType?: string; type?: string; data?: Record<string, unknown> } | null
-    const cue = source ? replayEventCue(source) : undefined
-    const targetRole = active ? this.eventTargetRole(active, cue?.kind) : undefined
-    const statuses = new Map<string, { state: 'normal' | 'probing' | 'attacked' | 'compromised' | 'controlled'; text: string }>()
-    for (const id of ['attacker', 'defender', 'network:asset:1', 'network:asset:2', 'network:asset:3']) statuses.set(id.startsWith('network:') ? id : `role:${id}`, { state: 'normal', text: '正常守护' })
-    for (const id of ['network:jump:1', 'network:jump:2']) statuses.set(id, { state: 'controlled', text: '已受控' })
-    if (active && cue) {
-      if (cue.kind === 'defense-request') statuses.set('role:defender', { state: 'probing', text: '防守检测中' })
-      if (cue.kind === 'defense') {
-        statuses.set('role:defender', { state: 'normal', text: '检测结果已回传' })
-        statuses.set('role:attacker', { state: 'probing', text: '正在接收检测结果' })
-      }
-      if ((cue.kind === 'other' || cue.kind === 'session') && (active.actorRole === 'attacker' || active.actorRole === 'defender')) {
-        statuses.set(`role:${active.actorRole}`, { state: 'probing', text: `${active.actorRole === 'attacker' ? '攻击方' : '防守方'}队内事件处理中` })
-        const teammates = active.actorRole === 'attacker' ? ['network:jump:1', 'network:jump:2'] : ['network:asset:1', 'network:asset:2', 'network:asset:3']
-        teammates.forEach((id) => statuses.set(id, { state: 'probing', text: `${active.actorRole === 'attacker' ? '攻击方' : '防守方'}队内协作中` }))
-      }
-      if (cue.kind === 'probe' && active.actorRole) statuses.set(`role:${active.actorRole}`, { state: 'probing', text: '正在探测' })
-      if (targetRole && cue.kind === 'probe') statuses.set(`role:${targetRole}`, { state: 'probing', text: '正在被探测' })
-      if (active.actorRole && (cue.kind === 'attack' || cue.kind === 'exploit')) statuses.set(`role:${active.actorRole}`, { state: 'attacked', text: '发起攻击' })
-      if (targetRole && (cue.kind === 'attack' || cue.kind === 'exploit')) statuses.set(`role:${targetRole}`, { state: 'attacked', text: '遭受攻击' })
-      if (targetRole && cue.kind === 'compromised') statuses.set(`role:${targetRole}`, { state: 'compromised', text: '已沦陷' })
-      if (cue.kind === 'probe') statuses.set('network:asset:1', { state: 'probing', text: '正在被探测' })
-      if (cue.kind === 'attack' || cue.kind === 'exploit') statuses.set('network:asset:1', { state: 'attacked', text: '遭受攻击' })
-      if (cue.kind === 'compromised') statuses.set('network:asset:3', { state: 'compromised', text: '已沦陷' })
-    }
+    const statuses = eventStatusBadges(this.model, this.activeNodeId)
     this.statusBadges.forEach((badge, id) => {
       const state = statuses.get(id) ?? { state: 'normal' as const, text: '正常守护' }
       updateStatusBadge(badge.element, state.state, state.text)
@@ -596,57 +792,25 @@ export class ThreeScene {
   }
 
   private showEventCue(node: AdminSceneNode): void {
-    this.clearEventCue()
     if (!this.scene) return
     const source = node.source as { eventType?: string; type?: string; data?: Record<string, unknown> }
     const cue = replayEventCue(source)
     const actorRole = cue.kind === 'defense-request' ? 'attacker' : cue.kind === 'defense' ? 'defender' : node.actorRole
     const actor = actorRole === 'attacker' || actorRole === 'defender' ? this.hardwareGroups.get(`role:${actorRole}`) : undefined
-    const targetRole = this.eventTargetRole(node, cue.kind)
+    const targetRole = eventTargetRole(node, cue.kind)
     const target = targetRole ? this.hardwareGroups.get(`role:${targetRole}`) : undefined
-    const center = new Vector3(0, 0.72, 0)
-    const start = actor?.position.clone() ?? center.clone()
-    const end = target?.position.clone() ?? center.clone()
-    const element = document.createElement('div')
-    element.className = `admin3d-event-cue cue-${cue.kind}`
-    element.style.setProperty('--cue-color', cue.color)
-    element.textContent = cue.label
-    element.dataset.paused = String(this.playbackPaused)
-    this.eventCueLabel = new CSS2DObject(element)
     const path = this.targetFiberId ? this.fiberCurves.get(this.targetFiberId) : undefined
-    this.eventCueLabel.position.copy(path ? path.getPointAt(0.5).add(new Vector3(0, 0.72, 0)) : target ? start.lerp(end, 0.5).add(new Vector3(0, 1.15, 0)) : start.add(new Vector3(0, 1.15, 0)))
-    this.scene.add(this.eventCueLabel)
-    this.eventCueRemaining = 2500
-    if (!this.playbackPaused) {
-      this.eventCueLastFrame = performance.now()
-      this.eventCueFrame = requestAnimationFrame(this.advanceEventCue)
-    }
+    this.eventCue.show(this.scene, node, actor, target, path, this.playbackPaused)
   }
 
   private clearEventCue(): void {
-    cancelAnimationFrame(this.eventCueFrame)
-    this.eventCueFrame = 0
-    if (this.eventCueLabel) {
-      this.scene?.remove(this.eventCueLabel)
-      this.eventCueLabel.element.remove()
-      this.eventCueLabel = undefined
-    }
-    this.eventCueRemaining = 0
-  }
-
-  private advanceEventCue = (now: number): void => {
-    if (this.playbackPaused || !this.eventCueLabel) return
-    this.eventCueRemaining = Math.max(0, this.eventCueRemaining - Math.max(0, now - this.eventCueLastFrame))
-    this.eventCueLastFrame = now
-    this.eventCueLabel.element.style.opacity = String(Math.min(1, this.eventCueRemaining / 520))
-    this.render()
-    if (this.eventCueRemaining > 0) this.eventCueFrame = requestAnimationFrame(this.advanceEventCue)
-    else this.clearEventCue()
+    this.eventCue.clear(this.scene)
   }
 
   private startImpactFlash(group?: Group): void {
     const core = group?.userData.core as Mesh | undefined
     if (!core) return
+    this.barrierFeedback.cancel()
     cancelAnimationFrame(this.impactFrame)
     const material = core.material as MeshPhysicalMaterial
     const startedAt = performance.now()
@@ -732,49 +896,6 @@ export class ThreeScene {
     this.scene.add(this.selectedDeviceLabel)
   }
 
-  private setPacketCount(node: AdminSceneNode): void {
-    const source = node.source as { eventType?: string; type?: string; data?: { description?: string; event?: string; caught?: unknown[] } } | null
-    const cue = source ? replayEventCue(source) : undefined
-    const eventType = cue?.kind === 'compromised' ? 'attack.compromised' : cue?.kind === 'attack' || cue?.kind === 'exploit' ? 'attack.started' : cue?.kind === 'probe' ? 'attack.probe.started' : ''
-    const description = ''
-    const count = cue?.kind === 'defense' ? Math.min(6, 3 + (source?.data?.caught?.length ?? 0))
-      : cue?.kind === 'defense-request' ? 3
-        : /compromis|breach|exploited|入侵成功|被攻陷/.test(`${eventType} ${description}`) ? 6
-      : eventType.startsWith('attack.') ? 5
-        : /probe|scan|探测|扫描/.test(`${eventType} ${description}`) ? 3 : 2
-    this.packetUnits.forEach((unit, index) => { unit.visible = index < count })
-  }
-
-  private setPacketTheme(node: AdminSceneNode): void {
-    const source = node.source as { eventType?: string; type?: string; data?: Record<string, unknown> } | null
-    const cue = source ? replayEventCue(source) : undefined
-    const color = cue?.kind === 'probe' || cue?.kind === 'defense-request' ? '#00dfdc' : cue?.color ?? '#76cfff'
-    this.packetUnits.forEach((unit) => unit.traverse((object) => {
-      if (!(object instanceof Mesh)) return
-      const materials = Array.isArray(object.material) ? object.material : [object.material]
-      materials.forEach((material) => {
-        if (!(material instanceof MeshPhysicalMaterial)) return
-        material.color.set(object.name.includes('core') ? '#ffffff' : color)
-        material.emissive.set(color)
-      })
-    }))
-  }
-
-  private positionPacketUnits(path: ReturnType<typeof createFiberLink>['curve'] | undefined, progress: number, target: Vector3): void {
-    const active = this.packetUnits.filter((unit) => unit.visible)
-    active.forEach((unit, index) => {
-      if (path) {
-        const position = this.playbackReversed
-          ? Math.max(0, Math.min(1, 1 - progress + index * 0.11))
-          : Math.max(0, Math.min(1, progress - index * 0.11))
-        unit.position.copy(path.getPointAt(position))
-        const tangent = path.getTangentAt(position).normalize()
-        if (this.playbackReversed) tangent.negate()
-        unit.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), tangent)
-      } else unit.position.copy(target)
-    })
-  }
-
   private animateMarker(target: Vector3, path?: ReturnType<typeof createFiberLink>['curve'], reversed = false): void {
     if (!this.playbackMarker) return
     cancelAnimationFrame(this.playbackFrame)
@@ -796,8 +917,16 @@ export class ThreeScene {
       const progress = Math.min((now - beganAt) / EVENT_ANIMATION_DURATION_MS, 1)
       this.playbackProgress = progress
       const eased = progress * progress * (3 - 2 * progress)
-      this.positionPacketUnits(path, eased, target)
+      this.packetPlayer?.position(path, eased, target, this.playbackReversed)
+      this.updatePlaybackFeedback(eased)
       this.render()
+      if (this.playbackOutcome?.status === 'intercepted' && this.barrierFeedbackTriggered) {
+        this.playbackProgress = this.playbackOutcome.triggerProgress
+        this.playbackAnimationRequested = false
+        this.playbackFrame = 0
+        this.render()
+        return
+      }
       if (progress < 1) this.playbackFrame = requestAnimationFrame(step)
       else if (this.playbackMarker) {
         this.playbackMarker.visible = false
@@ -810,43 +939,22 @@ export class ThreeScene {
   }
 
   private ensureTargetFiber(node?: AdminSceneNode): ReturnType<typeof createFiberLink>['curve'] | undefined {
-    this.playbackReversed = false
-    if (node?.kind !== 'timeline-event') {
+    const selection = selectEventFiberRoute(node, this.model)
+    this.playbackReversed = selection.reversed
+    if (selection.routeId) {
+      this.targetFiberId = selection.routeId
+      return this.fiberCurves.get(selection.routeId)
+    }
+    const sideFlow = this.model?.edges.find((edge) => edge.id.startsWith('side-flow:'))
+    if (!sideFlow || node?.kind !== 'timeline-event') {
       this.targetFiberId = undefined
       return undefined
     }
     const source = node.source as { eventType?: string; type?: string; data?: Record<string, unknown> } | null
     const cue = source ? replayEventCue(source) : undefined
     const actorRole = cue?.kind === 'defense-request' ? 'attacker' : cue?.kind === 'defense' ? 'defender' : node.actorRole
-    const targetRole = this.eventTargetRole(node, cue?.kind)
-    if (cue?.kind === 'defense-request' || cue?.kind === 'defense') {
-      const round = source?.data?.round
-      const routeId = `network-path:${(typeof round === 'number' && round % 2 === 0) ? 6 : 3}`
-      this.targetFiberId = routeId
-      this.playbackReversed = cue.kind === 'defense'
-      return this.fiberCurves.get(routeId)
-    }
-    if (node.kind === 'timeline-event' && (cue?.kind === 'other' || cue?.kind === 'session') && (actorRole === 'attacker' || actorRole === 'defender')) {
-      const eventIndex = Math.max(0, this.model?.nodes.filter((item) => item.kind === 'timeline-event').findIndex((item) => item.id === node.id) ?? 0)
-      const routeId = actorRole === 'attacker' ? 'team-path:1' : `team-path:${2 + (eventIndex - 1 + 2) % 2}`
-      this.targetFiberId = routeId
-      this.playbackReversed = false
-      return this.fiberCurves.get(routeId)
-    }
-    if (node.kind === 'timeline-event' && (actorRole === 'attacker' || actorRole === 'defender') && targetRole && targetRole !== actorRole) {
-      const eventIndex = Math.max(0, this.model?.nodes.filter((item) => item.kind === 'timeline-event').findIndex((item) => item.id === node.id) ?? 0)
-      const routeIndex = eventIndex % 2
-      const pathIndex = cue?.kind === 'probe' ? 1 + routeIndex
-        : cue?.kind === 'attack' ? routeIndex ? 6 : 3
-          : cue?.kind === 'exploit' ? routeIndex ? 5 : 4
-            : cue?.kind === 'compromised' ? 7 + eventIndex % 3 : 3
-      const routeId = `network-path:${pathIndex}`
-      this.targetFiberId = routeId
-      this.playbackReversed = actorRole === 'defender'
-      return this.fiberCurves.get(routeId)
-    }
-    const sideFlow = this.model?.edges.find((edge) => edge.id.startsWith('side-flow:'))
-    if (!sideFlow || (actorRole !== 'attacker' && actorRole !== 'defender') || !targetRole || targetRole === actorRole) {
+    const targetRole = eventTargetRole(node, cue?.kind)
+    if ((actorRole !== 'attacker' && actorRole !== 'defender') || !targetRole || targetRole === actorRole) {
       this.targetFiberId = undefined
       return undefined
     }
@@ -857,6 +965,8 @@ export class ThreeScene {
 
   private focusNode(node: AdminSceneNode): void {
     if (!this.camera || !this.controls) return
+    this.viewLockedNodeId = node.id
+    this.controls.enabled = false
     const target = new Vector3(...node.position)
     const offset = this.camera.position.clone().sub(this.controls.target)
     if (offset.length() < 3.5) offset.set(0, 2.4, 4.2)
@@ -865,13 +975,19 @@ export class ThreeScene {
     this.controls.update()
   }
 
+  private handleContextMenu(event: MouseEvent): void {
+    event.preventDefault()
+    event.stopPropagation()
+    this.unlockView()
+  }
+
   private select(event: MouseEvent, onSelect?: (node: AdminSceneNode) => void): void {
     if (!this.renderer || !this.camera || !this.model || !onSelect) return
     const rect = this.renderer.domElement.getBoundingClientRect()
     this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
     this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
     this.raycaster.setFromCamera(this.pointer, this.camera)
-    const hit = this.raycaster.intersectObjects([...this.hardwareGroups.values()], true)[0]
+    const hit = this.raycaster.intersectObjects([...this.hardwareGroups.values(), ...this.securityBarriers.values()], true)[0]
     let object: Object3D | undefined = hit?.object
     while (object && typeof object.userData.sceneNodeId !== 'string') object = object.parent ?? undefined
     const node = typeof object?.userData.sceneNodeId === 'string'
@@ -881,5 +997,25 @@ export class ThreeScene {
     this.setActiveNode(node.id)
     this.focusNode(node)
     onSelect(node)
+  }
+
+  private readonly onLabelClick = (event: MouseEvent): void => {
+    if (!this.model || !this.onSelectNode) return
+    const clickedElement = event.target instanceof HTMLElement
+      ? event.target.closest<HTMLElement>('[data-scene-node-id]')
+      : null
+    const currentElement = event.currentTarget instanceof HTMLElement && event.currentTarget.matches('[data-scene-node-id]')
+      ? event.currentTarget
+      : null
+    const target = clickedElement ?? currentElement
+    const nodeId = target?.dataset.sceneNodeId
+    if (!nodeId) return
+    const node = this.model.nodes.find((item) => item.id === nodeId)
+    if (!node) return
+    event.preventDefault()
+    event.stopPropagation()
+    this.setActiveNode(node.id)
+    this.focusNode(node)
+    this.onSelectNode(node)
   }
 }

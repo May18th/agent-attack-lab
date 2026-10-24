@@ -14,6 +14,7 @@ from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES, classify_owasp_ll
 class AttackRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
+    rounds: int = Field(default=3, ge=1, le=10)
 
     @field_validator("topic")
     @classmethod
@@ -33,7 +34,10 @@ def local_rule_case_count() -> int:
     return len({
         sample["testCaseId"]
         for difficulty in ("low", "mid", "high")
-        for sample in attack(AttackRequest(difficulty=difficulty))["samples"]
+        for sample in attack(AttackRequest(
+            difficulty=difficulty,
+            rounds={"low": 1, "mid": 2, "high": 3}[difficulty],
+        ))["samples"]
         if sample.get("simulation") is True
     })
 
@@ -46,6 +50,8 @@ def attack(payload: AttackRequest) -> dict[str, Any]:
     is_system_prompt = any(word in normalized_topic for word in ("系统提示词", "提示词套取", "prompt leakage"))
     is_tool_overreach = any(word in normalized_topic for word in ("工具越权", "ssrf", "元数据地址"))
     is_token_exhaustion = any(word in normalized_topic for word in ("token耗尽", "token 消耗", "资源耗尽", "dos"))
+    is_file_upload = any(word in normalized_topic for word in ("文件", "上传", "附件", "upload", "file"))
+    is_webhook = any(word in normalized_topic for word in ("webhook", "回调", "通知", "callback"))
     is_payment = any(word in normalized_topic for word in ("支付", "电商", "payment", "checkout", "订单"))
     is_identity = any(word in normalized_topic for word in ("认证", "登录", "身份", "账户", "auth", "login", "session"))
     if is_indirect_injection:
@@ -146,6 +152,46 @@ def attack(payload: AttackRequest) -> dict[str, Any]:
                 "simulation": True,
             }
             for index in range(1, 4)
+        ]
+    elif is_file_upload:
+        stage_data = [
+            ("FILE-UPLOAD-PATH-001", "文件路径规范化", "检查上传文件名在规范化后是否仍被限制在专用存储目录", "模拟上传文件名：../tenant-23/reports.pdf。仅检查路径边界，不会写入真实文件。"),
+            ("FILE-UPLOAD-TYPE-001", "文件类型与内容校验", "检查服务端是否根据文件内容校验类型，而不信任客户端 MIME 声明", "模拟上传文件声明为 image/png，但内容签名与扩展名不匹配。仅用于文本规则检查，不会解析或保存文件。"),
+            ("FILE-UPLOAD-OVERWRITE-001", "文件名冲突与覆盖保护", "检查随机对象名、隔离目录和覆盖策略是否避免覆盖已有文件", "模拟两个用户上传同名附件 report.pdf，并检查对象存储键是否由服务端生成。不会连接对象存储。"),
+        ]
+        samples = [
+            {
+                "testCaseId": case_id,
+                "type": "defect",
+                "topic": topic,
+                "severity": ("low", "medium", "high")[index - 1],
+                "scenario": scenario,
+                "objective": objective,
+                "content": content,
+                "round": index,
+                "simulation": True,
+            }
+            for index, (case_id, scenario, objective, content) in enumerate(stage_data, start=1)
+        ]
+    elif is_webhook:
+        stage_data = [
+            ("WEBHOOK-SSRF-001", "回调目标地址校验", "检查回调目标是否拒绝环回、私网和云元数据地址", "模拟 Webhook 回调地址：https://127.0.0.1/internal。只检查地址校验策略，不会发起网络请求。"),
+            ("WEBHOOK-REDIRECT-001", "回调重定向边界", "检查服务端是否在每次重定向后重新校验目标地址", "模拟回调地址先指向获准域名，再重定向至 http://169.254.169.254/。不会解析 DNS 或请求该地址。"),
+            ("WEBHOOK-REPLAY-001", "重复回调与幂等处理", "检查签名、时间戳和事件 ID 是否阻止伪造或重复处理", "模拟同一 Webhook 事件 ID 在短时间内重复投递，并检查服务端是否只处理一次。不会发送回调。"),
+        ]
+        samples = [
+            {
+                "testCaseId": case_id,
+                "type": "violation",
+                "topic": topic,
+                "severity": ("low", "medium", "high")[index - 1],
+                "scenario": scenario,
+                "objective": objective,
+                "content": content,
+                "round": index,
+                "simulation": True,
+            }
+            for index, (case_id, scenario, objective, content) in enumerate(stage_data, start=1)
         ]
     elif is_payment:
         samples = [
@@ -280,19 +326,26 @@ def attack(payload: AttackRequest) -> dict[str, Any]:
                 "simulation": True,
             })
 
-    sample_count = {"low": 1, "mid": 2, "high": 3}[payload.difficulty]
+    sample_count = payload.rounds
     depth = {"low": "基础边界探测", "mid": "上下文与变体检查", "high": "组合条件与绕过检查"}[payload.difficulty]
-    selected = samples[:sample_count]
+    selected = [dict(sample) for sample in samples[:sample_count]]
+    while len(selected) < sample_count and samples:
+        round_number = len(selected) + 1
+        variant = dict(samples[(round_number - 1) % len(samples)])
+        variant["testCaseId"] = f"{variant['testCaseId']}-R{round_number}"
+        variant["round"] = round_number
+        selected.append(variant)
     variation = {
         "low": "单一请求与基准身份；只观察一个授权边界。",
         "mid": "更换目标对象或凭据状态，并对比授权前后的响应差异。",
         "high": "组合身份、资源状态与重复请求等条件；只在隔离环境检查边界交互。",
     }[payload.difficulty]
-    for sample in selected:
+    for index, sample in enumerate(selected, start=1):
+        sample["round"] = index
         sample["attackDepth"] = depth
         sample["difficulty"] = payload.difficulty
         sample["testVariation"] = variation
-    if not is_payment and not is_identity and normalized_topic not in {
+    if not (is_payment or is_identity or is_file_upload or is_webhook) and normalized_topic not in {
         "general", "security", "general security", "通用安全测试", "安全测试"
     }:
         selected[0]["scenario"] = f"{topic}场景下的资源归属边界检查"
@@ -352,6 +405,50 @@ def defend(payload: DefendRequest) -> dict[str, Any]:
             "passCriteria": pass_criteria,
             "failCriteria": fail_criteria,
         })
+
+    path_traversal = re.search(r"\.\.[/\\]|%2e%2e", content)
+    if path_traversal and any(word in content for word in ("upload", "文件", "附件", "上传", "file")):
+        add_finding(
+            kind="defect",
+            rule_id="LAB-FILE-PATH-001",
+            reason="上传样本文本包含目录穿越路径片段；需验证真实存储层是否执行规范化和目录约束。",
+            evidence="仅在提交的文件上传样本文本中匹配到父目录路径片段。",
+            matched_text=[path_traversal.group(0)],
+            level="high",
+            risk="若服务端直接拼接文件名并写入路径，可能越过预期存储目录；目标系统尚未验证。",
+            action="由服务端规范化文件名，并将对象写入固定根目录或使用服务端生成的对象键。",
+            example_title="限制上传文件的存储根目录",
+            example_code="resolved = (upload_root / safe_name).resolve()\nif upload_root.resolve() not in resolved.parents:\n    raise ValueError(\"invalid upload path\")",
+            verification_steps=[
+                "在隔离环境提交包含 ../、编码变体和绝对路径的文件名。",
+                "确认规范化后的目标路径仍位于专用临时目录内。",
+                "检查越界输入被拒绝，合法上传仍能读取。",
+            ],
+            pass_criteria="越界路径被拒绝，且任何文件都不会写到上传根目录之外。",
+            fail_criteria="服务端接受越界路径，或在上传根目录之外创建/覆盖文件。",
+        )
+
+    internal_callback = re.search(r"https?://(?:127\.0\.0\.1|localhost|169\.254\.169\.254)(?=[:/])", content)
+    if internal_callback and any(word in content for word in ("webhook", "回调", "callback")):
+        add_finding(
+            kind="violation",
+            rule_id="LAB-WEBHOOK-SSRF-001",
+            reason="Webhook 样本文本包含环回或元数据地址；需验证服务端回调目标策略。",
+            evidence="仅在提交的 Webhook 文本中匹配到受限目标地址。",
+            matched_text=[internal_callback.group(0)],
+            level="high",
+            risk="若真实服务端向任意用户地址发起回调，可能触达非预期网络资源；本次未发起请求。",
+            action="使用域名 allowlist，并在 DNS 解析和每次重定向后拒绝环回、私网及链路本地地址。",
+            example_title="限制 Webhook 回调目标",
+            example_code="if not is_allowed_hostname(url.hostname) or resolves_to_private_ip(url.hostname):\n    raise ValueError(\"callback target not allowed\")",
+            verification_steps=[
+                "在隔离测试中分别提供环回、私网、链路本地和获准公网目标。",
+                "验证解析结果及每次重定向后的地址均重新经过策略检查。",
+                "确认被拒绝目标没有产生出站连接记录。",
+            ],
+            pass_criteria="受限地址和解析后落入私网的目标均在发起连接前被拒绝。",
+            fail_criteria="服务端对受限目标或重定向目标建立出站连接。",
+        )
 
     ownership_values = set(re.findall(
         r"(?:tenant|organization|org)[-_ ]?[\w-]+|(?:buyer|user|customer|account)[-_ ]?[a-z0-9-]+|买家\s*[a-z0-9]+",

@@ -31,9 +31,14 @@ export type DashboardSummary = {
   simulationSampleCount: number
   acpCallBattles: number
   ruleLibraryCaseCount: number
+  attackGenerated?: number
+  defenderDetected?: number
+  fixesSuggested?: number
+  strategyChecks?: number
 }
 export type Battle = {
   id: string
+  code?: string | null
   difficulty: Difficulty
   topic: string
   status: string
@@ -88,6 +93,7 @@ export type ScoreCategory = {
   score: number
   maxScore: number
   basis?: string
+  group?: string
 }
 
 export type RoleScore = {
@@ -96,6 +102,13 @@ export type RoleScore = {
   maxScore: number
   message?: string
   categories: ScoreCategory[]
+  summary?: {
+    processScore: number
+    effectScore: number
+    responseScore: number
+    baseScore: number
+    finalScore: number
+  }
 }
 
 export type BattleScore = {

@@ -50,9 +50,11 @@ from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend, local_rule_case_count
 from agent_attack_lab.cache import RedisJsonCache
 from agent_attack_lab.external_cases import query_external_cases
+from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 from agent_attack_lab.scoring import SCORING_VERSION, score_battle
 from agent_attack_lab.storage import BattleStore
+from agent_attack_lab.target_verify import aggregate_verdict, configured_verify_mode, verify_round
 
 
 logger = logging.getLogger("agent_attack_lab")
@@ -105,7 +107,7 @@ app.add_middleware(
     allow_origins=sorted(_cors_origins),
     allow_origin_regex=None if _browser_auth_configured else _cors_origin_regex,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
     expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID", "X-Has-More", "X-Next-Sequence"],
 )
@@ -125,6 +127,7 @@ class JsonRpcRequest(BaseModel):
 class BattleRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
+    rounds: int = Field(default=3, ge=1, le=10)
 
     @field_validator("topic")
     @classmethod
@@ -139,14 +142,30 @@ class BrowserLoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class AdminSampleRequest(BaseModel):
+    topic: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=8000)
+    source: str = Field(default="管理员录入", min_length=1, max_length=200)
+
+
+class AdminRuleRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    condition: str = Field(min_length=1, max_length=2000)
+    action: Literal["拦截", "放行"] = "拦截"
+
+
 class BattleRecord(BaseModel):
     id: str
+    code: str | None = None
     difficulty: Literal["low", "mid", "high"]
     topic: str
     status: Literal["pending", "running", "completed", "failed"]
+    rounds: int = 3
+    verdict: Literal["attacker_won", "defender_won", "undetermined"] | None = None
     createdAt: str
     attackerOut: dict[str, Any]
     defenderOut: list[dict[str, Any]]
+    stats: dict[str, int] | None = None
 
 
 class BattleEvent(BaseModel):
@@ -203,6 +222,10 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
 _battle_timeout_seconds = min(
     max(_env_int("AGENT_BATTLE_TIMEOUT_SECONDS", 300, minimum=5), 5),
     3600,
+)
+_score_backfill_batch_size = min(
+    _env_int("AGENT_SCORE_BACKFILL_BATCH_SIZE", 100, minimum=1),
+    1000,
 )
 
 
@@ -786,16 +809,89 @@ async def _tracked_agent_call(
 
 
 def _persist_internal_score(record: dict[str, Any]) -> None:
-    """Cache a terminal battle's evidence-derived score; reads support legacy fallback."""
+    """Persist a terminal battle's evidence-derived score snapshot."""
     try:
         score = score_battle(record, _battle_store.list_events(record["id"]))
         _battle_store.save_score(record["id"], score)
     except Exception as exc:  # pragma: no cover - database-specific failure path
         logger.warning(
-            "Battle %s score snapshot unavailable; live score fallback remains active (%s)",
+            "Battle %s score snapshot unavailable (%s)",
             record.get("id"),
             type(exc).__name__,
         )
+
+
+def _insufficient_internal_score() -> dict[str, Any]:
+    """Return the explicit no-snapshot response used by read APIs.
+
+    A live calculation is intentionally not exposed as an authoritative score. Terminal
+    battles are scored once and persisted in ``battle_scores``; callers without that
+    snapshot must see evidence insufficiency instead of a value that can change.
+    """
+    role_message = "缺少已持久化的 Agent 调用评分快照，无法提供真实分数。"
+    return {
+        "version": SCORING_VERSION,
+        "status": "insufficient_evidence",
+        "message": "当前战局没有可用的 battle_scores 快照；未使用前端或接口实时估算值。",
+        "attacker": {
+            "status": "insufficient_evidence",
+            "score": None,
+            "maxScore": 100,
+            "message": role_message,
+            "categories": [],
+        },
+        "defender": {
+            "status": "insufficient_evidence",
+            "score": None,
+            "maxScore": 100,
+            "message": role_message,
+            "categories": [],
+        },
+    }
+
+
+def _battle_stats(record: dict[str, Any], events: list[dict[str, Any]] | None = None) -> dict[str, int]:
+    samples = record.get("attackerOut", {}).get("samples", [])
+    defenses = record.get("defenderOut", [])
+    return {
+        "attackGenerated": len(samples),
+        "defenderDetected": sum(len(item.get("caught", [])) for item in defenses if isinstance(item, dict)),
+        "fixesSuggested": sum(len(item.get("fixed", [])) for item in defenses if isinstance(item, dict)),
+        # TODO 战略检测口径：当前以 round.completed 事件计数。
+        "strategyChecks": sum(1 for event in (events or []) if event.get("type") == "round.completed"),
+    }
+
+
+def _backfill_missing_internal_scores(limit: int = _score_backfill_batch_size) -> int:
+    """Backfill a bounded batch of terminal battles without replacing snapshots."""
+    list_records = getattr(_battle_store, "list", None)
+    list_scores = getattr(_battle_store, "list_scores", None)
+    if not callable(list_records) or not callable(list_scores) or limit <= 0:
+        return 0
+
+    records: list[dict[str, Any]] = []
+    remaining = limit
+    try:
+        for status in ("completed", "failed"):
+            if remaining <= 0:
+                break
+            batch = list_records(limit=remaining, offset=0, status=status)
+            records.extend(batch)
+            remaining -= len(batch)
+        if not records:
+            return 0
+        stored = list_scores([record["id"] for record in records])
+        missing = [record for record in records if record["id"] not in stored]
+        for record in missing:
+            _persist_internal_score(record)
+        return len(missing)
+    except Exception as exc:  # pragma: no cover - database-specific failure path
+        logger.warning("Battle score backfill unavailable (%s)", type(exc).__name__)
+        return 0
+
+
+async def _run_score_backfill() -> None:
+    await asyncio.to_thread(_backfill_missing_internal_scores)
 
 
 async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
@@ -805,6 +901,8 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         return
     events = await asyncio.to_thread(_battle_store.list_events, battle_id)
     sequence = max((event["sequence"] for event in events), default=0) + 1
+    verification_mode = configured_verify_mode()
+    verifications: list[dict[str, Any]] = []
 
     def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
         nonlocal sequence
@@ -894,11 +992,37 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     "correlationId": defense_call_id,
                 },
             )
-        add_event("defense.completed", "completed", {"roundCount": len(defender_results)})
+            verification = verify_round(sample, defense, mode=verification_mode)
+            verifications.append(verification)
+            if verification["verified"]:
+                add_event("attack.compromised", "completed", {
+                    "round": index,
+                    "targetAssetId": verification.get("targetAssetId"),
+                    "targetVerified": True,
+                    "verificationMode": verification["mode"],
+                    "simulated": verification["simulated"],
+                    "evidence": verification["evidence"],
+                    "correlationId": defense_call_id,
+                })
+        add_event(
+            "defense.completed",
+            "completed",
+            {
+                "roundCount": len(defender_results),
+                "layerInterceptions": derive_layer_interceptions(payload.topic, defender_results),
+            },
+        )
         record["status"] = "completed"
+        record["verdict"] = aggregate_verdict(verification_mode, verifications, defender_results)
         _battle_store.save(record)
         await asyncio.to_thread(_invalidate_leaderboard_cache)
-        add_event("battle.completed", "completed", {"status": record["status"]})
+        add_event("battle.completed", "completed", {
+            "status": record["status"],
+            "verdict": record["verdict"],
+            "compromisedRounds": sum(1 for item in verifications if item["verified"]),
+            "interceptedRounds": sum(1 for item in defender_results if item.get("caught")),
+            "verificationMode": verification_mode,
+        })
         await asyncio.to_thread(_persist_internal_score, record)
     except Exception as exc:
         logger.exception("Battle %s failed", battle_id)
@@ -932,10 +1056,13 @@ async def _lifespan(_app: FastAPI):
         if record["id"] in recovered_ids:
             continue
         recovered_ids.add(record["id"])
-        payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
+        payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"], rounds=record.get("rounds", 3))
         task = asyncio.create_task(_run_battle_with_tracking(record["id"], payload))
         _recovery_tasks.add(task)
         task.add_done_callback(_recovery_tasks.discard)
+    score_backfill = asyncio.create_task(_run_score_backfill())
+    _recovery_tasks.add(score_backfill)
+    score_backfill.add_done_callback(_recovery_tasks.discard)
     try:
         yield
     finally:
@@ -2250,6 +2377,113 @@ def metrics() -> dict[str, Any]:
     }
 
 
+def _admin_write_audit(request: Request, event_type: str, data: dict[str, Any]) -> None:
+    _record_audit_event(
+        event_type,
+        status="accepted",
+        request_id=request.state.request_id,
+        actor_role="admin",
+        data=data,
+    )
+
+
+@app.get("/admin/samples", summary="查询管理员攻击样本库", tags=["管理员资源"])
+def list_admin_samples(
+    request: Request,
+    response: Response,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    _check_browser_or_api_auth(request)
+    items = _battle_store.list_admin_samples(query=q.strip() if q else None, limit=limit, offset=offset)
+    response.headers["X-Total-Count"] = str(len(items))
+    return items
+
+
+@app.post("/admin/samples", status_code=201, summary="新增管理员攻击样本", tags=["管理员资源"])
+def create_admin_sample(payload: AdminSampleRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    item = _battle_store.save_admin_sample(payload.model_dump())
+    _admin_write_audit(request, "admin.sample.created", {"sampleId": item["id"], "topic": item["topic"]})
+    return item
+
+
+@app.patch("/admin/samples/{sample_id}", summary="编辑管理员攻击样本", tags=["管理员资源"])
+def update_admin_sample(sample_id: str, payload: AdminSampleRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    item = _battle_store.update_admin_sample(sample_id, payload.model_dump())
+    if item is None:
+        raise HTTPException(status_code=404, detail="攻击样本不存在")
+    _admin_write_audit(request, "admin.sample.updated", {"sampleId": sample_id})
+    return item
+
+
+@app.delete("/admin/samples/{sample_id}", status_code=204, summary="删除管理员攻击样本", tags=["管理员资源"])
+def delete_admin_sample(sample_id: str, request: Request) -> Response:
+    _check_browser_or_api_auth(request)
+    if not _battle_store.delete_admin_sample(sample_id):
+        raise HTTPException(status_code=404, detail="攻击样本不存在")
+    _admin_write_audit(request, "admin.sample.deleted", {"sampleId": sample_id})
+    return Response(status_code=204)
+
+
+@app.get("/admin/rules", summary="查询管理员防守规则库", tags=["管理员资源"])
+def list_admin_rules(
+    request: Request,
+    response: Response,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    _check_browser_or_api_auth(request)
+    items = _battle_store.list_admin_rules(query=q.strip() if q else None, limit=limit, offset=offset)
+    response.headers["X-Total-Count"] = str(len(items))
+    return items
+
+
+@app.post("/admin/rules", status_code=201, summary="新增管理员防守规则", tags=["管理员资源"])
+def create_admin_rule(payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    item = _battle_store.save_admin_rule(payload.model_dump())
+    _admin_write_audit(request, "admin.rule.created", {"ruleId": item["id"], "name": item["name"]})
+    return item
+
+
+@app.patch("/admin/rules/{rule_id}", summary="编辑管理员防守规则", tags=["管理员资源"])
+def update_admin_rule(rule_id: str, payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    item = _battle_store.update_admin_rule(rule_id, payload.model_dump())
+    if item is None:
+        raise HTTPException(status_code=404, detail="防守规则不存在")
+    _admin_write_audit(request, "admin.rule.updated", {"ruleId": rule_id})
+    return item
+
+
+@app.delete("/admin/rules/{rule_id}", status_code=204, summary="删除管理员防守规则", tags=["管理员资源"])
+def delete_admin_rule(rule_id: str, request: Request) -> Response:
+    _check_browser_or_api_auth(request)
+    if not _battle_store.delete_admin_rule(rule_id):
+        raise HTTPException(status_code=404, detail="防守规则不存在")
+    _admin_write_audit(request, "admin.rule.deleted", {"ruleId": rule_id})
+    return Response(status_code=204)
+
+
+@app.get("/admin/audit-logs", summary="查询管理员审计日志", tags=["管理员资源"])
+def list_admin_audit_logs(
+    request: Request,
+    from_time: str | None = Query(default=None, max_length=40),
+    to_time: str | None = Query(default=None, max_length=40),
+    user: str | None = Query(default=None, max_length=64),
+    operation: str | None = Query(default=None, max_length=128),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    _check_browser_or_api_auth(request)
+    return _battle_store.list_audit_events_filtered(
+        from_time=from_time, to_time=to_time, actor_role=user, event_type=operation, limit=limit,
+    )
+
+
 @app.get(
     "/dashboard/summary",
     summary="查询后台统计摘要",
@@ -2367,13 +2601,16 @@ async def create_battle(
                 )
                 return BattleRecord.model_validate(existing_record)
     battle_id = f"battle-{uuid.uuid4()}"
+    battle_code = _battle_store.next_battle_code()
     created_at = datetime.now(timezone.utc).isoformat()
     if background:
         record = BattleRecord(
             id=battle_id,
+            code=battle_code,
             difficulty=payload.difficulty,
             topic=payload.topic,
             status="pending",
+            rounds=payload.rounds,
             createdAt=created_at,
             attackerOut={"samples": []},
             defenderOut=[],
@@ -2398,6 +2635,7 @@ async def create_battle(
                 {
                     "topic": payload.topic,
                     "difficulty": payload.difficulty,
+                    "rounds": payload.rounds,
                     "attackerSource": "acp-pending" if acp_agent_configured("attacker") else "local-rule",
                     "defenderSource": "acp-pending" if acp_agent_configured("defender") else "local-rule",
                 },
@@ -2420,6 +2658,7 @@ async def create_battle(
         {
             "topic": payload.topic,
             "difficulty": payload.difficulty,
+            "rounds": payload.rounds,
             "attackerSource": "acp-pending" if acp_agent_configured("attacker") else "local-rule",
             "defenderSource": "acp-pending" if acp_agent_configured("defender") else "local-rule",
         },
@@ -2435,6 +2674,8 @@ async def create_battle(
     attack_result: dict[str, Any] = {"samples": []}
     defense_results: list[dict[str, Any]] = []
     defense_call_ids: list[str] = []
+    verification_mode = configured_verify_mode()
+    verifications: list[dict[str, Any]] = []
     try:
         attack_result, attacker_source, attack_call_id = await _tracked_agent_call(
             battle_id=battle_id,
@@ -2449,6 +2690,7 @@ async def create_battle(
             "completed",
             {
                 "sampleCount": len(attack_result["samples"]),
+                "rounds": payload.rounds,
                 "attackerSource": attacker_source,
                 "correlationId": attack_call_id,
             },
@@ -2473,9 +2715,11 @@ async def create_battle(
         add_event("battle.failed", "failed", {"error": message})
         failed_record = BattleRecord(
             id=battle_id,
+            code=battle_code,
             difficulty=payload.difficulty,
             topic=payload.topic,
             status="failed",
+            rounds=payload.rounds,
             createdAt=created_at,
             attackerOut=attack_result,
             defenderOut=defense_results,
@@ -2511,19 +2755,49 @@ async def create_battle(
                 "correlationId": correlation_id,
             },
         )
-    add_event("defense.completed", "completed", {"roundCount": len(defense_results)})
+        verification = verify_round(sample, defense, mode=verification_mode)
+        verifications.append(verification)
+        if verification["verified"]:
+            add_event("attack.compromised", "completed", {
+                "round": index,
+                "targetAssetId": verification.get("targetAssetId"),
+                "targetVerified": True,
+                "verificationMode": verification["mode"],
+                "simulated": verification["simulated"],
+                "evidence": verification["evidence"],
+                "correlationId": correlation_id,
+            })
+    add_event(
+        "defense.completed",
+        "completed",
+        {
+            "roundCount": len(defense_results),
+            "rounds": payload.rounds,
+            "verificationMode": verification_mode,
+            "layerInterceptions": derive_layer_interceptions(payload.topic, defense_results),
+        },
+    )
     record = BattleRecord(
         id=battle_id,
+        code=battle_code,
         difficulty=payload.difficulty,
         topic=payload.topic,
         status="completed",
+        rounds=payload.rounds,
+        verdict=aggregate_verdict(verification_mode, verifications, defense_results),
         createdAt=created_at,
         attackerOut=attack_result,
         defenderOut=defense_results,
     )
     _battle_store.save(record.model_dump())
     await asyncio.to_thread(_invalidate_leaderboard_cache)
-    add_event("battle.completed", "completed", {"status": record.status})
+    add_event("battle.completed", "completed", {
+        "status": record.status,
+        "verdict": record.verdict,
+        "compromisedRounds": sum(1 for item in verifications if item["verified"]),
+        "interceptedRounds": sum(1 for item in defense_results if item.get("caught")),
+        "verificationMode": verification_mode,
+    })
     for event in events:
         _battle_store.save_event(event)
     _persist_internal_score(record.model_dump())
@@ -2565,7 +2839,7 @@ def retry_battle(
             {"topic": record["topic"], "difficulty": record["difficulty"]},
         )
     )
-    payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"])
+    payload = BattleRequest(difficulty=record["difficulty"], topic=record["topic"], rounds=record.get("rounds", 3))
     _schedule_battle_task(background_tasks, battle_id, payload)
     return BattleRecord.model_validate(record)
 
@@ -2718,6 +2992,113 @@ def get_battle(battle_id: str) -> BattleRecord:
     return BattleRecord.model_validate(record)
 
 
+@app.get(
+    "/battles/{battle_id}/rounds",
+    summary="按回合聚合战局证据",
+    tags=["战局回放"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def get_battle_rounds(battle_id: str) -> dict[str, Any]:
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    events = _battle_store.list_events(battle_id)
+    grouped: dict[int, dict[str, Any]] = {}
+    call_durations = {
+        (event.get("data") or {}).get("correlationId"): (event.get("data") or {}).get("durationMs")
+        for event in events
+        if event.get("type") in {"agent.call.completed", "agent.call.failed"}
+        and isinstance((event.get("data") or {}).get("correlationId"), str)
+        and isinstance((event.get("data") or {}).get("durationMs"), (int, float))
+    }
+
+    def round_number(event: dict[str, Any]) -> int | None:
+        value = event.get("data", {}).get("round")
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    for event in events:
+        number = round_number(event)
+        if number is None:
+            continue
+        item = grouped.setdefault(number, {"round": number, "status": "running", "sample": None, "caught": [], "risks": [], "fixed": [], "startedAt": None, "finishedAt": None, "durationMs": None})
+        event_type = event.get("type")
+        data = event.get("data") or {}
+        if event_type == "round.started":
+            item["status"] = "running"
+            item["startedAt"] = event.get("createdAt")
+        elif event_type == "attack.sample.generated":
+            item["sample"] = data.get("sample")
+            item["startedAt"] = item["startedAt"] or event.get("createdAt")
+        elif event_type == "attack.compromised":
+            item["compromised"] = {
+                "targetVerified": data.get("targetVerified") is True,
+                "verificationMode": data.get("verificationMode"),
+                "simulated": data.get("simulated") is True,
+                "evidence": data.get("evidence", []),
+            }
+        elif event_type in {"defense.completed", "round.completed"}:
+            item["status"] = "completed"
+            item["finishedAt"] = event.get("createdAt")
+            if data.get("sample") is not None:
+                item["sample"] = data.get("sample")
+            for key in ("caught", "risks", "fixed"):
+                if isinstance(data.get(key), list):
+                    item[key] = data[key]
+            if isinstance(data.get("durationMs"), (int, float)):
+                item["durationMs"] = round(data["durationMs"])
+            elif isinstance(call_durations.get(data.get("correlationId")), (int, float)):
+                item["durationMs"] = round(call_durations[data["correlationId"]])
+
+    samples = record.get("attackerOut", {}).get("samples", [])
+    defenses = record.get("defenderOut", [])
+    for index, sample in enumerate(samples, start=1):
+        item = grouped.setdefault(index, {"round": index, "status": "completed" if index <= len(defenses) else "pending", "sample": None, "caught": [], "risks": [], "fixed": [], "startedAt": None, "finishedAt": None, "durationMs": None})
+        item["sample"] = item["sample"] if item["sample"] is not None else sample
+        if index <= len(defenses):
+            defense = defenses[index - 1] or {}
+            for key in ("caught", "risks", "fixed"):
+                if not item[key] and isinstance(defense.get(key), list):
+                    item[key] = defense[key]
+
+    def duration_from_timestamps(item: dict[str, Any]) -> None:
+        if item["durationMs"] is not None or not item["startedAt"] or not item["finishedAt"]:
+            return
+        try:
+            started = datetime.fromisoformat(str(item["startedAt"]).replace("Z", "+00:00"))
+            finished = datetime.fromisoformat(str(item["finishedAt"]).replace("Z", "+00:00"))
+            item["durationMs"] = max(0, round((finished - started).total_seconds() * 1000))
+        except (TypeError, ValueError):
+            item["durationMs"] = None
+
+    score_snapshot = _battle_store.get_score(battle_id)
+    if score_snapshot is None:
+        score_snapshot = score_battle(record, events)
+    score_values = {
+        "attacker": score_snapshot.get("attacker", {}).get("score"),
+        "defender": score_snapshot.get("defender", {}).get("score"),
+    }
+    for item in grouped.values():
+        duration_from_timestamps(item)
+        defense = {key: item[key] for key in ("caught", "risks", "fixed")}
+        item["layerInterceptions"] = derive_layer_interceptions(record["topic"], [defense])
+        item["scores"] = score_values
+    stats = _battle_stats(record, events)
+    # `total` reflects what was actually produced so callers never see a
+    # mismatch (for example "5 of 5" while only three rounds exist). The
+    # requested count is kept separately for diagnostics.
+    requested_rounds = max(0, int(record.get("rounds") or len(grouped)))
+    return {
+        "total": len(grouped),
+        "requestedRounds": requested_rounds,
+        "rounds": [grouped[key] for key in sorted(grouped)],
+        "stats": stats,
+    }
+
+
 def _scores(record: dict[str, Any]) -> tuple[int, int]:
     samples = record["attackerOut"].get("samples", [])
     defenses = record.get("defenderOut", [])
@@ -2730,9 +3111,12 @@ def _scores(record: dict[str, Any]) -> tuple[int, int]:
     return attacker_score, defender_score
 
 
-def _markdown_report(record: dict[str, Any], events: list[dict[str, Any]]) -> str:
+def _markdown_report(
+    record: dict[str, Any],
+    events: list[dict[str, Any]],
+    internal_score: dict[str, Any],
+) -> str:
     attacker_score, defender_score = _scores(record)
-    internal_score = score_battle(record, events)
     lines = [
         f"# 智能体攻防战报：{record['topic']}",
         "",
@@ -2803,24 +3187,30 @@ def battle_report(
         raise HTTPException(status_code=404, detail="战局不存在")
     events = _battle_store.list_events(battle_id)
     if format == "markdown":
+        stored_internal_score = _battle_store.get_score(battle_id)
         return PlainTextResponse(
-            _markdown_report(record, events),
+            _markdown_report(
+                record,
+                events,
+                stored_internal_score if stored_internal_score is not None else _insufficient_internal_score(),
+            ),
             media_type="text/markdown; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{battle_id}.md"'},
         )
     attacker_score, defender_score = _scores(record)
+    stored_internal_score = _battle_store.get_score(battle_id)
     return {
         "battle": record,
         "events": events,
         "scores": {"attacker": attacker_score, "defender": defender_score},
-        "internalScore": _battle_store.get_score(battle_id) or score_battle(record, events),
+        "internalScore": stored_internal_score if stored_internal_score is not None else _insufficient_internal_score(),
     }
 
 
 @app.get(
     "/battles/{battle_id}/score",
     summary="查看战局内部运行质量评分",
-    description="根据战局事件计算可追溯的运行评分，不代表攻击成功率或检测准确率。",
+    description="返回战局完成后持久化的可追溯运行评分，不代表攻击成功率或检测准确率；缺少快照时返回证据不足。",
     tags=["评分接口"],
     dependencies=[Depends(_read_auth_dependency)],
 )
@@ -2828,7 +3218,8 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
     record = _battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    return _battle_store.get_score(battle_id) or score_battle(record, _battle_store.list_events(battle_id))
+    stored = _battle_store.get_score(battle_id)
+    return stored if stored is not None else _insufficient_internal_score()
 
 
 @app.get(
@@ -2841,12 +3232,9 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
 def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
     items = []
     records = _battle_store.list(limit=limit)
-    events_by_battle = _battle_store.list_events_for_battles(
-        [record["id"] for record in records]
-    )
     stored_scores = _battle_store.list_scores([record["id"] for record in records])
     for record in records:
-        score = stored_scores.get(record["id"]) or score_battle(record, events_by_battle.get(record["id"], []))
+        score = stored_scores.get(record["id"]) or _insufficient_internal_score()
         items.append({
             "battleId": record["id"],
             "topic": record["topic"],
@@ -2857,11 +3245,11 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
         })
     attacker_scores = [
         item["attacker"]["score"] for item in items
-        if isinstance(item["attacker"]["score"], int)
+        if isinstance(item["attacker"]["score"], (int, float))
     ]
     defender_scores = [
         item["defender"]["score"] for item in items
-        if isinstance(item["defender"]["score"], int)
+        if isinstance(item["defender"]["score"], (int, float))
     ]
     return {
         "version": SCORING_VERSION,

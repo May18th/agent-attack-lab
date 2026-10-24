@@ -1,4 +1,4 @@
-"""Optional OpenAI-compatible chat backend used by the standalone ACP agents."""
+"""Optional DeepSeek chat backend used by the standalone ACP agents."""
 
 from __future__ import annotations
 

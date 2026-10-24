@@ -13,3 +13,15 @@ export function configurePagesApi(env = process.env) {
   env.VITE_AGENT_API = api
   return { branch, api }
 }
+
+export function configureBuildApi({ env = process.env, args = process.argv.slice(2) } = {}) {
+  const pagesBuild = configurePagesApi(env)
+  if (pagesBuild) {
+    return { target: `pages:${pagesBuild.branch}`, api: pagesBuild.api }
+  }
+
+  if (!args.includes('--production')) return null
+
+  env.VITE_AGENT_API = productionApi
+  return { target: 'production', api: productionApi }
+}

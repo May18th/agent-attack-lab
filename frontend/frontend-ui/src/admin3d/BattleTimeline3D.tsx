@@ -1,15 +1,17 @@
-import { useMemo, useState } from 'react'
-import type { AdminBattle, AdminBattleEvent } from '../adminApi'
+import { useEffect, useMemo, useState } from 'react'
+import type { AdminBattle, AdminBattleEvent, AdminBattleScore } from '../adminApi'
 import './BattleTimeline3D.css'
 
 type BattleTimeline3DProps = {
   battle: AdminBattle
   events: AdminBattleEvent[]
   audit: Record<string, unknown>
+  /** Backend score response. Undefined means the caller has not loaded it yet; null means the API returned no score. */
+  score?: AdminBattleScore | null
   eventsTotal?: number
   hasMoreEvents?: boolean
-  loadingMoreEvents?: boolean
   onLoadMoreEvents?: () => void
+  onSearchQueryChange?: (query: string) => void
   selectedEvent: AdminBattleEvent | null
   onSelectEvent: (event: AdminBattleEvent) => void
 }
@@ -22,8 +24,62 @@ function jsonPreview(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2)
 }
 
-export function BattleTimeline3D({ battle, events, audit, eventsTotal = events.length, hasMoreEvents = false, loadingMoreEvents = false, onLoadMoreEvents, selectedEvent, onSelectEvent }: BattleTimeline3DProps) {
+function scoreStatusLabel(status?: string): string {
+  if (status === 'completed') return '已完成'
+  if (status === 'pending') return '计算中'
+  if (status === 'failed') return '计算失败'
+  return status || '未知'
+}
+
+function formatRoleScore(score: AdminBattleScore['attacker'] | undefined): string {
+  if (!score || typeof score.score !== 'number') return '暂不可用'
+  return `${score.score}/${score.maxScore}`
+}
+
+function markdownReport(
+  battle: AdminBattle,
+  events: AdminBattleEvent[],
+  audit: Record<string, unknown>,
+  score: AdminBattleScore | null | undefined,
+  complete: boolean,
+): string {
+  const eventLines = events.length
+    ? events.map((event, index) => `- #${event.sequence ?? index + 1} ${String(event.eventType ?? event.type ?? event.status ?? '战局事件')}${event.timestamp ? ` — ${event.timestamp}` : ''}`).join('\n')
+    : '- 暂无事件记录'
+  const scoreLines = score
+    ? `- 评分状态：${scoreStatusLabel(score.status)}\n- 攻击方评分：${formatRoleScore(score.attacker)}\n- 防守方评分：${formatRoleScore(score.defender)}`
+    : '- 评分：暂不可用（后端未返回评分）'
+  return [
+    `# 攻防实验室战局报告：${battle.id}`,
+    '',
+    `- 主题：${battle.topic || '未命名战局'}`,
+    `- 难度：${battle.difficulty}`,
+    `- 状态：${battle.status}`,
+    `- 创建时间：${battle.createdAt}`,
+    `- 事件数据：${complete ? '完整' : '部分加载'}`,
+    '',
+    '## 评分',
+    scoreLines,
+    '',
+    '## 事件证据',
+    eventLines,
+    '',
+    '## 审计记录',
+    '```json',
+    JSON.stringify(audit ?? {}, null, 2),
+    '```',
+    '',
+  ].join('\n')
+}
+
+export function BattleTimeline3D({ battle, events, audit, score, eventsTotal = events.length, hasMoreEvents = false, onLoadMoreEvents, onSearchQueryChange, selectedEvent, onSelectEvent }: BattleTimeline3DProps) {
   const [query, setQuery] = useState('')
+  useEffect(() => {
+    // The input is intentionally local state: clear stale filters when a different battle is selected.
+    // oxlint-disable-next-line react/set-state-in-effect
+    setQuery('')
+    onSearchQueryChange?.('')
+  }, [battle.id, onSearchQueryChange])
   const orderedEvents = useMemo(() => events
     .map((event, index) => ({ event, index }))
     .sort((left, right) => (left.event.sequence ?? Number.MAX_SAFE_INTEGER) - (right.event.sequence ?? Number.MAX_SAFE_INTEGER) || left.index - right.index)
@@ -44,17 +100,42 @@ export function BattleTimeline3D({ battle, events, audit, eventsTotal = events.l
     URL.revokeObjectURL(objectUrl)
   }
 
+  const exportMarkdown = () => {
+    const content = markdownReport(battle, orderedEvents, audit, score, !hasMoreEvents)
+    const objectUrl = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }))
+    const anchor = document.createElement('a')
+    anchor.href = objectUrl
+    anchor.download = `${battle.id}-report.md`
+    anchor.click()
+    URL.revokeObjectURL(objectUrl)
+  }
+
+  const riskLabel = battle.status === 'failed' ? '高风险：战局失败' : battle.difficulty === 'high' ? '高风险：高难度战局' : undefined
+
   return <section className="battle-timeline" aria-label={`${battle.topic || battle.id}战局记录`}>
     <header className="battle-timeline-heading">
       <div><h3>事件记录</h3><p>{battle.topic || battle.id} · {battle.id}</p></div>
-      <span>{filteredEvents.length === orderedEvents.length ? `${orderedEvents.length} 条` : `${filteredEvents.length} / ${orderedEvents.length} 条`}</span>
+      <div className="battle-timeline-heading-meta">
+        {riskLabel && <strong className="battle-timeline-risk" role="status" aria-label={riskLabel}>{riskLabel}</strong>}
+        <span>{filteredEvents.length === orderedEvents.length ? `${orderedEvents.length} 条` : `${filteredEvents.length} / ${orderedEvents.length} 条`}</span>
+      </div>
     </header>
+    {score !== undefined && <section className="battle-timeline-score" aria-label="战局评分">
+      <div className="battle-timeline-score-heading"><strong>战局评分</strong><span>评分状态：{score ? scoreStatusLabel(score.status) : '暂不可用'}</span></div>
+      {score ? <div className="battle-timeline-score-grid">
+        <span>攻击方 <strong>{formatRoleScore(score.attacker)}</strong></span>
+        <span>防守方 <strong>{formatRoleScore(score.defender)}</strong></span>
+      </div> : <p>评分暂不可用，未使用前端估算值。</p>}
+    </section>}
     <div className="battle-timeline-tools">
       <label className="battle-timeline-search">
         <span>搜索</span>
-        <input aria-label="搜索事件记录" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="类型、序号或事件内容" />
+        <input aria-label="搜索事件记录" type="search" value={query} onChange={(event) => { const value = event.target.value; setQuery(value); onSearchQueryChange?.(value) }} placeholder="类型、序号或事件内容" />
       </label>
-      <button className="battle-timeline-export" type="button" onClick={exportEvents} disabled={!orderedEvents.length}>{hasMoreEvents ? '导出已加载事件' : '导出事件'}</button>
+      <div className="battle-timeline-export-actions">
+        <button className="battle-timeline-export" type="button" onClick={exportEvents} disabled={!orderedEvents.length}>{hasMoreEvents ? '导出已加载事件' : '导出事件'}</button>
+        <button className="battle-timeline-export" type="button" onClick={exportMarkdown} disabled={!orderedEvents.length && !score}>导出 Markdown 报告</button>
+      </div>
     </div>
     {filteredEvents.length ? <ol className="battle-timeline-track" aria-label="战局事件列表">
       {filteredEvents.map((event, index) => {
@@ -72,7 +153,7 @@ export function BattleTimeline3D({ battle, events, audit, eventsTotal = events.l
         </li>
       })}
     </ol> : <p className="battle-timeline-empty">{orderedEvents.length ? '没有匹配的事件' : '本场暂无事件'}</p>}
-    {hasMoreEvents && <button className="battle-timeline-load-more" type="button" disabled={loadingMoreEvents} onClick={onLoadMoreEvents}>{loadingMoreEvents ? '正在加载事件…' : `加载更多事件（${events.length} / ${eventsTotal}）`}</button>}
+    {hasMoreEvents && <button className="battle-timeline-load-more" type="button" onClick={onLoadMoreEvents}>加载更多事件（{events.length} / {eventsTotal}）</button>}
     {selectedEvent && <details className="battle-timeline-selection" open>
       <summary>事件详情：{selectedEvent.sequence ?? '—'} · {eventLabel(selectedEvent)}</summary>
       <pre>{jsonPreview(selectedEvent)}</pre>

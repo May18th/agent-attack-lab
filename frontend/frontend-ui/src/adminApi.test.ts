@@ -12,8 +12,10 @@ import {
   getAdminReport,
   getAdminSession,
   listAdminBattles,
+  loginAdminSession,
   logoutAdminSession,
   retryAdminBattle,
+  createAdminSample, createAdminRule, deleteAdminSample, deleteAdminRule, listAdminSamples, listAdminRules, listAdminAuditLogs, updateAdminSample, updateAdminRule,
 } from './adminApi'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -27,12 +29,42 @@ function response(body: unknown, init: ResponseInit = {}) {
 }
 
 describe('admin API', () => {
+  it('manages admin libraries and audit logs through the admin endpoints', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => response(url.includes('/admin/audit-logs') ? [] : [{ id: 's-1' }], { headers: { 'X-Total-Count': '1' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(listAdminSamples('提示')).resolves.toEqual({ items: [{ id: 's-1' }], total: 1 })
+    await createAdminSample({ topic: '提示', content: 'x', source: '测试' })
+    await updateAdminSample('s/1', { topic: '提示', content: 'y', source: '测试' })
+    await deleteAdminSample('s/1')
+    await listAdminRules('规则')
+    await createAdminRule({ name: '规则', condition: 'x', action: '拦截' })
+    await updateAdminRule('r/1', { name: '规则', condition: 'y', action: '放行' })
+    await deleteAdminRule('r/1')
+    await listAdminAuditLogs({ operation: 'admin.sample.created' })
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    expect(urls.some((url) => url.includes('/admin/samples'))).toBe(true)
+    expect(urls.some((url) => url.includes('/admin/rules'))).toBe(true)
+    expect(urls.some((url) => url.includes('/admin/audit-logs'))).toBe(true)
+  })
   it('gets the browser admin session with credentials', async () => {
     const fetchMock = vi.fn().mockResolvedValue(response({ enabled: true, authenticated: true }))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(getAdminSession()).resolves.toEqual({ enabled: true, authenticated: true })
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/auth/session'), expect.objectContaining({ credentials: 'include' }))
+  })
+
+  it('logs in with the browser admin password', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({ authenticated: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(loginAdminSession('secret')).resolves.toBeUndefined()
+    expect(fetchMock.mock.calls[0][0]).toContain('/auth/session')
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      credentials: 'include',
+      body: JSON.stringify({ password: 'secret' }),
+    })
   })
 
   it('lists battles with filters and parses the total header', async () => {

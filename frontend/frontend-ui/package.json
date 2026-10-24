@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "node scripts/build.mjs",
+    "build:production": "npm run build -- --production",
+    "predeploy": "npm run build:production",
     "deploy": "npx wrangler deploy",
     "lint": "oxlint",
     "preview": "vite preview",
