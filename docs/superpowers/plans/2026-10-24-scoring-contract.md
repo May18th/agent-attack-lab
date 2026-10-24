@@ -29,35 +29,35 @@
 
 **Files:** `backend/src/agent_attack_lab/scoring.py`, `backend/tests/test_scoring.py`, `frontend/frontend-ui/src/api.ts`
 
-- [ ] 写失败测试：权重合计 40、前台公式示例、`frontend-v1`、summary/group 与响应分边界。
-- [ ] 实现流程分 5 项、效果分 60、响应分 100、最终分公式和兼容结构。
-- [ ] 验证评分单测及旧快照读取分支。
+- [x] 写失败测试：权重合计 40、前台公式示例、`frontend-v1`、summary/group 与响应分边界。
+- [x] 实现流程分 5 项、效果分 60、响应分 100、最终分公式和兼容结构。
+- [x] 验证评分单测及旧快照读取分支。
 
 ### Task 2: 回合聚合与统计接口
 
 **Files:** `backend/src/agent_attack_lab/service.py`, `backend/src/agent_attack_lab/storage.py`, `backend/tests/test_service.py`
 
-- [ ] 写失败测试覆盖 `/battles/{id}/rounds` 聚合、缺失事件容错和四项统计。
-- [ ] 实现回合聚合、stats 和 dashboard_summary 字段。
-- [ ] 验证服务测试。
+- [x] 写失败测试覆盖 `/battles/{id}/rounds` 聚合、缺失事件容错和四项统计。
+- [x] 实现回合聚合、stats 和 dashboard_summary 字段。
+- [x] 验证服务测试。
 
 ### Task 3: 战局编号与迁移
 
 **Files:** `backend/alembic/versions/20261024_0004_battle_code.py`, `backend/src/agent_attack_lab/storage.py`, `backend/src/agent_attack_lab/service.py`, storage tests
 
-- [ ] 写失败测试验证 `A-001` 编号、旧数据可空及三库 SQL 分支。
-- [ ] 实现迁移、序列表/等价取号、BattleRecord code 字段和前端回退。
-- [ ] 验证迁移脚本和 SQLite 存储测试。
+- [x] 写失败测试验证 `A-001` 编号、旧数据可空及三库 SQL 分支。
+- [x] 实现迁移、序列表/等价取号、BattleRecord code 字段和前端回退。
+- [x] 验证迁移脚本和 SQLite 存储测试。
 
 ### Task 4: Admin API/UI 接入
 
 **Files:** `frontend/frontend-ui/src/adminApi.ts`, `frontend/frontend-ui/src/AdminApp.tsx`, `frontend/frontend-ui/src/AdminApp.css`, frontend tests
 
-- [ ] 写失败测试验证 7 类 API 方法和三个 tab 可见。
-- [ ] 实现样本库、规则库、审计日志列表/搜索/新增/编辑/删除弹窗。
-- [ ] 验证 Vitest 和 TypeScript build。
+- [x] 写失败测试验证 7 类 API 方法和三个 tab 可见。
+- [x] 实现样本库、规则库、审计日志列表/搜索/新增/编辑/删除弹窗。
+- [x] 验证 Vitest 和 TypeScript build。
 
 ### Task 5: 全量验收
 
-- [ ] 运行 backend pytest、frontend npm test/build、敏感文件检查。
-- [ ] 检查 diff 只包含本任务相关变更并记录未能实际连接的数据库验证项。
+- [x] 运行 backend pytest、frontend npm test/build、敏感文件检查。
+- [x] 检查 diff 只包含本任务相关变更并记录未能实际连接的数据库验证项。
