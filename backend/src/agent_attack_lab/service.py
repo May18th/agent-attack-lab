@@ -55,6 +55,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from agent_attack_lab import state
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
     call_attacker,
@@ -82,12 +83,10 @@ from agent_attack_lab.agents.rule_discovery import (
 )
 from agent_attack_lab.aip_compat import server_identity_options
 from agent_attack_lab.battle_audit import audit_battle
-from agent_attack_lab.cache import RedisJsonCache
 from agent_attack_lab.external_cases import query_external_cases
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 from agent_attack_lab.scoring import SCORING_VERSION, score_battle, score_battle_rounds
-from agent_attack_lab.storage import BattleStore
 from agent_attack_lab.target_verify import (
     aggregate_verdict,
     configured_verify_mode,
@@ -249,7 +248,6 @@ class BattleEvent(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-_battle_store = BattleStore()
 _started_at = time.monotonic()
 _request_count = 0
 _request_errors = 0
@@ -277,12 +275,6 @@ _aip_server_options = server_identity_options(
     setting_name="AGENT_IDENTITY_BINDING_ENABLED",
 )
 _event_data_max_bytes = 32768
-_leaderboard_cache: tuple[float, dict[str, Any]] | None = None
-_redis_cache = RedisJsonCache()
-_recovery_tasks: set[asyncio.Task[Any]] = set()
-_battle_tasks: dict[str, asyncio.Task[Any]] = {}
-_cancel_requested: set[str] = set()
-_idempotency_lock = Lock()
 _battle_timeout_count = 0
 _battle_cancel_count = 0
 
@@ -333,10 +325,6 @@ _event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=10
 _external_cases_database = Path(
     os.getenv("AGENT_EXTERNAL_CASE_DB", ".data/external_security_cases.sqlite3")
 )
-_rate_windows: dict[str, deque[float]] = defaultdict(deque)
-_rate_lock = Lock()
-_public_battle_rate_windows: dict[str, deque[float]] = defaultdict(deque)
-_public_battle_rate_lock = Lock()
 
 
 def _request_id(request: Request) -> str:
@@ -639,8 +627,8 @@ def _public_battle_rate_limit_dependency(request: Request) -> None:
     client_key = _browser_client_ip(request)
     now = time.monotonic()
     cutoff = now - 60
-    with _public_battle_rate_lock:
-        window = _public_battle_rate_windows[client_key]
+    with state.public_battle_rate_lock:
+        window = state.public_battle_rate_windows[client_key]
         while window and window[0] <= cutoff:
             window.popleft()
         if len(window) >= _public_battle_limit_per_minute:
@@ -661,8 +649,8 @@ def _rate_limit_dependency(request: Request) -> None:
     client_key = request.client.host if request.client else "unknown"
     now = time.monotonic()
     cutoff = now - 60
-    with _rate_lock:
-        window = _rate_windows[client_key]
+    with state.rate_lock:
+        window = state.rate_windows[client_key]
         while window and window[0] <= cutoff:
             window.popleft()
         if len(window) >= _rate_limit_per_minute:
@@ -677,9 +665,8 @@ def _rate_limit_dependency(request: Request) -> None:
 
 
 def _invalidate_leaderboard_cache() -> None:
-    global _leaderboard_cache
-    _leaderboard_cache = None
-    _redis_cache.delete(
+    state.leaderboard_cache = None
+    state.redis_cache.delete(
         "agent-attack-lab:v1:leaderboard",
         "agent-attack-lab:v1:dashboard-summary",
         "agent-attack-lab:v2:dashboard-summary",
@@ -781,7 +768,7 @@ def _record_audit_event(
     data: dict[str, Any] | None = None,
 ) -> None:
     try:
-        _battle_store.save_audit_event(
+        state.battle_store.save_audit_event(
             {
                 "id": f"audit-{uuid.uuid4()}",
                 "eventType": event_type,
@@ -801,13 +788,13 @@ def _record_audit_event(
 
 
 def _mark_battle_terminal(battle_id: str, event_type: str, reason: str) -> None:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None or record["status"] in {"completed", "failed"}:
         return
     record["status"] = "failed"
-    _battle_store.save(record)
-    events = _battle_store.list_events(battle_id)
-    _battle_store.save_event(
+    state.battle_store.save(record)
+    events = state.battle_store.list_events(battle_id)
+    state.battle_store.save_event(
         _event(
             battle_id,
             max((item["sequence"] for item in events), default=0) + 1,
@@ -831,7 +818,7 @@ async def _run_battle_with_tracking(battle_id: str, payload: BattleRequest) -> N
     global _battle_timeout_count
     current = asyncio.current_task()
     if current is not None:
-        _battle_tasks[battle_id] = current
+        state.battle_tasks[battle_id] = current
     try:
         await asyncio.wait_for(
             _run_battle_async(battle_id, payload), timeout=_battle_timeout_seconds
@@ -840,13 +827,13 @@ async def _run_battle_with_tracking(battle_id: str, payload: BattleRequest) -> N
         _battle_timeout_count += 1
         _mark_battle_terminal(battle_id, "battle.timeout", "execution_timeout")
     except asyncio.CancelledError:
-        if battle_id in _cancel_requested:
-            _cancel_requested.discard(battle_id)
+        if battle_id in state.cancel_requested:
+            state.cancel_requested.discard(battle_id)
             _mark_battle_terminal(battle_id, "battle.cancelled", "requested_by_client")
             return
         raise
     finally:
-        _battle_tasks.pop(battle_id, None)
+        state.battle_tasks.pop(battle_id, None)
 
 
 def _schedule_battle_task(
@@ -860,7 +847,7 @@ async def _battle_attack(
 ) -> tuple[dict[str, Any], str]:
     agent_payload = payload.model_dump()
     knowledge = build_attacker_knowledge(
-        _battle_store.list_admin_samples(limit=200, offset=0),
+        state.battle_store.list_admin_samples(limit=200, offset=0),
         topic=payload.topic,
     )
     if knowledge["records"]:
@@ -882,7 +869,7 @@ async def _battle_defend(
 ) -> tuple[dict[str, Any], str]:
     topic = str(sample.get("topic") or "")
     knowledge = build_defender_knowledge(
-        _battle_store.list_admin_rules(limit=200, offset=0),
+        state.battle_store.list_admin_rules(limit=200, offset=0),
         topic=topic,
     )
     agent_payload: dict[str, Any] = {"sample": sample}
@@ -985,8 +972,8 @@ async def _tracked_agent_call(
 def _persist_internal_score(record: dict[str, Any]) -> None:
     """Persist a terminal battle's evidence-derived score snapshot."""
     try:
-        score = score_battle(record, _battle_store.list_events(record["id"]))
-        _battle_store.save_score(record["id"], score)
+        score = score_battle(record, state.battle_store.list_events(record["id"]))
+        state.battle_store.save_score(record["id"], score)
     except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
         logger.warning(
             "Battle %s score snapshot unavailable (%s)",
@@ -1046,8 +1033,8 @@ def _battle_stats(
 
 def _backfill_missing_internal_scores(limit: int = _score_backfill_batch_size) -> int:
     """Backfill a bounded batch of terminal battles without replacing snapshots."""
-    list_records = getattr(_battle_store, "list", None)
-    list_scores = getattr(_battle_store, "list_scores", None)
+    list_records = getattr(state.battle_store, "list", None)
+    list_scores = getattr(state.battle_store, "list_scores", None)
     if not callable(list_records) or not callable(list_scores) or limit <= 0:
         return 0
 
@@ -1078,10 +1065,10 @@ async def _run_score_backfill() -> None:
 
 async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
     """Run a battle in stages so clients can observe its event stream."""
-    record = await asyncio.to_thread(_battle_store.get, battle_id)
+    record = await asyncio.to_thread(state.battle_store.get, battle_id)
     if record is None:
         return
-    events = await asyncio.to_thread(_battle_store.list_events, battle_id)
+    events = await asyncio.to_thread(state.battle_store.list_events, battle_id)
     sequence = max((event["sequence"] for event in events), default=0) + 1
     verification_mode = configured_verify_mode()
     verifications: list[dict[str, Any]] = []
@@ -1090,11 +1077,11 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         nonlocal sequence
         event = _event(battle_id, sequence, event_type, status, data)
         sequence += 1
-        _battle_store.save_event(event)
+        state.battle_store.save_event(event)
 
     try:
         record["status"] = "running"
-        _battle_store.save(record)
+        state.battle_store.save(record)
         add_event(
             "attack.started",
             "running",
@@ -1115,7 +1102,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             add_event=add_event,
         )
         record["attackerOut"] = attack_result
-        _battle_store.save(record)
+        state.battle_store.save(record)
         for index, sample in enumerate(attack_result["samples"], start=1):
             add_event(
                 "attack.sample.generated",
@@ -1161,7 +1148,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             )
             defender_results.append(defense)
             record["defenderOut"] = defender_results
-            _battle_store.save(record)
+            state.battle_store.save(record)
             add_event(
                 "round.completed",
                 "completed",
@@ -1208,7 +1195,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         record["verdict"] = aggregate_verdict(
             verification_mode, verifications, defender_results
         )
-        _battle_store.save(record)
+        state.battle_store.save(record)
         await asyncio.to_thread(_invalidate_leaderboard_cache)
         add_event(
             "battle.completed",
@@ -1229,7 +1216,7 @@ async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
     except Exception as exc:
         logger.exception("Battle %s failed", battle_id)
         record["status"] = "failed"
-        _battle_store.save(record)
+        state.battle_store.save(record)
         await asyncio.to_thread(_invalidate_leaderboard_cache)
         message = (
             "ACP 独立 Agent 调用失败，请检查服务端日志和 URL/证书配置"
@@ -1249,7 +1236,9 @@ async def _lifespan(_app: FastAPI):
     for status in ("pending", "running"):
         offset = 0
         while True:
-            records = _battle_store.list(limit=page_size, offset=offset, status=status)
+            records = state.battle_store.list(
+                limit=page_size, offset=offset, status=status
+            )
             recovered_records.extend(records)
             offset += len(records)
             if len(records) < page_size:
@@ -1264,21 +1253,21 @@ async def _lifespan(_app: FastAPI):
             rounds=record.get("rounds", 3),
         )
         task = asyncio.create_task(_run_battle_with_tracking(record["id"], payload))
-        _recovery_tasks.add(task)
-        task.add_done_callback(_recovery_tasks.discard)
+        state.recovery_tasks.add(task)
+        task.add_done_callback(state.recovery_tasks.discard)
     score_backfill = asyncio.create_task(_run_score_backfill())
-    _recovery_tasks.add(score_backfill)
-    score_backfill.add_done_callback(_recovery_tasks.discard)
+    state.recovery_tasks.add(score_backfill)
+    score_backfill.add_done_callback(state.recovery_tasks.discard)
     try:
         yield
     finally:
-        pending = list(_recovery_tasks)
+        pending = list(state.recovery_tasks)
         for task in pending:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-        _battle_store.close()
-        _redis_cache.close()
+        state.battle_store.close()
+        state.redis_cache.close()
 
 
 app.router.lifespan_context = _lifespan
@@ -2399,7 +2388,7 @@ def dashboard(
 def health(request: Request) -> dict[str, Any]:
     storage_status = "ok"
     try:
-        _battle_store.count()
+        state.battle_store.count()
     except Exception:  # noqa: BLE001 - health must report degraded storage instead of failing.
         storage_status = "error"
     return {
@@ -2603,15 +2592,15 @@ def metrics() -> dict[str, Any]:
         "rateLimitPerMinute": _rate_limit_per_minute,
         "protectReadRoutes": _protect_read_routes,
         "eventDataMaxBytes": _event_data_max_bytes,
-        "recoveryTasks": len(_recovery_tasks),
-        "activeBattleTasks": len(_battle_tasks),
+        "recoveryTasks": len(state.recovery_tasks),
+        "activeBattleTasks": len(state.battle_tasks),
         "battleTimeouts": _battle_timeout_count,
         "battleCancellations": _battle_cancel_count,
         "acpRetries": acp["retries"],
         "acpTimeouts": acp["timeouts"],
-        "auditEvents": _battle_store.count_audit_events(),
-        "battles": _battle_store.count(),
-        "events": _battle_store.count_events(),
+        "auditEvents": state.battle_store.count_audit_events(),
+        "battles": state.battle_store.count(),
+        "events": state.battle_store.count_events(),
     }
 
 
@@ -2634,7 +2623,7 @@ def list_admin_samples(
     offset: int = Query(default=0, ge=0),
 ) -> list[dict[str, Any]]:
     _check_browser_or_api_auth(request)
-    items = _battle_store.list_admin_samples(
+    items = state.battle_store.list_admin_samples(
         query=q.strip() if q else None, limit=limit, offset=offset
     )
     response.headers["X-Total-Count"] = str(len(items))
@@ -2648,7 +2637,7 @@ def create_admin_sample(
     payload: AdminSampleRequest, request: Request
 ) -> dict[str, Any]:
     _check_browser_or_api_auth(request)
-    item = _battle_store.save_admin_sample(payload.model_dump())
+    item = state.battle_store.save_admin_sample(payload.model_dump())
     _admin_write_audit(
         request,
         "admin.sample.created",
@@ -2664,7 +2653,7 @@ def update_admin_sample(
     sample_id: str, payload: AdminSampleRequest, request: Request
 ) -> dict[str, Any]:
     _check_browser_or_api_auth(request)
-    item = _battle_store.update_admin_sample(sample_id, payload.model_dump())
+    item = state.battle_store.update_admin_sample(sample_id, payload.model_dump())
     if item is None:
         raise HTTPException(status_code=404, detail="攻击样本不存在")
     _admin_write_audit(request, "admin.sample.updated", {"sampleId": sample_id})
@@ -2679,7 +2668,7 @@ def update_admin_sample(
 )
 def delete_admin_sample(sample_id: str, request: Request) -> Response:
     _check_browser_or_api_auth(request)
-    if not _battle_store.delete_admin_sample(sample_id):
+    if not state.battle_store.delete_admin_sample(sample_id):
         raise HTTPException(status_code=404, detail="攻击样本不存在")
     _admin_write_audit(request, "admin.sample.deleted", {"sampleId": sample_id})
     return Response(status_code=204)
@@ -2694,7 +2683,7 @@ def list_admin_rules(
     offset: int = Query(default=0, ge=0),
 ) -> list[dict[str, Any]]:
     _check_browser_or_api_auth(request)
-    items = _battle_store.list_admin_rules(
+    items = state.battle_store.list_admin_rules(
         query=q.strip() if q else None, limit=limit, offset=offset
     )
     response.headers["X-Total-Count"] = str(len(items))
@@ -2706,7 +2695,7 @@ def list_admin_rules(
 )
 def create_admin_rule(payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
     _check_browser_or_api_auth(request)
-    item = _battle_store.save_admin_rule(payload.model_dump())
+    item = state.battle_store.save_admin_rule(payload.model_dump())
     _admin_write_audit(
         request, "admin.rule.created", {"ruleId": item["id"], "name": item["name"]}
     )
@@ -2742,7 +2731,7 @@ def update_admin_rule(
     rule_id: str, payload: AdminRuleRequest, request: Request
 ) -> dict[str, Any]:
     _check_browser_or_api_auth(request)
-    item = _battle_store.update_admin_rule(rule_id, payload.model_dump())
+    item = state.battle_store.update_admin_rule(rule_id, payload.model_dump())
     if item is None:
         raise HTTPException(status_code=404, detail="防守规则不存在")
     _admin_write_audit(request, "admin.rule.updated", {"ruleId": rule_id})
@@ -2757,7 +2746,7 @@ def update_admin_rule(
 )
 def delete_admin_rule(rule_id: str, request: Request) -> Response:
     _check_browser_or_api_auth(request)
-    if not _battle_store.delete_admin_rule(rule_id):
+    if not state.battle_store.delete_admin_rule(rule_id):
         raise HTTPException(status_code=404, detail="防守规则不存在")
     _admin_write_audit(request, "admin.rule.deleted", {"ruleId": rule_id})
     return Response(status_code=204)
@@ -2773,7 +2762,7 @@ def list_admin_audit_logs(
     limit: int = Query(default=200, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     _check_browser_or_api_auth(request)
-    return _battle_store.list_audit_events_filtered(
+    return state.battle_store.list_audit_events_filtered(
         from_time=from_time,
         to_time=to_time,
         actor_role=user,
@@ -2794,15 +2783,15 @@ def list_admin_audit_logs(
 )
 def dashboard_summary() -> dict[str, int]:
     cache_key = "agent-attack-lab:v2:dashboard-summary"
-    cached = _redis_cache.get_json(cache_key)
+    cached = state.redis_cache.get_json(cache_key)
     if isinstance(cached, dict):
         return {str(key): int(value) for key, value in cached.items()}
     result = {
-        **_battle_store.dashboard_summary(),
+        **state.battle_store.dashboard_summary(),
         "ruleLibraryCaseCount": local_rule_case_count(),
         "owaspLlmRuleCount": len(OWASP_LLM_CATEGORIES),
     }
-    _redis_cache.set_json(cache_key, result)
+    state.redis_cache.set_json(cache_key, result)
     return result
 
 
@@ -2837,7 +2826,7 @@ def list_external_cases(
             json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
     )
-    cached = _redis_cache.get_json(cache_key)
+    cached = state.redis_cache.get_json(cache_key)
     if isinstance(cached, dict):
         return cached
     result = query_external_cases(
@@ -2849,7 +2838,7 @@ def list_external_cases(
         offset=offset,
     )
     if result.get("available"):
-        _redis_cache.set_json(cache_key, result, ttl_seconds=300)
+        state.redis_cache.set_json(cache_key, result, ttl_seconds=300)
     return result
 
 
@@ -2861,11 +2850,11 @@ def list_external_cases(
     dependencies=[Depends(_read_auth_dependency)],
 )
 def battle_audit(battle_id: str) -> dict[str, Any]:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    result = audit_battle(record, _battle_store.list_events(battle_id))
-    result["auditEvents"] = _battle_store.list_audit_events(battle_id=battle_id)
+    result = audit_battle(record, state.battle_store.list_events(battle_id))
+    result["auditEvents"] = state.battle_store.list_audit_events(battle_id=battle_id)
     return result
 
 
@@ -2886,14 +2875,14 @@ async def create_battle(
     idempotency_key = _idempotency_key(request) if background else None
     fingerprint = _battle_fingerprint(payload) if idempotency_key else None
     if idempotency_key and fingerprint:
-        with _idempotency_lock:
-            existing = _battle_store.get_idempotency(idempotency_key)
+        with state.idempotency_lock:
+            existing = state.battle_store.get_idempotency(idempotency_key)
             if existing is not None:
                 if existing["fingerprint"] != fingerprint:
                     raise HTTPException(
                         status_code=409, detail="Idempotency-Key 已用于不同请求"
                     )
-                existing_record = _battle_store.get(existing["battleId"])
+                existing_record = state.battle_store.get(existing["battleId"])
                 if existing_record is None:
                     raise HTTPException(
                         status_code=409, detail="幂等记录对应的战局已不存在"
@@ -2908,7 +2897,7 @@ async def create_battle(
                 )
                 return BattleRecord.model_validate(existing_record)
     battle_id = f"battle-{uuid.uuid4()}"
-    battle_code = _battle_store.next_battle_code()
+    battle_code = state.battle_store.next_battle_code()
     created_at = datetime.now(UTC).isoformat()
     if background:
         record = BattleRecord(
@@ -2922,9 +2911,9 @@ async def create_battle(
             attackerOut={"samples": []},
             defenderOut=[],
         )
-        _battle_store.save(record.model_dump())
+        state.battle_store.save(record.model_dump())
         if idempotency_key and fingerprint:
-            _battle_store.save_idempotency(idempotency_key, fingerprint, battle_id)
+            state.battle_store.save_idempotency(idempotency_key, fingerprint, battle_id)
         _record_audit_event(
             "battle.created",
             status="accepted",
@@ -2936,7 +2925,7 @@ async def create_battle(
                 "idempotencyKeyPresent": bool(idempotency_key),
             },
         )
-        _battle_store.save_event(
+        state.battle_store.save_event(
             _event(
                 battle_id,
                 1,
@@ -3044,9 +3033,9 @@ async def create_battle(
             attackerOut=attack_result,
             defenderOut=defense_results,
         )
-        _battle_store.save(failed_record.model_dump())
+        state.battle_store.save(failed_record.model_dump())
         for event in events:
-            _battle_store.save_event(event)
+            state.battle_store.save_event(event)
         _persist_internal_score(failed_record.model_dump())
         await asyncio.to_thread(_invalidate_leaderboard_cache)
         if isinstance(exc, ACPAgentError):
@@ -3118,7 +3107,7 @@ async def create_battle(
         attackerOut=attack_result,
         defenderOut=defense_results,
     )
-    _battle_store.save(record.model_dump())
+    state.battle_store.save(record.model_dump())
     await asyncio.to_thread(_invalidate_leaderboard_cache)
     add_event(
         "battle.completed",
@@ -3134,7 +3123,7 @@ async def create_battle(
         },
     )
     for event in events:
-        _battle_store.save_event(event)
+        state.battle_store.save_event(event)
     _persist_internal_score(record.model_dump())
     return record
 
@@ -3153,7 +3142,7 @@ def retry_battle(
     background_tasks: BackgroundTasks,
 ) -> BattleRecord:
     _check_browser_or_api_auth(request)
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     if record["status"] != "failed":
@@ -3161,11 +3150,11 @@ def retry_battle(
     record["status"] = "pending"
     record["attackerOut"] = {"samples": []}
     record["defenderOut"] = []
-    _battle_store.save(record)
-    _battle_store.delete_score(battle_id)
+    state.battle_store.save(record)
+    state.battle_store.delete_score(battle_id)
     _invalidate_leaderboard_cache()
-    events = _battle_store.list_events(battle_id)
-    _battle_store.save_event(
+    events = state.battle_store.list_events(battle_id)
+    state.battle_store.save_event(
         _event(
             battle_id,
             max((item["sequence"] for item in events), default=0) + 1,
@@ -3193,15 +3182,15 @@ def retry_battle(
 def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
     global _battle_cancel_count
     _check_browser_or_api_auth(request)
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     if record["status"] in {"completed", "failed"}:
         raise HTTPException(status_code=409, detail="终态战局不能取消")
     _battle_cancel_count += 1
-    task = _battle_tasks.get(battle_id)
+    task = state.battle_tasks.get(battle_id)
     if task is not None and not task.done():
-        _cancel_requested.add(battle_id)
+        state.cancel_requested.add(battle_id)
         task.cancel()
     _mark_battle_terminal(battle_id, "battle.cancelled", "requested_by_client")
     _record_audit_event(
@@ -3212,7 +3201,7 @@ def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
         actor_role="operator",
         data={"taskTracked": task is not None and not task.done()},
     )
-    updated = _battle_store.get(battle_id)
+    updated = state.battle_store.get(battle_id)
     if updated is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return BattleRecord.model_validate(updated)
@@ -3228,12 +3217,12 @@ def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
 )
 def delete_battle(battle_id: str, request: Request) -> Response:
     _check_browser_or_api_auth(request)
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     if record["status"] in {"pending", "running"}:
         raise HTTPException(status_code=409, detail="运行中的战局不能删除")
-    _battle_store.delete(battle_id)
+    state.battle_store.delete(battle_id)
     _invalidate_leaderboard_cache()
     return Response(status_code=204)
 
@@ -3253,11 +3242,11 @@ def list_battles(
     q: str | None = Query(default=None, max_length=200, description="按主题或编号搜索"),
 ) -> list[BattleRecord]:
     response.headers["X-Total-Count"] = str(
-        _battle_store.count(difficulty=difficulty, status=status, query=q)
+        state.battle_store.count(difficulty=difficulty, status=status, query=q)
     )
     return [
         BattleRecord.model_validate(item)
-        for item in _battle_store.list(
+        for item in state.battle_store.list(
             limit=limit, offset=offset, difficulty=difficulty, status=status, query=q
         )
     ]
@@ -3284,7 +3273,7 @@ def get_battle_events(
         default=None, max_length=200, description="搜索事件类型和原始事件数据"
     ),
 ) -> list[BattleEvent]:
-    if _battle_store.get(battle_id) is None:
+    if state.battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
 
     def utc_iso(value: datetime | None) -> str | None:
@@ -3300,7 +3289,7 @@ def get_battle_events(
     if normalized_from and normalized_to and normalized_from > normalized_to:
         raise HTTPException(status_code=422, detail="from_time 不能晚于 to_time")
 
-    events, total = _battle_store.query_events(
+    events, total = state.battle_store.query_events(
         battle_id,
         limit=limit,
         after_sequence=after_sequence,
@@ -3324,11 +3313,11 @@ def get_battle_events(
     dependencies=[Depends(_read_auth_dependency)],
 )
 def replay_battle(battle_id: str) -> dict[str, Any]:
-    if _battle_store.get(battle_id) is None:
+    if state.battle_store.get(battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return {
         "battleId": battle_id,
-        "events": _battle_store.list_events(battle_id),
+        "events": state.battle_store.list_events(battle_id),
         "mode": "replay",
     }
 
@@ -3340,7 +3329,7 @@ def replay_battle(battle_id: str) -> dict[str, Any]:
     tags=["战局接口"],
 )
 def get_battle(battle_id: str) -> BattleRecord:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     return BattleRecord.model_validate(record)
@@ -3353,10 +3342,10 @@ def get_battle(battle_id: str) -> BattleRecord:
     dependencies=[Depends(_read_auth_dependency)],
 )
 def get_battle_rounds(battle_id: str) -> dict[str, Any]:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    events = _battle_store.list_events(battle_id)
+    events = state.battle_store.list_events(battle_id)
     grouped: dict[int, dict[str, Any]] = {}
     call_durations = {
         (event.get("data") or {}).get("correlationId"): (event.get("data") or {}).get(
@@ -3590,11 +3579,6 @@ def _markdown_report(
     return "\n".join(lines) + "\n"
 
 
-_REPORT_SUMMARY_CACHE_TTL_SECONDS = 600.0
-_REPORT_SUMMARY_CACHE_MAX_ENTRIES = 256
-_report_summary_cache: dict[tuple[str, int, str], tuple[float, dict[str, Any]]] = {}
-
-
 def _report_summary_key(
     battle_id: str, record: dict[str, Any], events: list[dict[str, Any]]
 ) -> tuple[str, int, str]:
@@ -3603,12 +3587,12 @@ def _report_summary_key(
 
 
 def _prune_report_summary_cache(now: float) -> None:
-    for key, (expires_at, _summary) in list(_report_summary_cache.items()):
+    for key, (expires_at, _summary) in list(state.report_summary_cache.items()):
         if expires_at <= now:
-            _report_summary_cache.pop(key, None)
-    while len(_report_summary_cache) >= _REPORT_SUMMARY_CACHE_MAX_ENTRIES:
-        oldest = min(_report_summary_cache.items(), key=lambda item: item[1][0])[0]
-        _report_summary_cache.pop(oldest, None)
+            state.report_summary_cache.pop(key, None)
+    while len(state.report_summary_cache) >= state.REPORT_SUMMARY_CACHE_MAX_ENTRIES:
+        oldest = min(state.report_summary_cache.items(), key=lambda item: item[1][0])[0]
+        state.report_summary_cache.pop(oldest, None)
 
 
 async def _report_summary_for(
@@ -3621,13 +3605,16 @@ async def _report_summary_for(
     """
     now = time.monotonic()
     key = _report_summary_key(battle_id, record, events)
-    cached = _report_summary_cache.get(key)
+    cached = state.report_summary_cache.get(key)
     if cached is not None and cached[0] > now:
         return cached[1]
-    _report_summary_cache.pop(key, None)
+    state.report_summary_cache.pop(key, None)
     summary = await summarize_report(record, events)
     _prune_report_summary_cache(now)
-    _report_summary_cache[key] = (now + _REPORT_SUMMARY_CACHE_TTL_SECONDS, summary)
+    state.report_summary_cache[key] = (
+        now + state.REPORT_SUMMARY_CACHE_TTL_SECONDS,
+        summary,
+    )
     return summary
 
 
@@ -3647,13 +3634,13 @@ async def battle_report(
     battle_id: str,
     format: Literal["json", "markdown"] = Query(default="json"),
 ) -> Any:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    events = _battle_store.list_events(battle_id)
+    events = state.battle_store.list_events(battle_id)
     report_summary = await _report_summary_for(battle_id, record, events)
     if format == "markdown":
-        stored_internal_score = _battle_store.get_score(battle_id)
+        stored_internal_score = state.battle_store.get_score(battle_id)
         return PlainTextResponse(
             _markdown_report(
                 record,
@@ -3667,7 +3654,7 @@ async def battle_report(
             headers={"Content-Disposition": f'attachment; filename="{battle_id}.md"'},
         )
     attacker_score, defender_score = _scores(record)
-    stored_internal_score = _battle_store.get_score(battle_id)
+    stored_internal_score = state.battle_store.get_score(battle_id)
     return {
         "battle": record,
         "events": events,
@@ -3687,10 +3674,10 @@ async def battle_report(
     dependencies=[Depends(_read_auth_dependency)],
 )
 def battle_internal_score(battle_id: str) -> dict[str, Any]:
-    record = _battle_store.get(battle_id)
+    record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
-    stored = _battle_store.get_score(battle_id)
+    stored = state.battle_store.get_score(battle_id)
     return stored if stored is not None else _insufficient_internal_score()
 
 
@@ -3703,8 +3690,8 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
 )
 def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
     items = []
-    records = _battle_store.list(limit=limit)
-    stored_scores = _battle_store.list_scores([record["id"] for record in records])
+    records = state.battle_store.list(limit=limit)
+    stored_scores = state.battle_store.list_scores([record["id"] for record in records])
     for record in records:
         score = stored_scores.get(record["id"]) or _insufficient_internal_score()
         items.append(
@@ -3755,17 +3742,16 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
     dependencies=[Depends(_read_auth_dependency)],
 )
 def leaderboard() -> dict[str, Any]:
-    global _leaderboard_cache
     now = time.monotonic()
-    if _leaderboard_cache and now - _leaderboard_cache[0] < 2:
-        return _leaderboard_cache[1]
-    cached = _redis_cache.get_json("agent-attack-lab:v1:leaderboard")
+    if state.leaderboard_cache and now - state.leaderboard_cache[0] < 2:
+        return state.leaderboard_cache[1]
+    cached = state.redis_cache.get_json("agent-attack-lab:v1:leaderboard")
     if isinstance(cached, dict) and isinstance(cached.get("items"), list):
-        _leaderboard_cache = (now, cached)
+        state.leaderboard_cache = (now, cached)
         return cached
     attacker_score = defender_score = 0
     rounds = 0
-    for record in _battle_store.list(limit=100000):
+    for record in state.battle_store.list(limit=100000):
         attack_points, defend_points = _scores(record)
         attacker_score += attack_points
         defender_score += defend_points
@@ -3776,8 +3762,8 @@ def leaderboard() -> dict[str, Any]:
             {"agent": "defender", "score": defender_score, "rounds": rounds},
         ],
     }
-    _leaderboard_cache = (now, result)
-    _redis_cache.set_json("agent-attack-lab:v1:leaderboard", result)
+    state.leaderboard_cache = (now, result)
+    state.redis_cache.set_json("agent-attack-lab:v1:leaderboard", result)
     return result
 
 
@@ -3789,7 +3775,7 @@ def leaderboard() -> dict[str, Any]:
 async def event_stream(
     battle_id: str, follow: bool = Query(default=False)
 ) -> StreamingResponse:
-    if await asyncio.to_thread(_battle_store.get, battle_id) is None:
+    if await asyncio.to_thread(state.battle_store.get, battle_id) is None:
         raise HTTPException(status_code=404, detail="战局不存在")
 
     async def generate() -> Any:
@@ -3798,7 +3784,7 @@ async def event_stream(
         poll_interval = 0.1
         while attempts < (60 if follow else 1):
             events = await asyncio.to_thread(
-                _battle_store.list_events_after, battle_id, after_sequence
+                state.battle_store.list_events_after, battle_id, after_sequence
             )
             for event in events:
                 yield f"id: {event['id']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -3825,7 +3811,7 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
         if supplied_key != _api_key:
             await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
             return
-    if await asyncio.to_thread(_battle_store.get, battle_id) is None:
+    if await asyncio.to_thread(state.battle_store.get, battle_id) is None:
         await websocket.close(code=4404, reason="战局不存在")
         return
     await websocket.accept()
@@ -3833,7 +3819,7 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
     try:
         for _ in range(60):
             events = await asyncio.to_thread(
-                _battle_store.list_events_after, battle_id, sent
+                state.battle_store.list_events_after, battle_id, sent
             )
             for event in events:
                 await websocket.send_json(event)
