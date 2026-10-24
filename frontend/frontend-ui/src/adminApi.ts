@@ -43,6 +43,36 @@ export type AdminMetrics = Record<string, unknown>
 export type AdminExternalCasesFilters = { limit?: number; q?: string }
 export type AdminExternalCases = ExternalCaseResponse
 export type AdminReport = Record<string, unknown>
+export type AdminBattleRound = {
+  round: number
+  status: string
+  sample: Record<string, unknown> | null
+  caught: Record<string, unknown>[]
+  risks: Record<string, unknown>[]
+  fixed: Record<string, unknown>[]
+  startedAt?: string | null
+  finishedAt?: string | null
+  durationMs?: number | null
+  layerInterceptions?: Record<string, unknown>
+  scores?: { attacker: number | null; defender: number | null }
+  compromised?: { targetVerified: boolean; verificationMode?: string; simulated?: boolean; evidence?: unknown[] }
+  arbiterReview?: AdminArbiterReview | null
+}
+export type AdminArbiterReview = {
+  verdict?: string
+  confidence?: number
+  rationale?: string
+  evidence?: string[]
+  needsHumanReview?: boolean
+  agentSource?: string
+  agentMode?: string
+}
+export type AdminBattleRounds = {
+  total: number
+  requestedRounds?: number
+  rounds: AdminBattleRound[]
+  stats?: { attackGenerated?: number; defenderDetected?: number; fixesSuggested?: number; strategyChecks?: number }
+}
 export type AdminSample = { id: string; topic: string; content: string; source: string; useCount: number; createdAt: string; updatedAt: string }
 export type AdminRule = { id: string; name: string; condition: string; action: '拦截' | '放行'; hitCount: number; createdAt: string; updatedAt: string }
 export type AdminAuditLog = { id: string; eventType: string; requestId?: string; battleId?: string; actorRole?: string; status: string; createdAt: string; data: Record<string, unknown> }
@@ -99,6 +129,10 @@ export function getAdminBattleEvents(battleId: string, afterSequence = 0): Promi
 
 export function getAdminBattleScore(battleId: string): Promise<AdminBattleScore> {
   return api<AdminBattleScore>(battlePath(battleId, '/score'))
+}
+
+export function getAdminBattleRounds(battleId: string): Promise<AdminBattleRounds> {
+  return api<AdminBattleRounds>(battlePath(battleId, '/rounds'))
 }
 
 export function getAdminDashboardSummary(): Promise<AdminDashboardSummary> {

@@ -12,7 +12,6 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-
 _LAYER_NAMES = (
     "输入标准化清洗",
     "推理引导",
@@ -21,10 +20,10 @@ _LAYER_NAMES = (
 )
 
 _TOPIC_LAYERS: tuple[tuple[re.Pattern[str], tuple[int, ...]], ...] = (
-    (re.compile(r"提示注入|工单注入|工单备注注入|上下文投毒|越狱诱导|偏见注入", re.I), (1, 2)),
-    (re.compile(r"sql\s*注入|数据窃取", re.I), (1, 3)),
-    (re.compile(r"权限校验|权限提升|越权测试|越权|工具调用滥用|工具滥用", re.I), (2, 3)),
-    (re.compile(r"通用安全测试|安全测试|general|security", re.I), (1, 2, 3, 4)),
+    (re.compile(r"提示注入|工单注入|工单备注注入|上下文投毒|越狱诱导|偏见注入", re.IGNORECASE), (1, 2)),
+    (re.compile(r"sql\s*注入|数据窃取", re.IGNORECASE), (1, 3)),
+    (re.compile(r"权限校验|权限提升|越权测试|越权|工具调用滥用|工具滥用", re.IGNORECASE), (2, 3)),
+    (re.compile(r"通用安全测试|安全测试|general|security", re.IGNORECASE), (1, 2, 3, 4)),
 )
 
 

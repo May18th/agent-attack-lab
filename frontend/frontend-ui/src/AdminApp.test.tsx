@@ -6,13 +6,28 @@ import { ApiError } from './api'
 
 vi.mock('./adminApi', async () => {
   const actual = await vi.importActual<typeof import('./adminApi')>('./adminApi')
-  return { ...actual, getAdminSession: vi.fn(), loginAdminSession: vi.fn(), logoutAdminSession: vi.fn(), getAdminDashboardSummary: vi.fn(), getAdminMetrics: vi.fn(), listAdminBattles: vi.fn(), getAdminExternalCases: vi.fn(), getAdminBattleDetail: vi.fn(), getAdminBattleScore: vi.fn(), getAdminBattleEvents: vi.fn(), getAdminBattleAudit: vi.fn(), getAdminReport: vi.fn(), retryAdminBattle: vi.fn(), cancelAdminBattle: vi.fn(), deleteAdminBattle: vi.fn(), listAdminSamples: vi.fn(), createAdminSample: vi.fn(), updateAdminSample: vi.fn(), deleteAdminSample: vi.fn(), listAdminRules: vi.fn(), createAdminRule: vi.fn(), updateAdminRule: vi.fn(), deleteAdminRule: vi.fn(), listAdminAuditLogs: vi.fn() }
+  return { ...actual, getAdminSession: vi.fn(), loginAdminSession: vi.fn(), logoutAdminSession: vi.fn(), getAdminDashboardSummary: vi.fn(), getAdminMetrics: vi.fn(), listAdminBattles: vi.fn(), getAdminExternalCases: vi.fn(), getAdminBattleDetail: vi.fn(), getAdminBattleScore: vi.fn(), getAdminBattleEvents: vi.fn(), getAdminBattleRounds: vi.fn(), getAdminBattleAudit: vi.fn(), getAdminReport: vi.fn(), retryAdminBattle: vi.fn(), cancelAdminBattle: vi.fn(), deleteAdminBattle: vi.fn(), createAdminBattle: vi.fn(), listAdminSamples: vi.fn(), createAdminSample: vi.fn(), updateAdminSample: vi.fn(), deleteAdminSample: vi.fn(), listAdminRules: vi.fn(), createAdminRule: vi.fn(), updateAdminRule: vi.fn(), deleteAdminRule: vi.fn(), listAdminAuditLogs: vi.fn() }
 })
 
 const battle = { id: 'b-1', difficulty: 'high' as const, topic: '测试战局', status: 'failed', createdAt: '2026-10-18T00:00:00Z', attackerOut: { samples: [] }, defenderOut: [] }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks() })
 
 describe('AdminApp', () => {
+  it('lets an administrator choose the number of rounds and submits it to the admin API', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.createAdminBattle).mockResolvedValue({ ...battle, status: 'pending', rounds: 5 } as never)
+    render(<AdminApp />)
+    await screen.findByText('运行指标')
+    fireEvent.click(screen.getByRole('tab', { name: '创建战局' }))
+    fireEvent.change(screen.getByLabelText('演练回合数'), { target: { value: '5' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建并启动战局' }))
+    await waitFor(() => expect(adminApi.createAdminBattle).toHaveBeenCalledWith({ topic: '提示注入', difficulty: 'mid', rounds: 5 }))
+  })
+
   it('shows password authentication when unauthenticated', async () => {
     vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: false })
     render(<AdminApp />)
@@ -60,15 +75,21 @@ describe('AdminApp', () => {
   it('renders authenticated modules and filters battles', async () => {
     vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
     vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 1 } as never)
-    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({ queue: 2 })
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({ service: '智能体攻防实验室', uptimeSeconds: 90, requests: 12 })
     vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [battle], total: 1 })
     vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
     render(<AdminApp />)
     expect(await screen.findByText('运行指标')).toBeInTheDocument()
     expect(await screen.findByText('总战局')).toBeInTheDocument()
-    expect(screen.queryByText('原始指标数据')).toBeInTheDocument()
+    // 指标区只展示中文卡片与格式化后的数值，不再输出原始 JSON
+    expect(screen.queryByText('原始指标数据')).not.toBeInTheDocument()
+    expect(screen.getByText('1 分 30 秒')).toBeInTheDocument()
     expect(screen.getByText('战局列表')).toBeInTheDocument()
     expect(screen.getByText('外部案例')).toBeInTheDocument()
+    const externalCases = screen.getByRole('group', { name: '外部案例' })
+    expect(externalCases).not.toHaveAttribute('open')
+    fireEvent.click(within(externalCases).getByRole('heading', { name: '外部案例' }))
+    expect(within(externalCases).getByRole('textbox', { name: '搜索外部案例' })).toBeVisible()
     fireEvent.change(screen.getByRole('textbox', { name: '搜索战局' }), { target: { value: 'needle' } })
     await waitFor(() => expect(adminApi.listAdminBattles).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'needle' })))
   })
@@ -302,5 +323,76 @@ describe('AdminApp', () => {
     expect(adminApi.getAdminBattleDetail).toHaveBeenCalledTimes(3)
     if (originalVisibility) Object.defineProperty(document, 'visibilityState', originalVisibility)
     else Reflect.deleteProperty(document, 'visibilityState')
+  })
+
+  const readableBattle = { ...battle, id: 'b-9', topic: '可读战局', status: 'completed' as const, rounds: 2 }
+  const readableEvents = [
+    { sequence: 1, type: 'round.completed', timestamp: '2026-10-18T00:00:01Z', data: { round: 1, caught: [{ ruleId: 'LAB-SQLI-001' }], risks: [], fixed: [] } },
+    { sequence: 2, type: 'attack.compromised', timestamp: '2026-10-18T00:00:02Z', data: { round: 2, targetVerified: true, simulated: true } },
+  ]
+  const readableRounds = {
+    total: 2, requestedRounds: 3,
+    rounds: [
+      { round: 1, status: 'completed', sample: { type: '提示注入', severity: 'high' }, caught: [{ ruleId: 'LAB-SQLI-001' }], risks: [], fixed: [], durationMs: 1500, arbiterReview: { verdict: 'undetermined', needsHumanReview: true, agentSource: 'arbiter-rule-fallback', rationale: '无验证证据，需人工复核' } },
+      { round: 2, status: 'completed', sample: { type: 'SQL 注入', severity: 'medium' }, caught: [], risks: [], fixed: [], durationMs: 800, compromised: { targetVerified: true, simulated: true }, arbiterReview: { verdict: 'defender_won', needsHumanReview: false, agentSource: 'arbiter-llm' } },
+    ],
+    stats: { attackGenerated: 2, defenderDetected: 1, fixesSuggested: 0, strategyChecks: 2 },
+  }
+
+  function mockReadableBattle(battleOverrides: Record<string, unknown>) {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 1 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [{ ...readableBattle, ...battleOverrides } as never], total: 1 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.getAdminBattleDetail).mockResolvedValue({ ...readableBattle, ...battleOverrides } as never)
+    vi.mocked(adminApi.getAdminBattleScore).mockResolvedValue({ version: 'frontend-v1', status: 'ok', attacker: { status: 'ok', score: null, maxScore: 100, categories: [] }, defender: { status: 'ok', score: null, maxScore: 100, categories: [] } } as never)
+    vi.mocked(adminApi.getAdminBattleEvents).mockResolvedValue({ items: readableEvents as never, total: 2, hasMore: false })
+    vi.mocked(adminApi.getAdminBattleAudit).mockResolvedValue({ valid: false, issueCount: 1, eventCount: 2, issues: [{ code: 'duplicate_event_id', message: '事件 ID 重复' }] })
+    vi.mocked(adminApi.getAdminReport).mockResolvedValue({})
+    vi.mocked(adminApi.getAdminBattleRounds).mockResolvedValue(readableRounds as never)
+  }
+
+  it('renders a readable verdict and round breakdown before any raw JSON', async () => {
+    mockReadableBattle({ verdict: 'undetermined' })
+    render(<AdminApp />)
+    fireEvent.click(await screen.findByRole('button', { name: '查看可读战局' }))
+
+    expect(await screen.findByText('战局结论')).toBeInTheDocument()
+    expect(screen.getAllByText('结果未判定').length).toBeGreaterThan(0)
+    expect(screen.getByText(/未取得验证证据/)).toBeInTheDocument()
+    expect(screen.getByText('回合明细（2 轮）')).toBeInTheDocument()
+    expect(screen.getByText('请求 3 轮，实际产出 2 轮')).toBeInTheDocument()
+    expect(screen.getAllByText('已拦截').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('穿透（模拟验证）').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('证据不足').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('事件 ID 重复').length).toBeGreaterThan(0)
+    expect(screen.getByText('结果未判定 · 需复核')).toBeInTheDocument()
+    expect(screen.getByText('防守成功')).toBeInTheDocument()
+    expect(screen.getByText(/独立裁决由 arbiter 单独复核/)).toBeInTheDocument()
+    expect(screen.queryByText('原始数据（排查用）')).not.toBeInTheDocument()
+  })
+
+  it('renders the raw data disclosure only with the debug query flag', async () => {
+    mockReadableBattle({ verdict: 'undetermined' })
+    const originalUrl = `${window.location.pathname}${window.location.search}`
+    window.history.replaceState({}, '', '/admin?debug=1')
+    try {
+      render(<AdminApp />)
+      fireEvent.click(await screen.findByRole('button', { name: '查看可读战局' }))
+
+      const rawData = await screen.findByText('原始数据（排查用）')
+      expect(rawData.closest('details')).not.toHaveAttribute('open')
+    } finally {
+      window.history.replaceState({}, '', originalUrl)
+    }
+  })
+
+  it('reports a verified compromise instead of an undetermined result', async () => {
+    mockReadableBattle({ verdict: 'attacker_won' })
+    render(<AdminApp />)
+    fireEvent.click(await screen.findByRole('button', { name: '查看可读战局' }))
+    expect((await screen.findAllByText('攻击得手（目标已验证）')).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/未取得验证证据/)).not.toBeInTheDocument()
   })
 })

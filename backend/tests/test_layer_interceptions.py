@@ -1,8 +1,7 @@
-from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from fastapi.testclient import TestClient
 
 from agent_attack_lab import service
-
+from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 
 client = TestClient(service.app)
 

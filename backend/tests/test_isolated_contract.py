@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import agent_attack_lab.service as service
+from agent_attack_lab import service
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
 

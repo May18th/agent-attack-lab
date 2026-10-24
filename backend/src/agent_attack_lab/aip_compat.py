@@ -6,7 +6,6 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
-
 _SERVER_IDENTITY_OPTIONS = {"local_aic", "identity_binding_enabled"}
 
 

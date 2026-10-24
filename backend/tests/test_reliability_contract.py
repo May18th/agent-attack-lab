@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-import agent_attack_lab.service as service
+from agent_attack_lab import service
 
 
 def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> None:

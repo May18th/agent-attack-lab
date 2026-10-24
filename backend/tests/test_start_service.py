@@ -6,9 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from shell_guard import posix_shell
-
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "start-service.sh"
 DEPLOY_SCRIPT = Path(__file__).parents[1] / "scripts" / "deploy-production.sh"

@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import unicodedata
 
-
 OWASP_LLM_CATEGORIES = (
     ("LLM01", "提示注入"),
     ("LLM02", "敏感信息泄露"),

@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.import_external_cases import import_catalog, import_nvd_catalog
 from agent_attack_lab.external_cases import query_external_cases
+from scripts.import_external_cases import import_catalog, import_nvd_catalog
 
 
 def _catalog() -> dict[str, object]:

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
@@ -147,10 +147,14 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { name: '外部安全案例库（External references）' })).toBeInTheDocument()
-    expect(await screen.findByText('CVE-2099-0001')).toBeInTheDocument()
-    expect(screen.getByText(/verified_primary · external_fact/)).toBeInTheDocument()
-    fireEvent.change(screen.getByRole('textbox', { name: '搜索外部案例' }), { target: { value: 'CVE-2099' } })
-    fireEvent.click(screen.getByRole('button', { name: '查询' }))
+    const cases = screen.getByRole('group', { name: '外部安全案例库（External case references）' })
+    expect(cases).not.toHaveAttribute('open')
+    expect(within(cases).queryByText('CVE-2099-0001')).not.toBeVisible()
+    fireEvent.click(within(cases).getByRole('heading', { name: '外部安全案例库（External references）' }))
+    expect(await within(cases).findByText('CVE-2099-0001')).toBeVisible()
+    expect(within(cases).getByText(/verified_primary · external_fact/)).toBeInTheDocument()
+    fireEvent.change(within(cases).getByRole('textbox', { name: '搜索外部案例' }), { target: { value: 'CVE-2099' } })
+    fireEvent.click(within(cases).getByRole('button', { name: '查询' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/external-cases?q=CVE-2099'), expect.anything()))
   })
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from agent_attack_lab.storage import BattleStore
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
-from prepare_finetune_dataset import _defender_example, _split, _unique, export  # noqa: E402
+from prepare_finetune_dataset import _defender_example, _split, _unique, export
 
 
 def _record(*, battle_id: str = "battle-1", topic: str = "提示注入", difficulty: str = "low") -> dict:
