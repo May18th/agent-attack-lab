@@ -79,7 +79,8 @@ agent_attack_lab/
 - 搬：`_battle_store`、`_redis_cache`、`_rate_windows`、`_public_battle_rate_windows`、报告摘要缓存与其余内存缓存。
 - 内部读写改成**函数内取值**（`state.battle_store`），不要 `from state import battle_store` 后直接用。
 - 同步改测试：15 处 `service._battle_store` → `state.battle_store`；2 处 `service._redis_cache`；限流窗口各 2 处。
-- 验收：193 绿 + `service.py` 行数下降 > 150。
+- 验收：193 绿 + `app.openapi()["paths"]` 与 S0 基准一致 + `state.py` 只放定义（实测 43 行）。
+- 注意：这一步**不以行数为指标**。单例定义本来就只有十几行（实测迁出 14 行），真正的瘦身在 S5 与 S7；S1 的价值是把 80 余处引用改成 `state.<name>`，并在同一次提交里迁移打桩目标。
 
 ### S2 抽 `config.py`
 
