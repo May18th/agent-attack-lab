@@ -6,6 +6,7 @@ import {
   getAdminReport, getAdminSession, listAdminBattles, loginAdminSession, logoutAdminSession, retryAdminBattle,
   type AdminBattle, type AdminBattleEvent, type AdminBattleListFilters, type AdminBattleScore, type AdminExternalCases,
 } from './adminApi'
+import { AdminManagementPanel } from './AdminManagementPanel'
 import { ApiError } from './api'
 import { BattleTimeline3D } from './admin3d/BattleTimeline3D'
 
@@ -194,6 +195,11 @@ export default function AdminApp() {
   }, [selectedBattleId, selectedBattleStatus, loadBattleDetails])
 
   const refresh = async (reloadSelected = true) => { await Promise.all([loadList(), loadOverview()]); if (reloadSelected && selected) await selectBattle(selected) }
+  const handleBattleCreated = useCallback((battle: AdminBattle) => {
+    setSelected(battle)
+    void refresh(false)
+    void selectBattle(battle)
+  }, [refresh, selectBattle])
   const runAction = async (action: 'retry' | 'cancel' | 'delete') => {
     if (!selected || busy) return
     const question = action === 'delete' ? '确认删除该战局？删除后不可恢复。' : action === 'cancel' ? '确认取消该战局？' : '确认重试该失败战局？'
@@ -234,6 +240,7 @@ export default function AdminApp() {
       />
     </Suspense>
     <div id="admin-2d-workspace" className="admin-2d-workspace">
+    <AdminManagementPanel battles={battles} onBattleCreated={handleBattleCreated} onError={setError} />
     <section className="admin-module metrics"><h2>运行指标</h2><div className="metric-grid">{overviewItems.length ? overviewItems.map(([key, value]) => <div className="metric" key={key}><span>{metricLabel(key)}</span><strong>{String(value)}</strong></div>) : <div className="empty">暂无指标</div>}</div><details className="admin-raw-metrics"><summary>原始指标数据</summary><pre className="data-preview" aria-label="态势数据">{jsonPreview(metrics)}</pre></details></section>
     <section className="admin-module"><div className="module-head"><h2>战局列表</h2><span>{total} 场</span></div><div className="filters"><input aria-label="搜索战局" placeholder="搜索主题或编号" value={query} onChange={(e) => { const value = e.target.value; setQuery(value); setPage(0); void loadList({ offset: 0, q: value }) }} onKeyDown={(e) => { if (e.key === 'Enter') void loadList({ offset: 0, q: query }) }} /><select aria-label="状态筛选" value={status} onChange={(e) => { const value = e.target.value; setStatus(value); setPage(0); void loadList({ offset: 0, status: value }) }}><option value="">全部状态</option>{Object.entries(statusLabels).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select><button onClick={() => void loadList({ offset: 0 })}>查询</button></div>{loading ? <p>正在加载战局…</p> : <div className="battle-table">{battles.length ? battles.map((battle) => <button className="battle-row" key={battle.id} aria-label={`查看${battle.topic}`} onClick={() => void selectBattle(battle)}><span>{battle.topic || '未命名战局'}</span><span>{label(battle.status)} · {label(battle.difficulty, difficultyLabels)}</span><span>{battle.id}</span></button>) : <p className="empty">暂无战局</p>}</div>}<div className="pagination"><button disabled={page <= 0} onClick={() => { setPage(page - 1); void loadList({ offset: (page - 1) * PAGE_SIZE }) }}>上一页</button><span>第 {page + 1} / {pages} 页</span><button disabled={page + 1 >= pages} onClick={() => { setPage(page + 1); void loadList({ offset: (page + 1) * PAGE_SIZE }) }}>下一页</button></div></section>
     <section className="admin-module"><div className="module-head"><h2>战局详情</h2>{selected && <span>{selected.id}</span>}</div>{selected ? <><div className="detail-summary"><strong>{selected.topic || '未命名战局'}</strong><span>{label(selected.status)} · {label(selected.difficulty, difficultyLabels)}</span><div className="actions">{selected.status === 'failed' && <button disabled={busy} onClick={() => void runAction('retry')}>重试战局</button>}{(selected.status === 'pending' || selected.status === 'running') && <button disabled={busy} onClick={() => void runAction('cancel')}>取消战局</button>}{(selected.status === 'completed' || selected.status === 'failed') && <button className="danger" disabled={busy} onClick={() => void runAction('delete')}>删除战局</button>}</div></div><div className="detail-grid">{Object.entries(detailData).filter(([key]) => key !== '事件').map(([key, value]) => <details open key={key}><summary>{key}</summary><pre className="data-preview">{jsonPreview(value)}</pre></details>)}</div><BattleTimeline3D battle={selected} events={Array.isArray(detailData['事件']) ? detailData['事件'] as AdminBattleEvent[] : []} eventsTotal={eventPageInfo.total} hasMoreEvents={eventPageInfo.hasMore} onLoadMoreEvents={() => void loadMoreEvents()} audit={detailData['审计'] && typeof detailData['审计'] === 'object' ? detailData['审计'] as Record<string, unknown> : {}} score={detailData['评分'] as AdminBattleScore | null | undefined} selectedEvent={selectedTimelineEvent} onSearchQueryChange={setTimelineQuery} onSelectEvent={setSelectedTimelineEvent} /><span className="sr-only" aria-live="polite">{selectedTimelineEvent ? `当前选择事件 ${selectedTimelineEvent.sequence ?? ''} ${selectedTimelineEvent.type ?? selectedTimelineEvent.eventType ?? ''}` : ''}</span></> : <p className="empty">选择战局查看详情、评分、事件、审计和报告。</p>}</section>

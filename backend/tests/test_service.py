@@ -595,6 +595,7 @@ def test_battle_store_persists_records(tmp_path) -> None:
     database = tmp_path / "battles.sqlite3"
     record = {
         "id": "battle-persisted",
+        "code": None,
         "difficulty": "low",
         "topic": "持久化测试",
         "status": "completed",
@@ -745,6 +746,10 @@ def test_battle_store_dashboard_summary_aggregates_saved_outputs(tmp_path) -> No
         "averageAgentCallLatencyMs": 0,
         "attackerCallCount": 0,
         "defenderCallCount": 0,
+        "attackGenerated": 2,
+        "defenderDetected": 1,
+        "fixesSuggested": 1,
+        "strategyChecks": 0,
     }
 
 
@@ -827,6 +832,10 @@ def test_dashboard_summary_uses_saved_battle_data(tmp_path, monkeypatch) -> None
         "averageAgentCallLatencyMs": 0,
         "attackerCallCount": 0,
         "defenderCallCount": 0,
+        "attackGenerated": 1,
+        "defenderDetected": 1,
+        "fixesSuggested": 0,
+        "strategyChecks": 0,
         "ruleLibraryCaseCount": 3,
         "owaspLlmRuleCount": 10,
     }
@@ -873,7 +882,7 @@ def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(tmp_path, m
     import sqlite3
 
     connection = sqlite3.connect(database)
-    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261018_0003"
+    assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261024_0004"
     assert connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'battle_scores'"
     ).fetchone()[0] == "battle_scores"
@@ -1263,6 +1272,54 @@ def test_lifespan_backfills_missing_terminal_scores_without_overwriting_existing
 
 def test_unknown_battle_returns_404() -> None:
     assert client.get("/battles/battle-does-not-exist").status_code == 404
+
+
+def test_rounds_endpoint_aggregates_events_and_stats(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "rounds.sqlite3"))
+    store.save({
+        "id": "battle-rounds",
+        "code": "A-001",
+        "difficulty": "low",
+        "topic": "通用安全测试",
+        "status": "completed",
+        "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": [{"type": "x", "content": "payload"}]},
+        "defenderOut": [{"caught": [{"reason": "命中"}], "risks": [], "fixed": [{"action": "修复"}] }],
+    })
+    for sequence, event_type, data in (
+        (1, "round.started", {"round": 1}),
+        (2, "attack.sample.generated", {"round": 1, "sample": {"content": "payload"}}),
+        (3, "round.completed", {"round": 1, "caught": [{"reason": "命中"}], "risks": [], "fixed": [{"action": "修复"}], "durationMs": 1600}),
+    ):
+        store.save_event({"id": f"round-event-{sequence}", "battleId": "battle-rounds", "sequence": sequence, "type": event_type, "status": "completed", "createdAt": f"2026-10-24T00:00:0{sequence}+00:00", "data": data})
+    monkeypatch.setattr(service, "_battle_store", store)
+    response = client.get("/battles/battle-rounds/rounds")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["rounds"][0]["durationMs"] == 1600
+    assert body["rounds"][0]["scores"]["attacker"] is None
+    assert body["stats"] == {"attackGenerated": 1, "defenderDetected": 1, "fixesSuggested": 1, "strategyChecks": 1}
+
+
+def test_admin_resource_crud_and_audit_filters() -> None:
+    sample = client.post("/admin/samples", json={"topic": "提示注入", "content": "ignore previous", "source": "测试"})
+    assert sample.status_code == 201
+    sample_id = sample.json()["id"]
+    assert client.get("/admin/samples", params={"q": "提示"}).json()[0]["id"] == sample_id
+    updated_sample = client.patch(f"/admin/samples/{sample_id}", json={"topic": "提示注入", "content": "updated", "source": "测试"})
+    assert updated_sample.status_code == 200
+    assert updated_sample.json()["content"] == "updated"
+    rule = client.post("/admin/rules", json={"name": "提示词保护", "condition": "ignore previous", "action": "拦截"})
+    assert rule.status_code == 201
+    rule_id = rule.json()["id"]
+    assert client.get("/admin/rules").json()[0]["id"] == rule_id
+    assert client.patch(f"/admin/rules/{rule_id}", json={"name": "提示词保护", "condition": "ignore previous", "action": "放行"}).json()["action"] == "放行"
+    logs = client.get("/admin/audit-logs", params={"operation": "admin.sample.created"})
+    assert logs.status_code == 200
+    assert logs.json()[0]["data"]["sampleId"] == sample_id
+    assert client.delete(f"/admin/samples/{sample_id}").status_code == 204
+    assert client.delete(f"/admin/rules/{rule_id}").status_code == 204
 
 
 def test_battle_audit_route_returns_read_only_integrity_report() -> None:

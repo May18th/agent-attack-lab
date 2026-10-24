@@ -106,7 +106,7 @@ app.add_middleware(
     allow_origins=sorted(_cors_origins),
     allow_origin_regex=None if _browser_auth_configured else _cors_origin_regex,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-API-Key"],
     expose_headers=["X-Total-Count", "X-Request-ID", "X-Battle-ID", "X-Has-More", "X-Next-Sequence"],
 )
@@ -140,14 +140,28 @@ class BrowserLoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class AdminSampleRequest(BaseModel):
+    topic: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=8000)
+    source: str = Field(default="管理员录入", min_length=1, max_length=200)
+
+
+class AdminRuleRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    condition: str = Field(min_length=1, max_length=2000)
+    action: Literal["拦截", "放行"] = "拦截"
+
+
 class BattleRecord(BaseModel):
     id: str
+    code: str | None = None
     difficulty: Literal["low", "mid", "high"]
     topic: str
     status: Literal["pending", "running", "completed", "failed"]
     createdAt: str
     attackerOut: dict[str, Any]
     defenderOut: list[dict[str, Any]]
+    stats: dict[str, int] | None = None
 
 
 class BattleEvent(BaseModel):
@@ -829,6 +843,18 @@ def _insufficient_internal_score() -> dict[str, Any]:
             "message": role_message,
             "categories": [],
         },
+    }
+
+
+def _battle_stats(record: dict[str, Any], events: list[dict[str, Any]] | None = None) -> dict[str, int]:
+    samples = record.get("attackerOut", {}).get("samples", [])
+    defenses = record.get("defenderOut", [])
+    return {
+        "attackGenerated": len(samples),
+        "defenderDetected": sum(len(item.get("caught", [])) for item in defenses if isinstance(item, dict)),
+        "fixesSuggested": sum(len(item.get("fixed", [])) for item in defenses if isinstance(item, dict)),
+        # TODO 战略检测口径：当前以 round.completed 事件计数。
+        "strategyChecks": sum(1 for event in (events or []) if event.get("type") == "round.completed"),
     }
 
 
@@ -2326,6 +2352,113 @@ def metrics() -> dict[str, Any]:
     }
 
 
+def _admin_write_audit(request: Request, event_type: str, data: dict[str, Any]) -> None:
+    _record_audit_event(
+        event_type,
+        status="accepted",
+        request_id=request.state.request_id,
+        actor_role="admin",
+        data=data,
+    )
+
+
+@app.get("/admin/samples", summary="查询管理员攻击样本库", tags=["管理员资源"])
+def list_admin_samples(
+    request: Request,
+    response: Response,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    _check_browser_or_api_auth(request)
+    items = _battle_store.list_admin_samples(query=q.strip() if q else None, limit=limit, offset=offset)
+    response.headers["X-Total-Count"] = str(len(items))
+    return items
+
+
+@app.post("/admin/samples", status_code=201, summary="新增管理员攻击样本", tags=["管理员资源"])
+def create_admin_sample(payload: AdminSampleRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    item = _battle_store.save_admin_sample(payload.model_dump())
+    _admin_write_audit(request, "admin.sample.created", {"sampleId": item["id"], "topic": item["topic"]})
+    return item
+
+
+@app.patch("/admin/samples/{sample_id}", summary="编辑管理员攻击样本", tags=["管理员资源"])
+def update_admin_sample(sample_id: str, payload: AdminSampleRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    item = _battle_store.update_admin_sample(sample_id, payload.model_dump())
+    if item is None:
+        raise HTTPException(status_code=404, detail="攻击样本不存在")
+    _admin_write_audit(request, "admin.sample.updated", {"sampleId": sample_id})
+    return item
+
+
+@app.delete("/admin/samples/{sample_id}", status_code=204, summary="删除管理员攻击样本", tags=["管理员资源"])
+def delete_admin_sample(sample_id: str, request: Request) -> Response:
+    _check_browser_or_api_auth(request)
+    if not _battle_store.delete_admin_sample(sample_id):
+        raise HTTPException(status_code=404, detail="攻击样本不存在")
+    _admin_write_audit(request, "admin.sample.deleted", {"sampleId": sample_id})
+    return Response(status_code=204)
+
+
+@app.get("/admin/rules", summary="查询管理员防守规则库", tags=["管理员资源"])
+def list_admin_rules(
+    request: Request,
+    response: Response,
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    _check_browser_or_api_auth(request)
+    items = _battle_store.list_admin_rules(query=q.strip() if q else None, limit=limit, offset=offset)
+    response.headers["X-Total-Count"] = str(len(items))
+    return items
+
+
+@app.post("/admin/rules", status_code=201, summary="新增管理员防守规则", tags=["管理员资源"])
+def create_admin_rule(payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    item = _battle_store.save_admin_rule(payload.model_dump())
+    _admin_write_audit(request, "admin.rule.created", {"ruleId": item["id"], "name": item["name"]})
+    return item
+
+
+@app.patch("/admin/rules/{rule_id}", summary="编辑管理员防守规则", tags=["管理员资源"])
+def update_admin_rule(rule_id: str, payload: AdminRuleRequest, request: Request) -> dict[str, Any]:
+    _check_browser_or_api_auth(request)
+    item = _battle_store.update_admin_rule(rule_id, payload.model_dump())
+    if item is None:
+        raise HTTPException(status_code=404, detail="防守规则不存在")
+    _admin_write_audit(request, "admin.rule.updated", {"ruleId": rule_id})
+    return item
+
+
+@app.delete("/admin/rules/{rule_id}", status_code=204, summary="删除管理员防守规则", tags=["管理员资源"])
+def delete_admin_rule(rule_id: str, request: Request) -> Response:
+    _check_browser_or_api_auth(request)
+    if not _battle_store.delete_admin_rule(rule_id):
+        raise HTTPException(status_code=404, detail="防守规则不存在")
+    _admin_write_audit(request, "admin.rule.deleted", {"ruleId": rule_id})
+    return Response(status_code=204)
+
+
+@app.get("/admin/audit-logs", summary="查询管理员审计日志", tags=["管理员资源"])
+def list_admin_audit_logs(
+    request: Request,
+    from_time: str | None = Query(default=None, max_length=40),
+    to_time: str | None = Query(default=None, max_length=40),
+    user: str | None = Query(default=None, max_length=64),
+    operation: str | None = Query(default=None, max_length=128),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    _check_browser_or_api_auth(request)
+    return _battle_store.list_audit_events_filtered(
+        from_time=from_time, to_time=to_time, actor_role=user, event_type=operation, limit=limit,
+    )
+
+
 @app.get(
     "/dashboard/summary",
     summary="查询后台统计摘要",
@@ -2443,10 +2576,12 @@ async def create_battle(
                 )
                 return BattleRecord.model_validate(existing_record)
     battle_id = f"battle-{uuid.uuid4()}"
+    battle_code = _battle_store.next_battle_code()
     created_at = datetime.now(timezone.utc).isoformat()
     if background:
         record = BattleRecord(
             id=battle_id,
+            code=battle_code,
             difficulty=payload.difficulty,
             topic=payload.topic,
             status="pending",
@@ -2549,6 +2684,7 @@ async def create_battle(
         add_event("battle.failed", "failed", {"error": message})
         failed_record = BattleRecord(
             id=battle_id,
+            code=battle_code,
             difficulty=payload.difficulty,
             topic=payload.topic,
             status="failed",
@@ -2597,6 +2733,7 @@ async def create_battle(
     )
     record = BattleRecord(
         id=battle_id,
+        code=battle_code,
         difficulty=payload.difficulty,
         topic=payload.topic,
         status="completed",
@@ -2801,6 +2938,97 @@ def get_battle(battle_id: str) -> BattleRecord:
     return BattleRecord.model_validate(record)
 
 
+@app.get(
+    "/battles/{battle_id}/rounds",
+    summary="按回合聚合战局证据",
+    tags=["战局回放"],
+    dependencies=[Depends(_read_auth_dependency)],
+)
+def get_battle_rounds(battle_id: str) -> dict[str, Any]:
+    record = _battle_store.get(battle_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="战局不存在")
+    events = _battle_store.list_events(battle_id)
+    grouped: dict[int, dict[str, Any]] = {}
+    call_durations = {
+        (event.get("data") or {}).get("correlationId"): (event.get("data") or {}).get("durationMs")
+        for event in events
+        if event.get("type") in {"agent.call.completed", "agent.call.failed"}
+        and isinstance((event.get("data") or {}).get("correlationId"), str)
+        and isinstance((event.get("data") or {}).get("durationMs"), (int, float))
+    }
+
+    def round_number(event: dict[str, Any]) -> int | None:
+        value = event.get("data", {}).get("round")
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    for event in events:
+        number = round_number(event)
+        if number is None:
+            continue
+        item = grouped.setdefault(number, {"round": number, "status": "running", "sample": None, "caught": [], "risks": [], "fixed": [], "startedAt": None, "finishedAt": None, "durationMs": None})
+        event_type = event.get("type")
+        data = event.get("data") or {}
+        if event_type == "round.started":
+            item["status"] = "running"
+            item["startedAt"] = event.get("createdAt")
+        elif event_type == "attack.sample.generated":
+            item["sample"] = data.get("sample")
+            item["startedAt"] = item["startedAt"] or event.get("createdAt")
+        elif event_type in {"defense.completed", "round.completed"}:
+            item["status"] = "completed"
+            item["finishedAt"] = event.get("createdAt")
+            if data.get("sample") is not None:
+                item["sample"] = data.get("sample")
+            for key in ("caught", "risks", "fixed"):
+                if isinstance(data.get(key), list):
+                    item[key] = data[key]
+            if isinstance(data.get("durationMs"), (int, float)):
+                item["durationMs"] = round(data["durationMs"])
+            elif isinstance(call_durations.get(data.get("correlationId")), (int, float)):
+                item["durationMs"] = round(call_durations[data["correlationId"]])
+
+    samples = record.get("attackerOut", {}).get("samples", [])
+    defenses = record.get("defenderOut", [])
+    for index, sample in enumerate(samples, start=1):
+        item = grouped.setdefault(index, {"round": index, "status": "completed" if index <= len(defenses) else "pending", "sample": None, "caught": [], "risks": [], "fixed": [], "startedAt": None, "finishedAt": None, "durationMs": None})
+        item["sample"] = item["sample"] if item["sample"] is not None else sample
+        if index <= len(defenses):
+            defense = defenses[index - 1] or {}
+            for key in ("caught", "risks", "fixed"):
+                if not item[key] and isinstance(defense.get(key), list):
+                    item[key] = defense[key]
+
+    def duration_from_timestamps(item: dict[str, Any]) -> None:
+        if item["durationMs"] is not None or not item["startedAt"] or not item["finishedAt"]:
+            return
+        try:
+            started = datetime.fromisoformat(str(item["startedAt"]).replace("Z", "+00:00"))
+            finished = datetime.fromisoformat(str(item["finishedAt"]).replace("Z", "+00:00"))
+            item["durationMs"] = max(0, round((finished - started).total_seconds() * 1000))
+        except (TypeError, ValueError):
+            item["durationMs"] = None
+
+    score_snapshot = _battle_store.get_score(battle_id)
+    if score_snapshot is None:
+        score_snapshot = score_battle(record, events)
+    score_values = {
+        "attacker": score_snapshot.get("attacker", {}).get("score"),
+        "defender": score_snapshot.get("defender", {}).get("score"),
+    }
+    for item in grouped.values():
+        duration_from_timestamps(item)
+        defense = {key: item[key] for key in ("caught", "risks", "fixed")}
+        item["layerInterceptions"] = derive_layer_interceptions(record["topic"], [defense])
+        item["scores"] = score_values
+    stats = _battle_stats(record, events)
+    return {"total": len(grouped), "rounds": [grouped[key] for key in sorted(grouped)], "stats": stats}
+
+
 def _scores(record: dict[str, Any]) -> tuple[int, int]:
     samples = record["attackerOut"].get("samples", [])
     defenses = record.get("defenderOut", [])
@@ -2947,11 +3175,11 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
         })
     attacker_scores = [
         item["attacker"]["score"] for item in items
-        if isinstance(item["attacker"]["score"], int)
+        if isinstance(item["attacker"]["score"], (int, float))
     ]
     defender_scores = [
         item["defender"]["score"] for item in items
-        if isinstance(item["defender"]["score"], int)
+        if isinstance(item["defender"]["score"], (int, float))
     ]
     return {
         "version": SCORING_VERSION,

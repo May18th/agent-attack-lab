@@ -40,6 +40,9 @@ export type AdminMetrics = Record<string, unknown>
 export type AdminExternalCasesFilters = { limit?: number; q?: string }
 export type AdminExternalCases = ExternalCaseResponse
 export type AdminReport = Record<string, unknown>
+export type AdminSample = { id: string; topic: string; content: string; source: string; useCount: number; createdAt: string; updatedAt: string }
+export type AdminRule = { id: string; name: string; condition: string; action: '拦截' | '放行'; hitCount: number; createdAt: string; updatedAt: string }
+export type AdminAuditLog = { id: string; eventType: string; requestId?: string; battleId?: string; actorRole?: string; status: string; createdAt: string; data: Record<string, unknown> }
 
 function battlePath(battleId: string, suffix = ''): string {
   return `/battles/${encodeURIComponent(battleId)}${suffix}`
@@ -73,6 +76,10 @@ export async function logoutAdminSession(): Promise<void> {
 
 export function listAdminBattles(filters: AdminBattleListFilters = {}): Promise<AdminBattlePage> {
   return apiPage<AdminBattle>(`/battles${queryString(filters)}`)
+}
+
+export function createAdminBattle(payload: { topic: string; difficulty: 'low' | 'mid' | 'high' }): Promise<AdminBattle> {
+  return api<AdminBattle>(`/battles?background=true`, { method: 'POST', body: JSON.stringify(payload) })
 }
 
 export function getAdminBattleDetail(battleId: string): Promise<AdminBattleDetail> {
@@ -122,4 +129,44 @@ export async function deleteAdminBattle(battleId: string): Promise<void> {
 
 export function getAdminReport(battleId: string): Promise<AdminReport> {
   return api<AdminReport>(`${battlePath(battleId, '/report')}?format=json`)
+}
+
+export function listAdminSamples(q = ''): Promise<{ items: AdminSample[]; total: number }> {
+  return apiPage<AdminSample>(`/admin/samples${queryString({ q, limit: 200 })}`)
+}
+
+export function createAdminSample(payload: Pick<AdminSample, 'topic' | 'content' | 'source'>): Promise<AdminSample> {
+  return api<AdminSample>('/admin/samples', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function updateAdminSample(id: string, payload: Pick<AdminSample, 'topic' | 'content' | 'source'>): Promise<AdminSample> {
+  return api<AdminSample>(`/admin/samples/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) })
+}
+
+export async function deleteAdminSample(id: string): Promise<void> {
+  try { await api<unknown>(`/admin/samples/${encodeURIComponent(id)}`, { method: 'DELETE' }) } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 204) throw error
+  }
+}
+
+export function listAdminRules(q = ''): Promise<{ items: AdminRule[]; total: number }> {
+  return apiPage<AdminRule>(`/admin/rules${queryString({ q, limit: 200 })}`)
+}
+
+export function createAdminRule(payload: Pick<AdminRule, 'name' | 'condition' | 'action'>): Promise<AdminRule> {
+  return api<AdminRule>('/admin/rules', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function updateAdminRule(id: string, payload: Pick<AdminRule, 'name' | 'condition' | 'action'>): Promise<AdminRule> {
+  return api<AdminRule>(`/admin/rules/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) })
+}
+
+export async function deleteAdminRule(id: string): Promise<void> {
+  try { await api<unknown>(`/admin/rules/${encodeURIComponent(id)}`, { method: 'DELETE' }) } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 204) throw error
+  }
+}
+
+export function listAdminAuditLogs(filters: { from_time?: string; to_time?: string; user?: string; operation?: string } = {}): Promise<AdminAuditLog[]> {
+  return api<AdminAuditLog[]>(`/admin/audit-logs${queryString(filters)}`)
 }
