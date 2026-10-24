@@ -12,6 +12,7 @@ from agent_attack_lab import (
     battle_runner,
     config,
     events,
+    models,
     scoring_glue,
     security,
     service,
@@ -142,7 +143,7 @@ def test_battle_round_count_is_persisted_and_validated_by_api(
     }
     store.save(record)
     assert store.get("round-persisted")["rounds"] == 5
-    assert service.BattleRequest().rounds == 3
+    assert models.BattleRequest().rounds == 3
     for invalid in (0, 11):
         response = client.post("/battles", json={"rounds": invalid})
         assert response.status_code == 422
@@ -213,7 +214,7 @@ def test_recovery_and_retry_reuse_persisted_round_count(tmp_path, monkeypatch) -
     )
     captured: list[int] = []
 
-    async def fake_run(_battle_id: str, payload: service.BattleRequest) -> None:
+    async def fake_run(_battle_id: str, payload: models.BattleRequest) -> None:
         captured.append(payload.rounds)
 
     monkeypatch.setattr(battle_runner, "run_battle_with_tracking", fake_run)
