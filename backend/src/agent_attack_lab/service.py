@@ -5,10 +5,8 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import time
 import uuid
-from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from html import escape as escape_html
@@ -50,12 +48,10 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from agent_attack_lab import config, security, state
+from agent_attack_lab import battle_runner, config, scoring_glue, security, state
 from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
-    call_attacker,
-    call_defender,
     rpc_metrics,
 )
 from agent_attack_lab.acp_agents import (
@@ -69,10 +65,6 @@ from agent_attack_lab.agent_logic import (
     local_rule_case_count,
 )
 from agent_attack_lab.agents.arbiter import review_round
-from agent_attack_lab.agents.knowledge import (
-    build_attacker_knowledge,
-    build_defender_knowledge,
-)
 from agent_attack_lab.agents.reporter import summarize as summarize_report
 from agent_attack_lab.agents.rule_discovery import (
     suggest_rule_candidate,
@@ -83,7 +75,7 @@ from agent_attack_lab.external_cases import query_external_cases
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 from agent_attack_lab.reports import build_markdown_report
-from agent_attack_lab.scoring import SCORING_VERSION, score_battle, score_battle_rounds
+from agent_attack_lab.scoring import SCORING_VERSION, score_battle_rounds
 from agent_attack_lab.target_verify import (
     aggregate_verdict,
     configured_verify_mode,
@@ -218,8 +210,6 @@ _aip_server_options = server_identity_options(
     enabled=config.identity_binding_enabled,
     setting_name="AGENT_IDENTITY_BINDING_ENABLED",
 )
-_battle_timeout_count = 0
-_battle_cancel_count = 0
 
 
 def _request_id(request: Request) -> str:
@@ -304,457 +294,6 @@ async def collect_request_metrics(request: Request, call_next: Any) -> Any:
     return response
 
 
-def _invalidate_leaderboard_cache() -> None:
-    state.leaderboard_cache = None
-    state.redis_cache.delete(
-        "agent-attack-lab:v1:leaderboard",
-        "agent-attack-lab:v1:dashboard-summary",
-        "agent-attack-lab:v2:dashboard-summary",
-    )
-
-
-def _mark_battle_terminal(battle_id: str, event_type: str, reason: str) -> None:
-    record = state.battle_store.get(battle_id)
-    if record is None or record["status"] in {"completed", "failed"}:
-        return
-    record["status"] = "failed"
-    state.battle_store.save(record)
-    events = state.battle_store.list_events(battle_id)
-    state.battle_store.save_event(
-        events_api.build_event(
-            battle_id,
-            max((item["sequence"] for item in events), default=0) + 1,
-            event_type,
-            "failed",
-            {"reason": reason},
-        )
-    )
-    events_api.record_audit_event(
-        event_type,
-        status="failed",
-        battle_id=battle_id,
-        actor_role="system",
-        data={"reason": reason},
-    )
-    _persist_internal_score(record)
-    _invalidate_leaderboard_cache()
-
-
-async def _run_battle_with_tracking(battle_id: str, payload: BattleRequest) -> None:
-    global _battle_timeout_count
-    current = asyncio.current_task()
-    if current is not None:
-        state.battle_tasks[battle_id] = current
-    try:
-        await asyncio.wait_for(
-            _run_battle_async(battle_id, payload), timeout=config.battle_timeout_seconds
-        )
-    except TimeoutError:
-        _battle_timeout_count += 1
-        _mark_battle_terminal(battle_id, "battle.timeout", "execution_timeout")
-    except asyncio.CancelledError:
-        if battle_id in state.cancel_requested:
-            state.cancel_requested.discard(battle_id)
-            _mark_battle_terminal(battle_id, "battle.cancelled", "requested_by_client")
-            return
-        raise
-    finally:
-        state.battle_tasks.pop(battle_id, None)
-
-
-def _schedule_battle_task(
-    background_tasks: BackgroundTasks, battle_id: str, payload: BattleRequest
-) -> None:
-    background_tasks.add_task(_run_battle_with_tracking, battle_id, payload)
-
-
-async def _battle_attack(
-    payload: BattleRequest, *, correlation_id: str
-) -> tuple[dict[str, Any], str]:
-    agent_payload = payload.model_dump()
-    knowledge = build_attacker_knowledge(
-        state.battle_store.list_admin_samples(limit=200, offset=0),
-        topic=payload.topic,
-    )
-    if knowledge["records"]:
-        agent_payload["_knowledgeContext"] = knowledge
-    result = await call_attacker(agent_payload, correlation_id=correlation_id)
-    source = "local-rule"
-    if result is None:
-        result = attack(AttackRequest.model_validate(payload.model_dump()))
-        result["agentMode"] = "local-rule"
-    else:
-        source = result.pop("agentSource", None) or (
-            "acp-llm" if result.get("agentMode") == "llm" else "acp-rule-fallback"
-        )
-    return {**result, "agentSource": source}, source
-
-
-async def _battle_defend(
-    sample: dict[str, Any], *, correlation_id: str
-) -> tuple[dict[str, Any], str]:
-    topic = str(sample.get("topic") or "")
-    knowledge = build_defender_knowledge(
-        state.battle_store.list_admin_rules(limit=200, offset=0),
-        topic=topic,
-    )
-    agent_payload: dict[str, Any] = {"sample": sample}
-    if knowledge["records"]:
-        agent_payload["_knowledgeContext"] = knowledge
-    result = await call_defender(agent_payload, correlation_id=correlation_id)
-    source = "local-rule"
-    if result is None:
-        result = defend(DefendRequest(sample=sample))
-        result["agentMode"] = "local-rule"
-    else:
-        source = result.pop("agentSource", None) or (
-            "acp-llm" if result.get("agentMode") == "llm" else "acp-rule-fallback"
-        )
-    return {**result, "agentSource": source}, source
-
-
-async def _tracked_agent_call(
-    *,
-    battle_id: str,
-    role: Literal["attacker", "defender"],
-    invoke: Callable[[str], Awaitable[tuple[dict[str, Any], str]]],
-    add_event: Callable[[str, str, dict[str, Any]], None],
-) -> tuple[dict[str, Any], str, str]:
-    correlation_id = f"call-{uuid.uuid4()}"
-    dispatch_mode = "acp" if acp_agent_configured(role) else "local"
-    event_data: dict[str, Any] = {
-        "correlationId": correlation_id,
-        "agentRole": role,
-        "dispatchMode": dispatch_mode,
-    }
-    expected_aic = os.getenv(
-        f"AGENT_{role.upper()}_EXPECTED_AIC",
-        os.getenv("AGENT_AIP_EXPECTED_PARTNER_AIC", ""),
-    ).strip()
-    if expected_aic:
-        event_data["expectedPeerAic"] = expected_aic
-
-    started = time.monotonic()
-    add_event("agent.call.started", "running", event_data)
-    events_api.record_audit_event(
-        "agent.call.started",
-        status="running",
-        battle_id=battle_id,
-        correlation_id=correlation_id,
-        actor_role=role,
-        data=event_data,
-    )
-    try:
-        result, source = await invoke(correlation_id)
-    except Exception as exc:
-        failure_data = {
-            **event_data,
-            "durationMs": round((time.monotonic() - started) * 1000),
-            "errorType": type(exc).__name__,
-        }
-        add_event(
-            "agent.call.failed",
-            "failed",
-            failure_data,
-        )
-        events_api.record_audit_event(
-            "agent.call.failed",
-            status="failed",
-            battle_id=battle_id,
-            correlation_id=correlation_id,
-            actor_role=role,
-            data=failure_data,
-        )
-        logger.warning(
-            "Battle %s %s call failed (correlation_id=%s, error_type=%s)",
-            battle_id,
-            role,
-            correlation_id,
-            type(exc).__name__,
-        )
-        raise
-
-    completed_data = {
-        **event_data,
-        "durationMs": round((time.monotonic() - started) * 1000),
-        "resultSource": source,
-    }
-    add_event(
-        "agent.call.completed",
-        "completed",
-        completed_data,
-    )
-    events_api.record_audit_event(
-        "agent.call.completed",
-        status="completed",
-        battle_id=battle_id,
-        correlation_id=correlation_id,
-        actor_role=role,
-        data=completed_data,
-    )
-    return result, source, correlation_id
-
-
-def _persist_internal_score(record: dict[str, Any]) -> None:
-    """Persist a terminal battle's evidence-derived score snapshot."""
-    try:
-        score = score_battle(record, state.battle_store.list_events(record["id"]))
-        state.battle_store.save_score(record["id"], score)
-    except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
-        logger.warning(
-            "Battle %s score snapshot unavailable (%s)",
-            record.get("id"),
-            type(exc).__name__,
-        )
-
-
-def _insufficient_internal_score() -> dict[str, Any]:
-    """Return the explicit no-snapshot response used by read APIs.
-
-    A live calculation is intentionally not exposed as an authoritative score. Terminal
-    battles are scored once and persisted in ``battle_scores``; callers without that
-    snapshot must see evidence insufficiency instead of a value that can change.
-    """
-    role_message = "缺少已持久化的 Agent 调用评分快照，无法提供真实分数。"
-    return {
-        "version": SCORING_VERSION,
-        "status": "insufficient_evidence",
-        "message": "当前战局没有可用的 battle_scores 快照；未使用前端或接口实时估算值。",
-        "attacker": {
-            "status": "insufficient_evidence",
-            "score": None,
-            "maxScore": 100,
-            "message": role_message,
-            "categories": [],
-        },
-        "defender": {
-            "status": "insufficient_evidence",
-            "score": None,
-            "maxScore": 100,
-            "message": role_message,
-            "categories": [],
-        },
-    }
-
-
-def _battle_stats(
-    record: dict[str, Any], events: list[dict[str, Any]] | None = None
-) -> dict[str, int]:
-    samples = record.get("attackerOut", {}).get("samples", [])
-    defenses = record.get("defenderOut", [])
-    return {
-        "attackGenerated": len(samples),
-        "defenderDetected": sum(
-            len(item.get("caught", [])) for item in defenses if isinstance(item, dict)
-        ),
-        "fixesSuggested": sum(
-            len(item.get("fixed", [])) for item in defenses if isinstance(item, dict)
-        ),
-        # TODO 战略检测口径：当前以 round.completed 事件计数。
-        "strategyChecks": sum(
-            1 for event in (events or []) if event.get("type") == "round.completed"
-        ),
-    }
-
-
-def _backfill_missing_internal_scores(
-    limit: int = config.score_backfill_batch_size,
-) -> int:
-    """Backfill a bounded batch of terminal battles without replacing snapshots."""
-    list_records = getattr(state.battle_store, "list", None)
-    list_scores = getattr(state.battle_store, "list_scores", None)
-    if not callable(list_records) or not callable(list_scores) or limit <= 0:
-        return 0
-
-    records: list[dict[str, Any]] = []
-    remaining = limit
-    try:
-        for status in ("completed", "failed"):
-            if remaining <= 0:
-                break
-            batch = list_records(limit=remaining, offset=0, status=status)
-            records.extend(batch)
-            remaining -= len(batch)
-        if not records:
-            return 0
-        stored = list_scores([record["id"] for record in records])
-        missing = [record for record in records if record["id"] not in stored]
-        for record in missing:
-            _persist_internal_score(record)
-        return len(missing)
-    except Exception as exc:  # noqa: BLE001  # pragma: no cover - database-specific failure path
-        logger.warning("Battle score backfill unavailable (%s)", type(exc).__name__)
-        return 0
-
-
-async def _run_score_backfill() -> None:
-    await asyncio.to_thread(_backfill_missing_internal_scores)
-
-
-async def _run_battle_async(battle_id: str, payload: BattleRequest) -> None:
-    """Run a battle in stages so clients can observe its event stream."""
-    record = await asyncio.to_thread(state.battle_store.get, battle_id)
-    if record is None:
-        return
-    events = await asyncio.to_thread(state.battle_store.list_events, battle_id)
-    sequence = max((event["sequence"] for event in events), default=0) + 1
-    verification_mode = configured_verify_mode()
-    verifications: list[dict[str, Any]] = []
-
-    def add_event(event_type: str, status: str, data: dict[str, Any]) -> None:
-        nonlocal sequence
-        event = events_api.build_event(battle_id, sequence, event_type, status, data)
-        sequence += 1
-        state.battle_store.save_event(event)
-
-    try:
-        record["status"] = "running"
-        state.battle_store.save(record)
-        add_event(
-            "attack.started",
-            "running",
-            {
-                "topic": payload.topic,
-                "attackerSource": "acp-pending"
-                if acp_agent_configured("attacker")
-                else "local-rule",
-            },
-        )
-        await asyncio.sleep(0.8)
-        attack_result, attacker_source, attack_call_id = await _tracked_agent_call(
-            battle_id=battle_id,
-            role="attacker",
-            invoke=lambda correlation_id: _battle_attack(
-                payload, correlation_id=correlation_id
-            ),
-            add_event=add_event,
-        )
-        record["attackerOut"] = attack_result
-        state.battle_store.save(record)
-        for index, sample in enumerate(attack_result["samples"], start=1):
-            add_event(
-                "attack.sample.generated",
-                "completed",
-                {
-                    "round": index,
-                    "sample": sample,
-                    "attackerSource": attacker_source,
-                    "correlationId": attack_call_id,
-                },
-            )
-            await asyncio.sleep(0.35)
-        add_event(
-            "attack.completed",
-            "completed",
-            {
-                "sampleCount": len(attack_result["samples"]),
-                "attackerSource": attacker_source,
-                "correlationId": attack_call_id,
-            },
-        )
-
-        defender_results: list[dict[str, Any]] = []
-        for index, sample in enumerate(attack_result["samples"], start=1):
-            add_event(
-                "round.started",
-                "running",
-                {
-                    "round": index,
-                    "defenderSource": "acp-pending"
-                    if acp_agent_configured("defender")
-                    else "local-rule",
-                },
-            )
-            await asyncio.sleep(0.8)
-            defense, defender_source, defense_call_id = await _tracked_agent_call(
-                battle_id=battle_id,
-                role="defender",
-                invoke=lambda correlation_id, current_sample=sample: _battle_defend(
-                    current_sample, correlation_id=correlation_id
-                ),
-                add_event=add_event,
-            )
-            defender_results.append(defense)
-            record["defenderOut"] = defender_results
-            state.battle_store.save(record)
-            add_event(
-                "round.completed",
-                "completed",
-                {
-                    "round": index,
-                    "sample": sample,
-                    "caught": defense["caught"],
-                    "risks": defense["risks"],
-                    "fixed": defense["fixed"],
-                    "defenderSource": defender_source,
-                    "analysisMode": defense.get("analysisMode"),
-                    "verificationStatus": defense.get("verificationStatus"),
-                    "scopeNotice": defense.get("scopeNotice"),
-                    "correlationId": defense_call_id,
-                },
-            )
-            verification = verify_round(sample, defense, mode=verification_mode)
-            verifications.append(verification)
-            if verification["verified"]:
-                add_event(
-                    "attack.compromised",
-                    "completed",
-                    {
-                        "round": index,
-                        "targetAssetId": verification.get("targetAssetId"),
-                        "targetVerified": True,
-                        "verificationMode": verification["mode"],
-                        "simulated": verification["simulated"],
-                        "evidence": verification["evidence"],
-                        "correlationId": defense_call_id,
-                    },
-                )
-        add_event(
-            "defense.completed",
-            "completed",
-            {
-                "roundCount": len(defender_results),
-                "layerInterceptions": derive_layer_interceptions(
-                    payload.topic, defender_results
-                ),
-            },
-        )
-        record["status"] = "completed"
-        record["verdict"] = aggregate_verdict(
-            verification_mode, verifications, defender_results
-        )
-        state.battle_store.save(record)
-        await asyncio.to_thread(_invalidate_leaderboard_cache)
-        add_event(
-            "battle.completed",
-            "completed",
-            {
-                "status": record["status"],
-                "verdict": record["verdict"],
-                "compromisedRounds": sum(
-                    1 for item in verifications if item["verified"]
-                ),
-                "interceptedRounds": sum(
-                    1 for item in defender_results if item.get("caught")
-                ),
-                "verificationMode": verification_mode,
-            },
-        )
-        await asyncio.to_thread(_persist_internal_score, record)
-    except Exception as exc:
-        logger.exception("Battle %s failed", battle_id)
-        record["status"] = "failed"
-        state.battle_store.save(record)
-        await asyncio.to_thread(_invalidate_leaderboard_cache)
-        message = (
-            "ACP 独立 Agent 调用失败，请检查服务端日志和 URL/证书配置"
-            if isinstance(exc, ACPAgentError)
-            else "战局执行失败，请检查服务端日志"
-        )
-        add_event("battle.failed", "failed", {"error": message})
-        await asyncio.to_thread(_persist_internal_score, record)
-
-
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """Resume persisted pending/running battles after a process restart."""
@@ -780,10 +319,12 @@ async def _lifespan(_app: FastAPI):
             topic=record["topic"],
             rounds=record.get("rounds", 3),
         )
-        task = asyncio.create_task(_run_battle_with_tracking(record["id"], payload))
+        task = asyncio.create_task(
+            battle_runner.run_battle_with_tracking(record["id"], payload)
+        )
         state.recovery_tasks.add(task)
         task.add_done_callback(state.recovery_tasks.discard)
-    score_backfill = asyncio.create_task(_run_score_backfill())
+    score_backfill = asyncio.create_task(scoring_glue.run_score_backfill())
     state.recovery_tasks.add(score_backfill)
     score_backfill.add_done_callback(state.recovery_tasks.discard)
     try:
@@ -2127,8 +1668,8 @@ def metrics() -> dict[str, Any]:
         "eventDataMaxBytes": config.event_data_max_bytes,
         "recoveryTasks": len(state.recovery_tasks),
         "activeBattleTasks": len(state.battle_tasks),
-        "battleTimeouts": _battle_timeout_count,
-        "battleCancellations": _battle_cancel_count,
+        "battleTimeouts": state.battle_timeout_count,
+        "battleCancellations": state.battle_cancel_count,
         "acpRetries": acp["retries"],
         "acpTimeouts": acp["timeouts"],
         "auditEvents": state.battle_store.count_audit_events(),
@@ -2477,7 +2018,7 @@ async def create_battle(
                 },
             )
         )
-        _schedule_battle_task(background_tasks, battle_id, payload)
+        battle_runner.schedule_battle_task(background_tasks, battle_id, payload)
         return record
 
     events: list[dict[str, Any]] = []
@@ -2521,10 +2062,14 @@ async def create_battle(
     verification_mode = configured_verify_mode()
     verifications: list[dict[str, Any]] = []
     try:
-        attack_result, attacker_source, attack_call_id = await _tracked_agent_call(
+        (
+            attack_result,
+            attacker_source,
+            attack_call_id,
+        ) = await battle_runner.tracked_agent_call(
             battle_id=battle_id,
             role="attacker",
-            invoke=lambda correlation_id: _battle_attack(
+            invoke=lambda correlation_id: battle_runner.battle_attack(
                 payload, correlation_id=correlation_id
             ),
             add_event=add_event,
@@ -2540,11 +2085,13 @@ async def create_battle(
             },
         )
         for sample in attack_result["samples"]:
-            defense, _, defense_call_id = await _tracked_agent_call(
+            defense, _, defense_call_id = await battle_runner.tracked_agent_call(
                 battle_id=battle_id,
                 role="defender",
-                invoke=lambda correlation_id, current_sample=sample: _battle_defend(
-                    current_sample, correlation_id=correlation_id
+                invoke=lambda correlation_id, current_sample=sample: (
+                    battle_runner.battle_defend(
+                        current_sample, correlation_id=correlation_id
+                    )
                 ),
                 add_event=add_event,
             )
@@ -2571,8 +2118,8 @@ async def create_battle(
         state.battle_store.save(failed_record.model_dump())
         for event in events:
             state.battle_store.save_event(event)
-        _persist_internal_score(failed_record.model_dump())
-        await asyncio.to_thread(_invalidate_leaderboard_cache)
+        scoring_glue.persist_internal_score(failed_record.model_dump())
+        await asyncio.to_thread(scoring_glue.invalidate_leaderboard_cache)
         if isinstance(exc, ACPAgentError):
             raise HTTPException(
                 status_code=502,
@@ -2643,7 +2190,7 @@ async def create_battle(
         defenderOut=defense_results,
     )
     state.battle_store.save(record.model_dump())
-    await asyncio.to_thread(_invalidate_leaderboard_cache)
+    await asyncio.to_thread(scoring_glue.invalidate_leaderboard_cache)
     add_event(
         "battle.completed",
         "completed",
@@ -2659,7 +2206,7 @@ async def create_battle(
     )
     for event in events:
         state.battle_store.save_event(event)
-    _persist_internal_score(record.model_dump())
+    scoring_glue.persist_internal_score(record.model_dump())
     return record
 
 
@@ -2687,7 +2234,7 @@ def retry_battle(
     record["defenderOut"] = []
     state.battle_store.save(record)
     state.battle_store.delete_score(battle_id)
-    _invalidate_leaderboard_cache()
+    scoring_glue.invalidate_leaderboard_cache()
     events = state.battle_store.list_events(battle_id)
     state.battle_store.save_event(
         events_api.build_event(
@@ -2703,7 +2250,7 @@ def retry_battle(
         topic=record["topic"],
         rounds=record.get("rounds", 3),
     )
-    _schedule_battle_task(background_tasks, battle_id, payload)
+    battle_runner.schedule_battle_task(background_tasks, battle_id, payload)
     return BattleRecord.model_validate(record)
 
 
@@ -2715,19 +2262,20 @@ def retry_battle(
     tags=["战局接口"],
 )
 def cancel_battle(battle_id: str, request: Request) -> BattleRecord:
-    global _battle_cancel_count
     security.check_browser_or_api_auth(request)
     record = state.battle_store.get(battle_id)
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     if record["status"] in {"completed", "failed"}:
         raise HTTPException(status_code=409, detail="终态战局不能取消")
-    _battle_cancel_count += 1
+    state.battle_cancel_count += 1
     task = state.battle_tasks.get(battle_id)
     if task is not None and not task.done():
         state.cancel_requested.add(battle_id)
         task.cancel()
-    _mark_battle_terminal(battle_id, "battle.cancelled", "requested_by_client")
+    battle_runner.mark_battle_terminal(
+        battle_id, "battle.cancelled", "requested_by_client"
+    )
     events_api.record_audit_event(
         "battle.cancel.requested",
         status="accepted",
@@ -2758,7 +2306,7 @@ def delete_battle(battle_id: str, request: Request) -> Response:
     if record["status"] in {"pending", "running"}:
         raise HTTPException(status_code=409, detail="运行中的战局不能删除")
     state.battle_store.delete(battle_id)
-    _invalidate_leaderboard_cache()
+    scoring_glue.invalidate_leaderboard_cache()
     return Response(status_code=204)
 
 
@@ -3003,14 +2551,14 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         )
         scored_round = round_scores.get(item["round"])
         if scored_round is None:
-            item["attacker"] = _insufficient_internal_score()["attacker"]
-            item["defender"] = _insufficient_internal_score()["defender"]
+            item["attacker"] = scoring_glue.insufficient_internal_score()["attacker"]
+            item["defender"] = scoring_glue.insufficient_internal_score()["defender"]
             item["scores"] = {"attacker": None, "defender": None}
         else:
             item["attacker"] = scored_round["attacker"]
             item["defender"] = scored_round["defender"]
             item["scores"] = scored_round["scores"]
-    stats = _battle_stats(record, events)
+    stats = scoring_glue.battle_stats(record, events)
     # `total` reflects what was actually produced so callers never see a
     # mismatch (for example "5 of 5" while only three rounds exist). The
     # requested count is kept separately for diagnostics.
@@ -3105,7 +2653,7 @@ async def battle_report(
                 events,
                 stored_internal_score
                 if stored_internal_score is not None
-                else _insufficient_internal_score(),
+                else scoring_glue.insufficient_internal_score(),
                 _scores(record),
                 report_summary,
             ),
@@ -3120,7 +2668,7 @@ async def battle_report(
         "scores": {"attacker": attacker_score, "defender": defender_score},
         "internalScore": stored_internal_score
         if stored_internal_score is not None
-        else _insufficient_internal_score(),
+        else scoring_glue.insufficient_internal_score(),
         "summary": report_summary,
     }
 
@@ -3137,7 +2685,7 @@ def battle_internal_score(battle_id: str) -> dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     stored = state.battle_store.get_score(battle_id)
-    return stored if stored is not None else _insufficient_internal_score()
+    return stored if stored is not None else scoring_glue.insufficient_internal_score()
 
 
 @app.get(
@@ -3152,7 +2700,10 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
     records = state.battle_store.list(limit=limit)
     stored_scores = state.battle_store.list_scores([record["id"] for record in records])
     for record in records:
-        score = stored_scores.get(record["id"]) or _insufficient_internal_score()
+        score = (
+            stored_scores.get(record["id"])
+            or scoring_glue.insufficient_internal_score()
+        )
         items.append(
             {
                 "battleId": record["id"],

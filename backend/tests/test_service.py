@@ -8,7 +8,15 @@ from threading import Lock
 
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import config, events, security, service, state
+from agent_attack_lab import (
+    battle_runner,
+    config,
+    events,
+    scoring_glue,
+    security,
+    service,
+    state,
+)
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
@@ -208,7 +216,7 @@ def test_recovery_and_retry_reuse_persisted_round_count(tmp_path, monkeypatch) -
     async def fake_run(_battle_id: str, payload: service.BattleRequest) -> None:
         captured.append(payload.rounds)
 
-    monkeypatch.setattr(service, "_run_battle_with_tracking", fake_run)
+    monkeypatch.setattr(battle_runner, "run_battle_with_tracking", fake_run)
 
     async def recover() -> None:
         async with service._lifespan(service.app):
@@ -396,8 +404,8 @@ def test_battle_records_independent_agent_sources(monkeypatch) -> None:
     async def local_defend(_payload, *, correlation_id):
         assert correlation_id.startswith("call-")
 
-    monkeypatch.setattr(service, "call_attacker", remote_attack)
-    monkeypatch.setattr(service, "call_defender", local_defend)
+    monkeypatch.setattr(battle_runner, "call_attacker", remote_attack)
+    monkeypatch.setattr(battle_runner, "call_defender", local_defend)
 
     response = client.post(
         "/battles", json={"difficulty": "low", "topic": "agent source test"}
@@ -482,8 +490,8 @@ def test_battle_injects_role_scoped_knowledge_into_remote_agents(monkeypatch) ->
         captured["defend"] = payload
         return {"caught": [], "risks": [], "fixed": [], "agentMode": "llm"}
 
-    monkeypatch.setattr(service, "call_attacker", remote_attack)
-    monkeypatch.setattr(service, "call_defender", remote_defend)
+    monkeypatch.setattr(battle_runner, "call_attacker", remote_attack)
+    monkeypatch.setattr(battle_runner, "call_defender", remote_defend)
 
     response = client.post(
         "/battles", json={"difficulty": "low", "topic": "知识库注入", "rounds": 1}
@@ -546,8 +554,8 @@ def test_battle_persists_independent_arbiter_review(monkeypatch) -> None:
             "agentMode": "llm",
         }
 
-    monkeypatch.setattr(service, "call_attacker", remote_attack)
-    monkeypatch.setattr(service, "call_defender", remote_defend)
+    monkeypatch.setattr(battle_runner, "call_attacker", remote_attack)
+    monkeypatch.setattr(battle_runner, "call_defender", remote_defend)
     monkeypatch.delenv("AGENT_TARGET_VERIFY_MODE", raising=False)
     response = client.post(
         "/battles", json={"difficulty": "low", "topic": "arbiter test", "rounds": 1}
@@ -607,7 +615,7 @@ def test_sync_acp_failure_is_persisted_and_returns_battle_id(monkeypatch) -> Non
         assert correlation_id.startswith("call-")
         raise service.ACPAgentError("remote detail must not be exposed")
 
-    monkeypatch.setattr(service, "call_attacker", failed_attack)
+    monkeypatch.setattr(battle_runner, "call_attacker", failed_attack)
     response = client.post(
         "/battles", json={"difficulty": "low", "topic": "trace failure"}
     )
@@ -888,7 +896,7 @@ def test_score_route_does_not_compute_or_expose_live_score_without_persisted_sna
     )
     monkeypatch.setattr(state, "battle_store", store)
     monkeypatch.setattr(
-        service,
+        scoring_glue,
         "score_battle",
         lambda *_args: {
             "version": "test-live-score",
@@ -935,7 +943,7 @@ def test_markdown_report_does_not_compute_or_expose_live_score_without_persisted
     )
     monkeypatch.setattr(state, "battle_store", store)
     monkeypatch.setattr(
-        service,
+        scoring_glue,
         "score_battle",
         lambda *_args: {
             "version": "test-live-score",
@@ -2100,7 +2108,7 @@ def test_lifespan_resumes_all_interrupted_battles_beyond_first_page(
         resumed.add(battle_id)
 
     monkeypatch.setattr(state, "battle_store", RecoveryStore())
-    monkeypatch.setattr(service, "_run_battle_async", capture_recovery)
+    monkeypatch.setattr(battle_runner, "run_battle_async", capture_recovery)
     monkeypatch.setattr(state.redis_cache, "close", lambda: None)
 
     async def recover() -> None:
@@ -2154,7 +2162,7 @@ def test_lifespan_backfills_missing_terminal_scores_without_overwriting_existing
     assert store.get_score(existing["id"]) == existing_score
     backfilled_score = store.get_score(legacy["id"])
     assert backfilled_score is not None
-    assert service._backfill_missing_internal_scores(limit=10) == 0
+    assert scoring_glue.backfill_missing_internal_scores(limit=10) == 0
     assert store.get_score(existing["id"]) == existing_score
     assert store.get_score(legacy["id"]) == backfilled_score
     assert (

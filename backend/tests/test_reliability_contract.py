@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import config, service, state
+from agent_attack_lab import battle_runner, config, service, state
 
 
 def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> None:
@@ -11,7 +11,7 @@ def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> No
     def fake_schedule(*args):
         created.append(args)
 
-    monkeypatch.setattr(service, "_schedule_battle_task", fake_schedule)
+    monkeypatch.setattr(battle_runner, "schedule_battle_task", fake_schedule)
     client = TestClient(service.app)
 
     first = client.post(
@@ -32,7 +32,7 @@ def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> No
 
 
 def test_background_battle_idempotency_conflict_returns_409(monkeypatch) -> None:
-    monkeypatch.setattr(service, "_schedule_battle_task", lambda *args: None)
+    monkeypatch.setattr(battle_runner, "schedule_battle_task", lambda *args: None)
     client = TestClient(service.app)
 
     first = client.post(
@@ -98,13 +98,13 @@ def test_battle_timeout_is_persisted_as_failed(monkeypatch) -> None:
             "defenderOut": [],
         }
     )
-    monkeypatch.setattr(service, "_run_battle_async", stuck_battle)
+    monkeypatch.setattr(battle_runner, "run_battle_async", stuck_battle)
     monkeypatch.setattr(config, "battle_timeout_seconds", 0.01)
 
     import asyncio
 
     asyncio.run(
-        service._run_battle_with_tracking(
+        battle_runner.run_battle_with_tracking(
             "battle-timeout-contract",
             service.BattleRequest(difficulty="low", topic="timeout"),
         )

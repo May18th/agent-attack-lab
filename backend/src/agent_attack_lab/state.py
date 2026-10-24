@@ -46,6 +46,8 @@ cloudflare_jwk_lock = Lock()
 
 # Counters surfaced by /metrics.
 rate_limited_count = 0
+battle_timeout_count = 0
+battle_cancel_count = 0
 
 # Background task bookkeeping and de-duplication guards.
 recovery_tasks: set[asyncio.Task[Any]] = set()

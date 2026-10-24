@@ -109,9 +109,17 @@ agent_attack_lab/
 ### S5 抽 `battle_runner.py` + `scoring_glue.py`
 
 - `battle_runner`：`_run_battle_async`、`_run_battle_with_tracking`、`_schedule_battle_task`、`_battle_attack`、`_battle_defend`、`_tracked_agent_call`、`_mark_battle_terminal`。
-- `scoring_glue`：`_persist_internal_score`、`_insufficient_internal_score`、`_backfill_missing_internal_scores`、`_run_score_backfill`、`_battle_stats`。
-- 这两个模块间的引用必须显式传参，不要互相 import。
+- `scoring_glue`：`_persist_internal_score`、`_insufficient_internal_score`、`_backfill_missing_internal_scores`、`_run_score_backfill`、`_battle_stats`，外加 `_invalidate_leaderboard_cache`（与 `_persist_internal_score` 同属「终态副作用」，一起走）。
 - 验收：战局创建/执行相关用例全绿（这是最大的一块，约占测试 60 例）。
+
+实测修正（2026-10-25 落地时）：
+
+1. **`create_battle` 里还有一条同步执行路径**，它也直接调用 `_tracked_agent_call` / `_battle_attack` / `_battle_defend`。方案原文只列了被搬走的 7 个函数，没提这个调用方，所以首轮替换漏了 4 处。本步只把调用点改为 `battle_runner.*`，`create_battle` 本身留到 S7 的 routers 再搬。
+2. **借用式打桩共 9 处**，不是 0 处：测试用 `setattr(service, "call_attacker", ...)` / `"call_defender"` / `"score_battle"` 打桩**外部函数**，靠的是 service 的模块 globals 查找。这些函数随 `_battle_attack` / `_persist_internal_score` 一起搬走后，打桩目标必须同步迁到 `battle_runner` / `scoring_glue`，否则**测试仍会通过但打桩已成摆设**（假绿）。教训：迁移测量不能只看「service 里哪些名字被搬走」，还要扫 `setattr(service, "<外部名字>")`。
+3. **两个计数器不跟着走**：`_battle_timeout_count` 被 `_run_battle_with_tracking` 写、被 `/metrics` 读；`_battle_cancel_count` 被 `cancel_battle` 写、被 `/metrics` 读。都归 `state.py`，写侧的 `global` 一并删掉。
+4. **方案说的「两模块间不要互相 import」改成了单向 import**：`battle_runner → scoring_glue` 不构成环（`scoring_glue` 不回调 `battle_runner`）。若坚持传参，`_mark_battle_terminal` 得新增一个 `persist_score` 形参，签名变形会波及 `cancel_battle` 等调用方，违背「只搬结构不改接口」的约束。
+5. **`configured_verify_mode` 的打桩出现分叉**：同步路径（`create_battle`，在 service）读 service 的全局名，异步路径（`run_battle_async`，在 battle_runner）读 battle_runner 的。当前两个测试都走 `POST /battles` 的同步路径，打桩 `service.configured_verify_mode` 仍然真实生效，故不动；**将来若要测异步路径的 verify mode，必须打桩 `battle_runner.configured_verify_mode`**。
+6. `BattleRequest` 不必挪到 `models.py`：`service.py` 有 `from __future__ import annotations`，签名里的注解是字符串不求值，`battle_runner` 用 `TYPE_CHECKING` 导入即可，运行时鸭子类型足够。
 
 ### S6 抽 `reports.py`
 
