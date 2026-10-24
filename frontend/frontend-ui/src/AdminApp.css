@@ -390,7 +390,7 @@
 .industry-scene { left: 1%; width: min(52vw, 700px); }
 @keyframes auth-card-in-right { from { opacity: 0; transform: translate(26px, -50%) scale(.97); filter: blur(6px); } to { opacity: 1; transform: translate(0, -50%) scale(1); filter: none; } }
 @media (max-width: 1120px) and (min-width: 721px) { .auth-card { right: 4%; width: min(43vw, 440px); }.industry-scene { left: -2%; width: 49vw; } }
-@media (max-width: 720px) { .auth-card { position: relative; top: auto; right: auto; width: min(100%, 480px); transform: none; animation-name: auth-card-in; }.industry-scene { left: 50%; width: min(104vw, 560px); } }
+@media (max-width: 720px) { .auth-shell { min-width: 0; grid-template-columns: minmax(0, 1fr); }.auth-card { position: relative; top: auto; right: auto; width: 100%; max-width: 480px; min-width: 0; justify-self: center; margin: 0; transform: none; animation-name: auth-card-in; }.industry-scene { left: 50%; width: min(104vw, 560px); } }
 @media (prefers-reduced-motion: reduce) { .auth-card { animation-name: none; transform: translateY(-50%); } }
 @media (max-width: 720px) and (prefers-reduced-motion: reduce) { .auth-card { transform: none; } }
 
@@ -409,9 +409,9 @@
 
 /* 真正的 Three.js 星体中枢：替换旧 SVG 太阳系，保持左侧独立留白 */
 .auth-shell .solar-scene, .auth-shell .industry-scene, .auth-shell .holo-network, .auth-shell .holo-core-mark { display: none; }
-.auth-solar-scene { position: absolute; z-index: 4; left: 2.5%; top: 50%; width: min(57vw, 760px); height: min(70vh, 620px); transform: translateY(-50%); pointer-events: auto; isolation: isolate; filter: drop-shadow(0 26px 42px rgba(0,0,0,.18)); }
+.auth-solar-scene { position: absolute; z-index: 4; left: 2.5%; top: 50%; width: min(57vw, 760px); height: min(70vh, 620px); transform: translateY(-50%); pointer-events: auto; isolation: isolate; }
 .auth-solar-scene canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-.auth-solar-scene::before { content: ""; position: absolute; left: 16%; right: 12%; bottom: 8%; height: 20%; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse, rgba(31,189,255,.2), rgba(47,75,180,.07) 42%, transparent 72%); filter: blur(20px); pointer-events: none; }
+.auth-solar-scene::before { content: ""; position: absolute; left: 16%; right: 12%; bottom: 8%; height: 20%; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse, rgba(31,189,255,.08), transparent 68%); filter: blur(28px); pointer-events: none; }
 .auth-solar-caption { position: absolute; left: 13%; bottom: 5%; display: grid; gap: 7px; color: rgba(224,251,255,.9); text-transform: uppercase; text-align: center; pointer-events: none; }
 .auth-solar-caption strong { font-size: 14px; letter-spacing: .2em; text-shadow: 0 0 16px rgba(103,232,249,.42); }
 .auth-solar-caption span { color: rgba(143,196,218,.58); font: 9px "Cascadia Code", Consolas, monospace; letter-spacing: .17em; }
@@ -419,5 +419,5 @@
 .auth-solar-readout::before { content: ""; width: 36px; height: 1px; background: linear-gradient(90deg, rgba(103,232,249,.82), transparent); }
 .auth-solar-scene--fallback { background: radial-gradient(circle at 43% 50%, rgba(35,177,255,.22), transparent 30%), radial-gradient(circle at 62% 44%, rgba(139,92,246,.14), transparent 32%); }
 @media (max-width: 1120px) and (min-width: 721px) { .auth-solar-scene { left: -3%; width: 55vw; height: 66vh; } }
-@media (max-width: 720px) { .auth-solar-scene { left: 50%; top: 22%; width: min(112vw, 600px); height: min(54vh, 380px); transform: translate(-50%, -50%); opacity: .72; }.auth-solar-caption { left: 50%; bottom: 1%; transform: translateX(-50%); white-space: nowrap; }.auth-solar-caption strong { font-size: 11px; }.auth-solar-readout { left: 15%; top: 12%; font-size: 8px; } }
+@media (max-width: 720px) { .auth-solar-scene { left: 50%; top: 22%; width: min(100vw, 600px); height: min(54vh, 380px); transform: translate(-50%, -50%); opacity: .72; }.auth-solar-caption { left: 50%; bottom: 1%; transform: translateX(-50%); white-space: nowrap; }.auth-solar-caption strong { font-size: 11px; }.auth-solar-readout { left: 15%; top: 12%; font-size: 8px; } }
 @media (prefers-reduced-motion: reduce) { .auth-solar-scene canvas { opacity: .92; } }
