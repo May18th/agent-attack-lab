@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import AdminApp from './AdminApp'
 import * as adminApi from './adminApi'
 import { ApiError } from './api'
+import { PRESET_THEMES, THEME_STORAGE_KEY } from './themes'
 
 vi.mock('./adminApi', async () => {
   const actual = await vi.importActual<typeof import('./adminApi')>('./adminApi')
@@ -10,7 +11,7 @@ vi.mock('./adminApi', async () => {
 })
 
 const battle = { id: 'b-1', difficulty: 'high' as const, topic: '测试战局', status: 'failed', createdAt: '2026-10-18T00:00:00Z', attackerOut: { samples: [] }, defenderOut: [] }
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); window.localStorage.clear() })
 
 describe('AdminApp', () => {
   it('lets an administrator choose the number of rounds and submits it to the admin API', async () => {
@@ -25,7 +26,52 @@ describe('AdminApp', () => {
     fireEvent.click(screen.getByRole('tab', { name: '创建战局' }))
     fireEvent.change(screen.getByLabelText('演练回合数'), { target: { value: '5' } })
     fireEvent.click(screen.getByRole('button', { name: '创建并启动战局' }))
-    await waitFor(() => expect(adminApi.createAdminBattle).toHaveBeenCalledWith({ topic: '提示注入', difficulty: 'mid', rounds: 5 }))
+    await waitFor(() => expect(adminApi.createAdminBattle).toHaveBeenCalledWith({ topic: PRESET_THEMES[0], difficulty: 'mid', rounds: 5 }))
+  })
+
+  it('opens and filters the command panel with the keyboard shortcut', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    render(<AdminApp />)
+    await screen.findByText('运行指标')
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+    const input = screen.getByRole('textbox', { name: '搜索菜单' })
+    expect(screen.getByRole('dialog', { name: '命令面板' })).toBeInTheDocument()
+    fireEvent.change(input, { target: { value: '管理' } })
+    expect(screen.getByRole('option', { name: /管理模块/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '命令面板' })).not.toBeInTheDocument()
+  })
+
+  it('uses the frontend preset theme library and shares custom themes through localStorage', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.createAdminBattle).mockResolvedValue({ ...battle, status: 'pending' } as never)
+    render(<AdminApp />)
+    await screen.findByText('运行指标')
+
+    // 预置主题与前台一致，六个都在主题库里
+    fireEvent.click(screen.getByRole('tab', { name: '主题库' }))
+    for (const theme of PRESET_THEMES) {
+      expect(await screen.findByRole('button', { name: theme })).toBeInTheDocument()
+    }
+
+    // 新增自定义主题后写入前台同名 localStorage 键
+    const custom = '内部知识库越权检索'
+    fireEvent.change(screen.getByLabelText('新增主题'), { target: { value: custom } })
+    fireEvent.click(screen.getByRole('button', { name: '添加到主题库' }))
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(THEME_STORAGE_KEY) ?? '[]')).toContain(custom))
+
+    // 自定义主题可直接带入创建战局并提交
+    fireEvent.click(await screen.findByRole('button', { name: custom }))
+    fireEvent.click(screen.getByRole('button', { name: '创建并启动战局' }))
+    await waitFor(() => expect(adminApi.createAdminBattle).toHaveBeenCalledWith({ topic: custom, difficulty: 'mid', rounds: 3 }))
   })
 
   it('shows password authentication when unauthenticated', async () => {
@@ -394,5 +440,51 @@ describe('AdminApp', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看可读战局' }))
     expect((await screen.findAllByText('攻击得手（目标已验证）')).length).toBeGreaterThan(0)
     expect(screen.queryByText(/未取得验证证据/)).not.toBeInTheDocument()
+  })
+
+  it('puts headline KPIs (with rates) above the fold and never prints raw English metric keys', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({
+      totalBattles: 30, completedBattles: 18, failedBattles: 12, highDifficultyBattles: 14, events: 275,
+      sampleCount: 48, defenderDetected: 56, fixesSuggested: 56, riskCount: 56, recommendationCount: 56,
+      acpCallBattles: 18, agentExecutionCount: 28, acpSuccessCount: 22, acpFailureCount: 6,
+      averageAgentCallLatencyMs: 1716, ruleLibraryCaseCount: 3,
+    } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({ averageLatencyMs: 41.59, auditEvents: 3075 })
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    render(<AdminApp />)
+    await screen.findByText('运行指标')
+
+    const kpi = screen.getByRole('region', { name: '关键指标' })
+    expect(await within(kpi).findByText('60%')).toBeInTheDocument() // 18/30
+    expect(within(kpi).getByText('40%')).toBeInTheDocument() // 12/30
+    expect(within(kpi).getByText('1.72 秒')).toBeInTheDocument() // 1716ms 智能体平均响应
+
+    // 英文原始键已全部配中文名，兜底分组不该出现
+    expect(screen.queryByText('未登记指标')).not.toBeInTheDocument()
+    for (const key of ['sampleCount', 'acpCallBattles', 'agentExecutionCount', 'averageAgentCallLatencyMs', 'ruleLibraryCaseCount']) {
+      expect(screen.queryByText(key)).not.toBeInTheDocument()
+    }
+    // 四个同源字段只出一张卡
+    expect(screen.getAllByText('防守命中（含建议/风险）')).toHaveLength(1)
+  })
+
+  it('renders audit log data as labelled key/value chips instead of raw JSON', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.listAdminAuditLogs).mockResolvedValue([
+      { id: 'a-1', createdAt: '2026-10-24T10:00:00Z', actorRole: 'admin', eventType: 'battle.created', status: 'ok', data: { battleId: 'b-1', topic: '提示注入', rounds: 3 } },
+    ] as never)
+    render(<AdminApp />)
+    await screen.findByText('运行指标')
+    fireEvent.click(screen.getByRole('tab', { name: '审计日志' }))
+
+    expect(await screen.findByText('战局 ID')).toBeInTheDocument()
+    expect(screen.getByText('战局创建')).toBeInTheDocument() // eventType 走中文映射
+    expect(screen.queryByText(/"battleId":/)).not.toBeInTheDocument()
   })
 })

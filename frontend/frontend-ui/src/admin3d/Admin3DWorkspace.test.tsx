@@ -368,6 +368,51 @@ describe('Admin3DWorkspace', () => {
     expect(sceneMock.resetCount).toBe(1)
   })
 
+  it('offers a keyboard-accessible 2D timeline when 3D is not the preferred view', () => {
+    const events: AdminBattleEvent[] = [
+      { sequence: 1, type: 'attack.started', timestamp: '2026-10-19T00:00:01Z' },
+      { sequence: 2, type: 'round.completed', data: { round: 1, caught: [{ ruleId: 'LAB-1' }] } },
+    ]
+    renderWorkspace({ selectedBattle: battle, events })
+
+    fireEvent.click(screen.getByRole('button', { name: '切换到 2D 时间线' }))
+    expect(screen.getByRole('list', { name: '2D 事件时间线' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /攻击阶段开始/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /本轮检测结果/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /本轮检测结果/ }))
+    expect(screen.getByText('第 1 / 3 轮')).toBeInTheDocument()
+  })
+
+  it('keeps raw event data collapsed behind a disclosure after showing its summary', () => {
+    const event: AdminBattleEvent = { sequence: 1, type: 'round.completed', data: { round: 1, caught: [{ ruleId: 'LAB-1' }], secret: 'debug-only' } }
+    renderWorkspace({ selectedBattle: battle, events: [event] })
+
+    const disclosure = screen.getByText('查看原始事件数据').closest('details')
+    expect(disclosure).not.toBeNull()
+    expect(disclosure).not.toHaveAttribute('open')
+    expect(screen.getByText(/防守方完成第 1 轮检测/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('查看原始事件数据'))
+    expect(disclosure).toHaveAttribute('open')
+    expect(screen.getByText(/debug-only/)).toBeInTheDocument()
+  })
+
+  it('does not keep the raw disclosure open when the selected event changes', () => {
+    const events: AdminBattleEvent[] = [
+      { sequence: 1, type: 'attack.started', data: { marker: 'first' } },
+      { sequence: 2, type: 'round.completed', data: { round: 1, marker: 'second' } },
+    ]
+    renderWorkspace({ selectedBattle: battle, events })
+
+    fireEvent.click(screen.getByText('查看原始事件数据'))
+    expect(screen.getByText(/first/)).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('slider', { name: '回放进度' }), { target: { value: '1' } })
+    const disclosures = screen.getAllByText('查看原始事件数据').map((text) => text.closest('details'))
+    expect(disclosures).toHaveLength(1)
+    expect(disclosures[0]).not.toHaveAttribute('open')
+  })
+
   it('provides an explicit control to cancel the locked camera view', () => {
     renderWorkspace({ selectedBattle: battle, events: [{ sequence: 1, type: '启动' }] })
     fireEvent.click(screen.getByRole('button', { name: '取消视角锁定' }))

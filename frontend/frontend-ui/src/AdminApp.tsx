@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import './AdminApp.css'
 import {
   apiErrorMessage, cancelAdminBattle, deleteAdminBattle, getAdminBattleAudit, getAdminBattleDetail,
@@ -7,7 +7,8 @@ import {
   type AdminBattle, type AdminBattleEvent, type AdminBattleListFilters, type AdminBattleRounds, type AdminBattleScore, type AdminExternalCases,
 } from './adminApi'
 import { AdminBattleDetail } from './AdminBattleDetail'
-import { DIFFICULTY_LABELS, STATUS_LABELS } from './adminLabels'
+import { AdminKpiBar } from './AdminKpiBar'
+import { DIFFICULTY_LABELS, STATUS_LABELS, VERDICT_LABELS } from './adminLabels'
 import { AdminManagementPanel } from './AdminManagementPanel'
 import { AdminMetricsPanel } from './AdminMetricsPanel'
 import { ApiError } from './api'
@@ -17,6 +18,27 @@ const Admin3DWorkspace = lazy(() => import('./admin3d/Admin3DWorkspace').then((m
 
 const PAGE_SIZE = 10
 const label = (value?: string, labels: Record<string, string> = STATUS_LABELS) => value ? labels[value] ?? value : '暂无'
+function formatBattleCreatedAt(value?: string): string {
+  if (!value) return '时间未记录'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
+}
+function battleVerdictLabel(verdict?: AdminBattle['verdict']): string {
+  return verdict ? label(verdict, VERDICT_LABELS) : '未生成判定'
+}
+function battleReviewLabel(battle: AdminBattle): string {
+  if (battle.verdict === 'attacker_won') return '已验证结论'
+  if (battle.verdict === 'defender_won') return '有拦截证据'
+  if (battle.verdict === 'undetermined') return '证据不足'
+  return '等待后端判定'
+}
+const COMMAND_ITEMS = [
+  { key: 'front', label: '前台体验', description: '打开公开攻防体验与风险复盘', href: '/' },
+  { key: 'workspace', label: '3D 工作台', description: '查看战局拓扑、时间线和实时事件', href: '#admin-3d-workspace' },
+  { key: 'modules', label: '管理模块', description: '创建战局、管理主题、样本、规则与审计', href: '#admin-2d-workspace' },
+] as const
+type CommandItem = (typeof COMMAND_ITEMS)[number]
 
 function SecurityLockIcon() {
   return <svg className="security-lock" role="img" aria-label="安全登录" viewBox="0 0 24 24" fill="none" aria-hidden="false"><path d="M7.5 10V7.75a4.5 4.5 0 0 1 9 0V10" /><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M12 14v2" /></svg>
@@ -60,6 +82,12 @@ export default function AdminApp() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [activeNav, setActiveNav] = useState<CommandItem['key']>('workspace')
+  const [navIndicator, setNavIndicator] = useState({ left: 0, width: 0 })
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
+  const [commandIndex, setCommandIndex] = useState(0)
+  const navRef = useRef<HTMLElement>(null)
   const detailRequestId = useRef(0)
   const loadingMoreEventsRef = useRef(false)
   const selectedBattleRef = useRef(selected)
@@ -163,6 +191,65 @@ export default function AdminApp() {
 
   const selectedBattleId = selected?.id
   const selectedBattleStatus = selected?.status
+  const filteredCommands = COMMAND_ITEMS.filter((item) => {
+    const query = commandQuery.trim().toLocaleLowerCase()
+    return !query || `${item.label} ${item.description}`.toLocaleLowerCase().includes(query)
+  })
+  const selectedCommandIndex = Math.min(commandIndex, Math.max(filteredCommands.length - 1, 0))
+
+  useLayoutEffect(() => {
+    const updateIndicator = () => {
+      const item = navRef.current?.querySelector(`[data-nav-key="${activeNav}"]`) as HTMLElement | null
+      if (!item) return
+      setNavIndicator({ left: item.offsetLeft, width: item.offsetWidth })
+    }
+    updateIndicator()
+    window.addEventListener('resize', updateIndicator)
+    return () => window.removeEventListener('resize', updateIndicator)
+  }, [activeNav])
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandOpen(true)
+        setCommandQuery('')
+        setCommandIndex(0)
+      }
+      if (event.key === 'Escape' && commandOpen) {
+        event.preventDefault()
+        setCommandOpen(false)
+      }
+    }
+    window.addEventListener('keydown', handleShortcut)
+    return () => window.removeEventListener('keydown', handleShortcut)
+  }, [commandOpen])
+
+  const navigateToCommand = (item: CommandItem) => {
+    setActiveNav(item.key)
+    setCommandOpen(false)
+    setCommandQuery('')
+    setCommandIndex(0)
+    if (item.href === '/') {
+      window.location.assign(item.href)
+      return
+    }
+    document.querySelector(item.href)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const handleCommandKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setCommandIndex((current) => Math.min(current + 1, Math.max(filteredCommands.length - 1, 0)))
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setCommandIndex((current) => Math.max(current - 1, 0))
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      const item = filteredCommands[selectedCommandIndex]
+      if (item) navigateToCommand(item)
+    }
+  }
   useEffect(() => { selectedBattleRef.current = selected }, [selected])
   useEffect(() => {
     if (!selectedBattleId || (selectedBattleStatus !== 'pending' && selectedBattleStatus !== 'running')) return
@@ -220,29 +307,57 @@ export default function AdminApp() {
   if (session.enabled && !session.authenticated) return <AuthFrame><div className="auth-mark"><SecurityLockIcon /><span>安全会话</span></div><h1>管理员后台 - 管理员认证</h1><p className="auth-description">使用后台管理密码建立安全会话。</p><form onSubmit={(event) => void handlePasswordLogin(event)}><label htmlFor="admin-login-password">后台管理密码</label><input id="admin-login-password" type="password" autoComplete="current-password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required maxLength={256} disabled={loginBusy} /><button className="auth-primary" type="submit" disabled={loginBusy} aria-busy={loginBusy}>{loginBusy ? '登录中…' : '登录管理后台'}</button></form>{sessionError && <p className="admin-error" role="alert">{sessionError}</p>}<button className="auth-secondary" type="button" onClick={() => void checkSession()} disabled={loginBusy}>我已完成认证，重新检查</button></AuthFrame>
 
   return <main className="admin-shell">
-    <header className="admin-header"><div><span className="admin-kicker">AGENT ATTACK LAB / OPERATIONS</span><h1>管理员后台</h1></div><button onClick={() => void handleLogout()}>退出会话</button></header>
+    <header className="admin-header">
+      <div className="admin-brand">
+        <span className="admin-kicker">智能体攻防实验室（AGENT ATTACK LAB）</span>
+        <h1>管理<em>总控台</em></h1>
+        <p className="admin-sub">后台运营（Operations） · 战局复盘（Battle review） · 风险管理（Risk control）</p>
+      </div>
+      <div className="admin-header-actions">
+        <nav className="admin-nav" aria-label="工作区导航" ref={navRef}>
+          <span className="admin-nav-highlight" aria-hidden="true" style={{ width: navIndicator.width, transform: `translateX(${navIndicator.left}px)` }} />
+          {COMMAND_ITEMS.map((item) => item.key === 'front' ? <a key={item.key} className="admin-nav-link" data-nav-key={item.key} href={item.href}>{item.label}</a> : <button key={item.key} type="button" className="admin-nav-link" data-nav-key={item.key} onClick={() => navigateToCommand(item)}>{item.label}</button>)}
+        </nav>
+        <button className="command-trigger" type="button" onClick={() => { setCommandOpen(true); setCommandQuery(''); setCommandIndex(0) }} aria-label="打开命令面板" aria-keyshortcuts="Control+K"><span>命令面板</span><kbd>⌘K</kbd></button>
+        <button className="admin-logout" onClick={() => void handleLogout()}>退出会话</button>
+      </div>
+    </header>
+    {commandOpen && <div className="command-backdrop" role="presentation" onMouseDown={() => setCommandOpen(false)}>
+      <section className="command-panel" role="dialog" aria-modal="true" aria-label="命令面板" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="command-panel-head"><strong>跳转到</strong><kbd>ESC</kbd></div>
+        <input autoFocus className="command-input" aria-label="搜索菜单" placeholder="搜索工作区或功能" value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} onKeyDown={handleCommandKeyDown} />
+        <div className="command-list" role="listbox" aria-label="菜单结果">
+          {filteredCommands.length ? filteredCommands.map((item, index) => <button key={item.key} type="button" role="option" aria-selected={index === selectedCommandIndex} className={`command-item${index === selectedCommandIndex ? ' active' : ''}`} onMouseEnter={() => setCommandIndex(index)} onClick={() => navigateToCommand(item)}><span className="command-item-icon" aria-hidden="true">{item.key === 'front' ? '↗' : item.key === 'workspace' ? '◈' : '☷'}</span><span><strong>{item.label}</strong><small>{item.description}</small></span><kbd>{index + 1}</kbd></button>) : <p className="command-empty">没有匹配的菜单项</p>}
+        </div>
+      </section>
+    </div>}
     {error && <div className="admin-error" role="alert">{error}</div>}
-    <Suspense fallback={<section className="admin3d-workspace" aria-live="polite">正在加载 3D 工作台…</section>}>
-      <Admin3DWorkspace
-        battles={battles}
-        selectedBattle={selected}
-        events={Array.isArray(detailData['事件']) ? detailData['事件'] as AdminBattleEvent[] : []}
-        eventsTotal={eventPageInfo.total}
-        hasMoreEvents={eventPageInfo.hasMore}
-        onLoadMoreEvents={() => void loadMoreEvents()}
-        selectedEvent={selectedTimelineEvent}
-        score={detailData['评分'] as AdminBattleScore | null | undefined}
-        eventQuery={timelineQuery}
-        externalCases={cases?.available ? cases.items : []}
-        onSelectBattle={selectBattle}
-        onSelectEvent={setSelectedTimelineEvent}
-      />
-    </Suspense>
+    <AdminKpiBar summary={summary} metrics={metrics} />
+    <div id="admin-3d-workspace" className="admin-3d-anchor">
+      <Suspense fallback={<section className="admin3d-workspace" aria-live="polite">正在加载 3D 工作台…</section>}>
+        <Admin3DWorkspace
+          battles={battles}
+          selectedBattle={selected}
+          events={Array.isArray(detailData['事件']) ? detailData['事件'] as AdminBattleEvent[] : []}
+          eventsTotal={eventPageInfo.total}
+          hasMoreEvents={eventPageInfo.hasMore}
+          onLoadMoreEvents={() => void loadMoreEvents()}
+          selectedEvent={selectedTimelineEvent}
+          score={detailData['评分'] as AdminBattleScore | null | undefined}
+          eventQuery={timelineQuery}
+          externalCases={cases?.available ? cases.items : []}
+          onSelectBattle={selectBattle}
+          onSelectEvent={setSelectedTimelineEvent}
+        />
+      </Suspense>
+    </div>
     <div id="admin-2d-workspace" className="admin-2d-workspace">
     <AdminManagementPanel battles={battles} onBattleCreated={handleBattleCreated} onError={setError} />
     <AdminMetricsPanel summary={summary} metrics={metrics} />
-    <section className="admin-module"><div className="module-head"><h2>战局列表</h2><span>{total} 场</span></div><div className="filters"><input aria-label="搜索战局" placeholder="搜索主题或编号" value={query} onChange={(e) => { const value = e.target.value; setQuery(value); setPage(0); void loadList({ offset: 0, q: value }) }} onKeyDown={(e) => { if (e.key === 'Enter') void loadList({ offset: 0, q: query }) }} /><select aria-label="状态筛选" value={status} onChange={(e) => { const value = e.target.value; setStatus(value); setPage(0); void loadList({ offset: 0, status: value }) }}><option value="">全部状态</option>{Object.entries(STATUS_LABELS).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select><button onClick={() => void loadList({ offset: 0 })}>查询</button></div>{loading ? <p>正在加载战局…</p> : <div className="battle-table">{battles.length ? battles.map((battle) => <button className="battle-row" key={battle.id} aria-label={`查看${battle.topic}`} onClick={() => void selectBattle(battle)}><span>{battle.topic || '未命名战局'}</span><span>{label(battle.status)} · {label(battle.difficulty, DIFFICULTY_LABELS)} · {battle.rounds ?? 3} 轮</span><span>{battle.code ?? battle.id}</span></button>) : <p className="empty">暂无战局</p>}</div>}<div className="pagination"><button disabled={page <= 0} onClick={() => { setPage(page - 1); void loadList({ offset: (page - 1) * PAGE_SIZE }) }}>上一页</button><span>第 {page + 1} / {pages} 页</span><button disabled={page + 1 >= pages} onClick={() => { setPage(page + 1); void loadList({ offset: (page + 1) * PAGE_SIZE }) }}>下一页</button></div></section>
+    <div className="admin-operations-grid">
+    <section className="admin-module"><div className="module-head"><h2>战局列表</h2><span>{total} 场</span></div><div className="filters"><input aria-label="搜索战局" placeholder="搜索主题或编号" value={query} onChange={(e) => { const value = e.target.value; setQuery(value); setPage(0); void loadList({ offset: 0, q: value }) }} onKeyDown={(e) => { if (e.key === 'Enter') void loadList({ offset: 0, q: query }) }} /><select aria-label="状态筛选" value={status} onChange={(e) => { const value = e.target.value; setStatus(value); setPage(0); void loadList({ offset: 0, status: value }) }}><option value="">全部状态</option>{Object.entries(STATUS_LABELS).map(([key, value]) => <option key={key} value={key}>{value}</option>)}</select><button onClick={() => void loadList({ offset: 0 })}>查询</button></div>{loading ? <p>正在加载战局…</p> : <div className="battle-table">{battles.length ? battles.map((battle) => <button className="battle-row" key={battle.id} aria-label={`查看${battle.topic || '未命名战局'}`} aria-describedby={`battle-meta-${battle.id}`} onClick={() => void selectBattle(battle)}><span className="battle-row-primary"><strong>{battle.topic || '未命名战局'}</strong><small id={`battle-meta-${battle.id}`}>{battle.code ?? '未编号'} · {formatBattleCreatedAt(battle.createdAt)}</small></span><span className="battle-row-status"><i className={`battle-status-dot status-${battle.status}`} />{label(battle.status)} · {label(battle.difficulty, DIFFICULTY_LABELS)} · {battle.rounds ?? 3} 轮</span><span className={`battle-row-verdict verdict-${battle.verdict ?? 'review'}`}><strong>{battleVerdictLabel(battle.verdict)}</strong><small>{battleReviewLabel(battle)}</small></span></button>) : <p className="empty">暂无战局</p>}</div>}<div className="pagination"><button disabled={page <= 0} onClick={() => { setPage(page - 1); void loadList({ offset: (page - 1) * PAGE_SIZE }) }}>上一页</button><span>第 {page + 1} / {pages} 页</span><button disabled={page + 1 >= pages} onClick={() => { setPage(page + 1); void loadList({ offset: (page + 1) * PAGE_SIZE }) }}>下一页</button></div></section>
     <section className="admin-module"><div className="module-head"><h2>战局详情</h2>{selected && <span>{selected.code ?? selected.id}</span>}</div>{selected ? <><div className="detail-summary"><strong>{selected.topic || '未命名战局'}</strong><span>{label(selected.status)} · {label(selected.difficulty, DIFFICULTY_LABELS)}</span><div className="actions">{selected.status === 'failed' && <button disabled={busy} onClick={() => void runAction('retry')}>重试战局</button>}{(selected.status === 'pending' || selected.status === 'running') && <button disabled={busy} onClick={() => void runAction('cancel')}>取消战局</button>}{(selected.status === 'completed' || selected.status === 'failed') && <button className="danger" disabled={busy} onClick={() => void runAction('delete')}>删除战局</button>}</div></div><AdminBattleDetail battle={selected} rounds={rounds} score={detailData['评分'] as AdminBattleScore | null | undefined} events={Array.isArray(detailData['事件']) ? detailData['事件'] as AdminBattleEvent[] : []} audit={detailData['审计'] && typeof detailData['审计'] === 'object' ? detailData['审计'] as Record<string, unknown> : {}} detailData={detailData} showRawData={showRawData} hasMoreEvents={eventPageInfo.hasMore} onLoadMoreEvents={() => void loadMoreEvents()} selectedEvent={selectedTimelineEvent} onSelectEvent={setSelectedTimelineEvent} /><BattleTimeline3D battle={selected} events={Array.isArray(detailData['事件']) ? detailData['事件'] as AdminBattleEvent[] : []} eventsTotal={eventPageInfo.total} hasMoreEvents={eventPageInfo.hasMore} onLoadMoreEvents={() => void loadMoreEvents()} audit={detailData['审计'] && typeof detailData['审计'] === 'object' ? detailData['审计'] as Record<string, unknown> : {}} score={detailData['评分'] as AdminBattleScore | null | undefined} selectedEvent={selectedTimelineEvent} onSearchQueryChange={setTimelineQuery} onSelectEvent={setSelectedTimelineEvent} /><span className="sr-only" aria-live="polite">{selectedTimelineEvent ? `当前选择事件 ${selectedTimelineEvent.sequence ?? ''} ${selectedTimelineEvent.type ?? selectedTimelineEvent.eventType ?? ''}` : ''}</span></> : <p className="empty">选择战局查看详情、评分、事件、审计和报告。</p>}</section>
+    </div>
     <details className="admin-module external-case-module" aria-label="外部案例"><summary className="module-head"><h2>外部案例</h2><span>只读</span></summary><div className="external-case-content"><div className="filters"><input aria-label="搜索外部案例" placeholder="搜索 CVE、厂商或产品" value={caseQuery} onChange={(e) => setCaseQuery(e.target.value)} /><button onClick={() => void loadCases()}>查询</button></div>{cases?.available === false ? <p className="empty">{cases.reason || '外部案例不可用'}</p> : cases?.items?.length ? <div className="case-list">{cases.items.map((item) => <article key={item.externalId}><strong>{item.externalId} · {item.title}</strong><p>{item.vendorProject} · {item.product} · {item.provenanceStatus}</p><a href={item.sourceUrl} target="_blank" rel="noreferrer">来源</a></article>)}</div> : <p className="empty">暂无匹配案例</p>}</div></details>
     </div>
   </main>

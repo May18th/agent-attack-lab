@@ -85,6 +85,7 @@
   border: 1px solid #2c3c43;
   border-radius: 5px;
 }
+.admin3d-scene-frame.is-empty { height: clamp(190px, 25vh, 260px); min-height: 190px; }
 .admin3d-scene { position: absolute; inset: 0; }
 .admin3d-scene canvas { display: block; width: 100%; height: 100%; }
 .admin3d-label-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
@@ -121,7 +122,25 @@
 .admin3d-event-cue { padding: 5px 9px; color: #effaff; background: rgb(3 16 26 / 91%); border: 1px solid var(--cue-color, #9bdcff); border-radius: 3px; box-shadow: 0 0 14px color-mix(in srgb, var(--cue-color, #9bdcff) 32%, transparent); font-size: 12px; font-weight: 650; line-height: 1.25; white-space: nowrap; transition: opacity 100ms linear; }
 .admin3d-event-cue[data-paused="true"] { opacity: 1 !important; }
 .admin3d-scene-error,
-.admin3d-empty-state { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; gap: 10px; padding: 24px; color: #d2dddf; text-align: center; }
+.admin3d-empty-state,
+.admin3d-scene-fallback { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; gap: 10px; padding: 24px; color: #d2dddf; text-align: center; }
+.admin3d-scene-fallback { align-content: start; justify-items: stretch; overflow: auto; background: #0d171d; text-align: left; }
+.admin3d-scene-fallback-head { display: grid; gap: 5px; padding: 4px 2px 8px; border-bottom: 1px solid #2b4149; }
+.admin3d-scene-fallback-head strong { color: #f0d6b8; font-size: 13px; }
+.admin3d-scene-fallback-head small { color: #9aabb0; font: 11px/1.45 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+.admin3d-fallback-events { display: grid; gap: 6px; margin: 0; padding: 10px 0 4px; list-style: none; }
+.admin3d-fallback-events li { min-width: 0; }
+.admin3d-fallback-events button { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; padding: 8px 9px; color: #dbe7e5; background: #142329; border: 1px solid #2d4750; border-radius: 4px; font: inherit; text-align: left; cursor: pointer; }
+.admin3d-fallback-events button:hover { border-color: #75b79c; background: #192e31; }
+.admin3d-fallback-events button:focus-visible,
+.admin3d-fallback-retry:focus-visible { outline: 2px solid #8fc6ad; outline-offset: 2px; }
+.admin3d-fallback-events button.is-active { border-color: #8fc6ad; box-shadow: inset 3px 0 #8fc6ad; background: #1b3030; }
+.admin3d-fallback-event-index { color: #86b4ad; font: 12px/1 ui-monospace, Consolas, monospace; text-align: center; }
+.admin3d-fallback-event-copy { display: grid; min-width: 0; gap: 3px; }
+.admin3d-fallback-event-copy strong { overflow: hidden; color: #e8f1ef; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.admin3d-fallback-event-copy small { overflow: hidden; color: #9aafb2; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.admin3d-fallback-current { color: #a9e2bd; font-size: 10px; white-space: nowrap; }
+.admin3d-fallback-retry { justify-self: start; padding: 7px 10px; color: #bfe5d6; background: transparent; border: 1px solid #55766d; border-radius: 3px; font: inherit; cursor: pointer; }
 .admin3d-empty-state small { color: #9aabb0; }
 .admin3d-empty-mark { display: grid; width: 44px; aspect-ratio: 1; place-items: center; color: #8fc6ad; border: 1px solid #55766d; border-radius: 50%; font: 600 13px/1 ui-monospace, monospace; }
 .admin3d-legend { position: absolute; bottom: 10px; left: 10px; display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 10px; background: rgb(9 15 19 / 88%); border: 1px solid #34444a; border-radius: 4px; color: #c7d2d5; font-size: 11px; }
@@ -168,7 +187,14 @@
 .admin3d-event-meta { margin: 0 0 12px; color: #98a9ae; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .admin3d-round-marker { margin: -4px 0 10px; color: #87d9bd; font-size: 12px; font-weight: 600; }
 .admin3d-event-summary { margin: 0 0 12px; padding: 9px 10px; border-left: 2px solid #57e8c7; background: #10221f; color: #c4e8dc; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
-.admin3d-event-panel pre { max-height: 220px; margin: 0; overflow: auto; color: #c5d0d2; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 ui-monospace, Consolas, monospace; }
+.admin3d-event-evidence { display: grid; gap: 5px; margin: 0 0 12px; }
+.admin3d-event-evidence > div { display: flex; justify-content: space-between; gap: 10px; padding-bottom: 5px; border-bottom: 1px solid #27363b; }
+.admin3d-event-evidence dt { color: #8fa3a8; font-size: 11px; }
+.admin3d-event-evidence dd { margin: 0; color: #d7e5e2; font-size: 11px; text-align: right; overflow-wrap: anywhere; }
+.admin3d-event-raw { margin-top: auto; border-top: 1px solid #2b3d42; }
+.admin3d-event-raw summary { padding: 9px 0; color: #9aafb2; font-size: 11px; cursor: pointer; }
+.admin3d-event-raw summary:hover { color: #d3e5df; }
+.admin3d-event-panel pre { max-height: 220px; margin: 0 0 4px; overflow: auto; color: #c5d0d2; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 ui-monospace, Consolas, monospace; }
 .admin3d-muted { margin: 14px 0 0; color: #9aabb0; font-size: 13px; line-height: 1.5; }
 .admin3d-statusline { justify-content: flex-start; flex-wrap: wrap; min-height: 30px; padding: 8px 2px 0; color: #9fadb2; font-size: 12px; }
 .admin3d-statusline > span + span { margin-left: auto; }
@@ -193,8 +219,10 @@
   .admin3d-replay-layout { grid-template-columns: minmax(0, 1fr); }
   .admin3d-final-summary { padding: 11px 12px; }
   .admin3d-scene-frame { height: 330px; min-height: 280px; }
+  .admin3d-scene-frame.is-empty { height: 220px; min-height: 190px; }
   .admin3d-event-panel { min-height: 160px; }
   .admin3d-event-panel pre { max-height: 160px; }
+  .admin3d-scene-fallback { padding: 16px; }
   .admin3d-security-theme { top: 8px; right: 8px; min-width: 0; max-width: calc(100% - 16px); font-size: 10px; }
   .admin3d-security-barrier-label:not(.admin3d-security-barrier-label--compact):not(.admin3d-security-barrier-label--readable) { width: 72px; padding: 3px 2px; font-size: 9px; }
   .admin3d-security-barrier-stat { width: 78px; padding: 3px 2px; font-size: 9px; }
