@@ -20,6 +20,7 @@ from agent_attack_lab import (
 )
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
 from agent_attack_lab.routers import admin as admin_routes
+from agent_attack_lab.routers import reports as report_routes
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
 
@@ -1006,7 +1007,7 @@ def test_report_summary_is_cached_until_events_change(tmp_path, monkeypatch) -> 
         calls.append(1)
         return {"summary": f"call-{len(calls)}", "agentSource": "report-rule-fallback"}
 
-    monkeypatch.setattr(service, "summarize_report", fake_summarize)
+    monkeypatch.setattr(report_routes, "summarize_report", fake_summarize)
 
     first = client.get("/reports/battle-report-cache").json()
     second = client.get("/reports/battle-report-cache").json()
@@ -1055,7 +1056,7 @@ def test_report_summary_cache_expires_after_ttl(tmp_path, monkeypatch) -> None:
         calls.append(1)
         return {"summary": f"call-{len(calls)}"}
 
-    monkeypatch.setattr(service, "summarize_report", fake_summarize)
+    monkeypatch.setattr(report_routes, "summarize_report", fake_summarize)
 
     client.get("/reports/battle-report-cache-ttl")
     client.get("/reports/battle-report-cache-ttl")
@@ -1090,7 +1091,7 @@ def test_markdown_report_includes_llm_summary(tmp_path, monkeypatch) -> None:
             "recommendations": ["建议丙"],
         }
 
-    monkeypatch.setattr(service, "summarize_report", fake_summarize)
+    monkeypatch.setattr(report_routes, "summarize_report", fake_summarize)
 
     response = client.get("/reports/battle-markdown-summary?format=markdown")
 

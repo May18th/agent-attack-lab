@@ -7,10 +7,11 @@ lower-level modules (config / state / security / models / ...) and never
 
 from __future__ import annotations
 
-from agent_attack_lab.routers import admin, auth, meta
+from agent_attack_lab.routers import admin, auth, meta, reports
 
 __all__ = [
     "admin",
     "auth",
     "meta",
+    "reports",
 ]
