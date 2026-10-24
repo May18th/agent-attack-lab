@@ -769,6 +769,117 @@ def test_markdown_report_does_not_compute_or_expose_live_score_without_persisted
     assert store.get_score("battle-markdown-no-score-snapshot") is None
 
 
+def test_report_summary_is_cached_until_events_change(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "report-cache.sqlite3"))
+    store.save({
+        "id": "battle-report-cache",
+        "difficulty": "low",
+        "topic": "报告缓存测试",
+        "status": "running",
+        "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    })
+    store.save_event({
+        "id": "cache-e1", "battleId": "battle-report-cache", "sequence": 1,
+        "type": "round.completed", "status": "completed",
+        "createdAt": "2026-10-24T00:00:01+00:00", "data": {},
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "_report_summary_cache", {})
+    calls: list[int] = []
+
+    async def fake_summarize(_record, _events):
+        calls.append(1)
+        return {"summary": f"call-{len(calls)}", "agentSource": "report-rule-fallback"}
+
+    monkeypatch.setattr(service, "summarize_report", fake_summarize)
+
+    first = client.get("/reports/battle-report-cache").json()
+    second = client.get("/reports/battle-report-cache").json()
+
+    assert first["summary"]["summary"] == "call-1"
+    assert second["summary"]["summary"] == "call-1"
+    assert len(calls) == 1
+
+    store.save_event({
+        "id": "cache-e2", "battleId": "battle-report-cache", "sequence": 2,
+        "type": "round.completed", "status": "completed",
+        "createdAt": "2026-10-24T00:00:02+00:00", "data": {},
+    })
+    third = client.get("/reports/battle-report-cache").json()
+
+    assert third["summary"]["summary"] == "call-2"
+    assert len(calls) == 2
+    store.close()
+
+
+def test_report_summary_cache_expires_after_ttl(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "report-cache-ttl.sqlite3"))
+    store.save({
+        "id": "battle-report-cache-ttl",
+        "difficulty": "low",
+        "topic": "报告缓存过期测试",
+        "status": "completed",
+        "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": []},
+        "defenderOut": [],
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "_report_summary_cache", {})
+    monkeypatch.setattr(service, "_REPORT_SUMMARY_CACHE_TTL_SECONDS", 0.0)
+    calls: list[int] = []
+
+    async def fake_summarize(_record, _events):
+        calls.append(1)
+        return {"summary": f"call-{len(calls)}"}
+
+    monkeypatch.setattr(service, "summarize_report", fake_summarize)
+
+    client.get("/reports/battle-report-cache-ttl")
+    client.get("/reports/battle-report-cache-ttl")
+
+    assert len(calls) == 2
+    store.close()
+
+
+def test_markdown_report_includes_llm_summary(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "markdown-summary.sqlite3"))
+    store.save({
+        "id": "battle-markdown-summary",
+        "difficulty": "mid",
+        "topic": "战报总结测试",
+        "status": "completed",
+        "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": [{"type": "sample"}]},
+        "defenderOut": [],
+    })
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "_report_summary_cache", {})
+
+    async def fake_summarize(_record, _events):
+        return {
+            "summary": "模型生成的总结内容",
+            "agentSource": "report-llm",
+            "needsHumanReview": True,
+            "keyRisks": ["风险甲"],
+            "evidence": ["证据乙"],
+            "recommendations": ["建议丙"],
+        }
+
+    monkeypatch.setattr(service, "summarize_report", fake_summarize)
+
+    response = client.get("/reports/battle-markdown-summary?format=markdown")
+
+    assert response.status_code == 200
+    assert "## LLM 战报总结" in response.text
+    assert "模型生成的总结内容" in response.text
+    assert "风险甲" in response.text
+    assert "证据乙" in response.text
+    assert "建议丙" in response.text
+    store.close()
+
+
 def test_battle_events_support_cursor_pagination_and_server_side_filters(monkeypatch, tmp_path) -> None:
     store = BattleStore(str(tmp_path / "replay-events.sqlite3"))
     store.save({

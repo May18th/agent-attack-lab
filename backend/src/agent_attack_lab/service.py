@@ -3334,6 +3334,47 @@ def _markdown_report(
     return "\n".join(lines) + "\n"
 
 
+_REPORT_SUMMARY_CACHE_TTL_SECONDS = 600.0
+_REPORT_SUMMARY_CACHE_MAX_ENTRIES = 256
+_report_summary_cache: dict[tuple[str, int, str], tuple[float, dict[str, Any]]] = {}
+
+
+def _report_summary_key(
+    battle_id: str, record: dict[str, Any], events: list[dict[str, Any]]
+) -> tuple[str, int, str]:
+    """Cache key: a battle's summary only changes when events are appended."""
+    return (battle_id, len(events), str(record.get("status") or ""))
+
+
+def _prune_report_summary_cache(now: float) -> None:
+    for key, (expires_at, _summary) in list(_report_summary_cache.items()):
+        if expires_at <= now:
+            _report_summary_cache.pop(key, None)
+    while len(_report_summary_cache) >= _REPORT_SUMMARY_CACHE_MAX_ENTRIES:
+        oldest = min(_report_summary_cache.items(), key=lambda item: item[1][0])[0]
+        _report_summary_cache.pop(oldest, None)
+
+
+async def _report_summary_for(
+    battle_id: str, record: dict[str, Any], events: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Return the LLM report summary, reusing it while the event log is unchanged.
+
+    The summary can cost one model call with retries, and the admin UI reads the
+    report whenever a battle is opened, so an unchanged battle must not re-ask.
+    """
+    now = time.monotonic()
+    key = _report_summary_key(battle_id, record, events)
+    cached = _report_summary_cache.get(key)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+    _report_summary_cache.pop(key, None)
+    summary = await summarize_report(record, events)
+    _prune_report_summary_cache(now)
+    _report_summary_cache[key] = (now + _REPORT_SUMMARY_CACHE_TTL_SECONDS, summary)
+    return summary
+
+
 @app.get("/battles/{battle_id}/report", include_in_schema=False, dependencies=[Depends(_read_auth_dependency)])
 @app.get(
     "/reports/{battle_id}",
@@ -3350,7 +3391,7 @@ async def battle_report(
     if record is None:
         raise HTTPException(status_code=404, detail="战局不存在")
     events = _battle_store.list_events(battle_id)
-    report_summary = await summarize_report(record, events)
+    report_summary = await _report_summary_for(battle_id, record, events)
     if format == "markdown":
         stored_internal_score = _battle_store.get_score(battle_id)
         return PlainTextResponse(
@@ -3358,6 +3399,7 @@ async def battle_report(
                 record,
                 events,
                 stored_internal_score if stored_internal_score is not None else _insufficient_internal_score(),
+                report_summary,
             ),
             media_type="text/markdown; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{battle_id}.md"'},
