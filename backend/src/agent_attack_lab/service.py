@@ -71,6 +71,10 @@ from agent_attack_lab.agent_logic import (
     defend,
     local_rule_case_count,
 )
+from agent_attack_lab.agents.knowledge import (
+    build_attacker_knowledge,
+    build_defender_knowledge,
+)
 from agent_attack_lab.aip_compat import server_identity_options
 from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.cache import RedisJsonCache
@@ -775,7 +779,14 @@ def _schedule_battle_task(
 async def _battle_attack(
     payload: BattleRequest, *, correlation_id: str
 ) -> tuple[dict[str, Any], str]:
-    result = await call_attacker(payload.model_dump(), correlation_id=correlation_id)
+    agent_payload = payload.model_dump()
+    knowledge = build_attacker_knowledge(
+        _battle_store.list_admin_samples(limit=200, offset=0),
+        topic=payload.topic,
+    )
+    if knowledge["records"]:
+        agent_payload["_knowledgeContext"] = knowledge
+    result = await call_attacker(agent_payload, correlation_id=correlation_id)
     source = "local-rule"
     if result is None:
         result = attack(AttackRequest.model_validate(payload.model_dump()))
@@ -790,7 +801,15 @@ async def _battle_attack(
 async def _battle_defend(
     sample: dict[str, Any], *, correlation_id: str
 ) -> tuple[dict[str, Any], str]:
-    result = await call_defender({"sample": sample}, correlation_id=correlation_id)
+    topic = str(sample.get("topic") or "")
+    knowledge = build_defender_knowledge(
+        _battle_store.list_admin_rules(limit=200, offset=0),
+        topic=topic,
+    )
+    agent_payload: dict[str, Any] = {"sample": sample}
+    if knowledge["records"]:
+        agent_payload["_knowledgeContext"] = knowledge
+    result = await call_defender(agent_payload, correlation_id=correlation_id)
     source = "local-rule"
     if result is None:
         result = defend(DefendRequest(sample=sample))
