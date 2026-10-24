@@ -172,11 +172,11 @@ agent_attack_lab/
 
 ### S8 对比与收尾
 
-不能只看 `openapi()`：**29 个端点里有 10 个是 `include_in_schema=False`**（首页、`/login`、`/metrics`、`/rpc`、`/agent/*`、SSE、replay、report），契约快照根本看不到它们。
+不能只看 `openapi()`：**39 个端点里有 10 个是 `include_in_schema=False`**（`/`、`/dashboard`、`/login`、`/metrics`、`/rpc`、`/agent/attack`、`/agent/defend`、`/battles/{id}/events/stream`、`/battles/{id}/replay`、`/battles/{id}/report`），剩下 29 个才进 schema，契约快照根本看不到那 10 个。
 
 三层验证：
 
-1. **契约**：拆分前后各导出 `app.openapi()["paths"]`，md5 必须相同（本次全程 `12465f27…`，21 path / 29 endpoint）。
+1. **契约**：拆分前后各导出 `app.openapi()["paths"]`，md5 必须相同（本次全程 `12465f27…`，21 path / 29 个入 schema 的 endpoint；全部 39 个 endpoint 里有 10 个不入 schema，见上）。
 2. **路由表**：展开 `app.routes`（这版 Starlette 把 `include_router` 存成 `_IncludedRouter`，要走 `original_router.routes` 递归），逐项比对 path / methods / 函数名 / tags / summary / response_model / 依赖数。拆分前后都是 **39 APIRoute + 1 WebSocket + 4 内建 Route**，其中 29 个进 schema、19 个带鉴权依赖。
 3. **运行时等价**：把基线版本的 `service.py` 单独加载成 `old_service` 模块，两套 app 并行驱动，逐字节比对响应。每个 router 的用例数：meta 7、auth 13、admin 20、reports 7、scores 7、battles 25 + WebSocket 14 帧、rpc 11。
 
