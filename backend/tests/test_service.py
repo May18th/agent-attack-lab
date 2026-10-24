@@ -19,6 +19,7 @@ from agent_attack_lab import (
     state,
 )
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
+from agent_attack_lab.routers import admin as admin_routes
 from agent_attack_lab.service import app
 from agent_attack_lab.storage import BattleStore
 
@@ -587,7 +588,7 @@ def test_rule_candidate_route_never_saves_candidate_without_manual_approval(
             "candidate": {"name": "test", "condition": "evidence", "action": "拦截"},
         }
 
-    monkeypatch.setattr(service, "suggest_rule_candidate", suggestion)
+    monkeypatch.setattr(admin_routes, "suggest_rule_candidate", suggestion)
     response = client.post(
         "/admin/rule-candidates/propose",
         headers={"X-API-Key": "admin-test-key"},
