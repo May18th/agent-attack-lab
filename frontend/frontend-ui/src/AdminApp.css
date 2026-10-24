@@ -371,4 +371,5 @@
 @keyframes auth-card-in-right { from { opacity: 0; transform: translate(26px, -50%) scale(.97); filter: blur(6px); } to { opacity: 1; transform: translate(0, -50%) scale(1); filter: none; } }
 @media (max-width: 1120px) and (min-width: 721px) { .auth-card { right: 4%; width: min(43vw, 440px); }.industry-scene { left: -2%; width: 49vw; } }
 @media (max-width: 720px) { .auth-card { position: relative; top: auto; right: auto; width: min(100%, 480px); transform: none; animation-name: auth-card-in; }.industry-scene { left: 50%; width: min(104vw, 560px); } }
-@media (prefers-reduced-motion: reduce) { .auth-card { animation-name: none; transform: translateY(-50%); } @media (max-width: 720px) { .auth-card { transform: none; } } }
+@media (prefers-reduced-motion: reduce) { .auth-card { animation-name: none; transform: translateY(-50%); } }
+@media (max-width: 720px) and (prefers-reduced-motion: reduce) { .auth-card { transform: none; } }
