@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import uuid
 
-from fastapi.testclient import TestClient
 from acps_sdk.aip import TaskCommand, TaskCommandType, TextDataItem
 from acps_sdk.aip.aip_rpc_model import RpcRequest, RpcRequestParams
+from fastapi.testclient import TestClient
 
 from agent_attack_lab.agents.attacker import app as attacker_app
 from agent_attack_lab.agents.defender import app as defender_app

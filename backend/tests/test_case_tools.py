@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Self
 from unittest.mock import patch
 
 import scripts.import_external_cases as external_import
 from scripts.check_sensitive_files import violations
 from scripts.compare_external_cases import compare_catalog
-from scripts.import_external_cases import fetch_nvd_catalog, import_catalog, import_nvd_catalog
+from scripts.import_external_cases import (
+    fetch_nvd_catalog,
+    import_catalog,
+    import_nvd_catalog,
+)
 
 
 def _catalog(version: str, title: str = "Initial issue") -> dict[str, object]:
@@ -135,7 +140,7 @@ def test_fetch_nvd_catalog_paginates_and_normalizes_dates() -> None:
         def __init__(self, body: dict[str, object]):
             self.body = json.dumps(body).encode()
 
-        def __enter__(self) -> Response:
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, *args: object) -> None:

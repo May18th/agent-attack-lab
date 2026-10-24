@@ -1,6 +1,6 @@
 import os
-import pytest
 
+import pytest
 
 os.environ.setdefault("AGENT_BATTLE_DB", ":memory:")
 

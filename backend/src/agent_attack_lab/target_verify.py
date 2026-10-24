@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 from typing import Any, Literal
 
-
 VerifyMode = Literal["off", "simulated", "live"]
 _SIMULATABLE_RULES = {"LAB-SQLI-001", "LAB-PROMPT-001", "OWASP-LLM01-LLM", "OWASP-LLM07-LLM"}
 

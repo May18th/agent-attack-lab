@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-import agent_attack_lab.agents.llm_runtime as llm_runtime
+from agent_attack_lab.agents import llm_runtime
 
 
 def test_complete_json_uses_deepseek_json_object_format(monkeypatch) -> None:

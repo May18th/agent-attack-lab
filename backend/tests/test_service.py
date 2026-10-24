@@ -1,15 +1,15 @@
-from fastapi.testclient import TestClient
-from concurrent.futures import ThreadPoolExecutor
-from collections import defaultdict, deque
 import asyncio
 import sqlite3
 import time
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
+
+from fastapi.testclient import TestClient
+
+from agent_attack_lab import service
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
-from agent_attack_lab.storage import BattleStore
-import agent_attack_lab.service as service
-
 from agent_attack_lab.service import app
-
+from agent_attack_lab.storage import BattleStore
 
 client = TestClient(app)
 
@@ -109,7 +109,7 @@ def test_attack_rounds_default_bounds_and_unique_deterministic_expansion() -> No
     for invalid in (0, 11):
         try:
             AttackRequest(rounds=invalid)
-        except Exception as error:
+        except ValueError as error:
             assert "rounds" in str(error)
         else:
             raise AssertionError(f"rounds={invalid} must be rejected")
@@ -320,7 +320,6 @@ def test_battle_records_independent_agent_sources(monkeypatch) -> None:
 
     async def local_defend(_payload, *, correlation_id):
         assert correlation_id.startswith("call-")
-        return None
 
     monkeypatch.setattr(service, "call_attacker", remote_attack)
     monkeypatch.setattr(service, "call_defender", local_defend)
@@ -351,6 +350,71 @@ def test_battle_records_independent_agent_sources(monkeypatch) -> None:
     assert all(item["data"]["durationMs"] >= 0 for item in terminal_calls)
     assert attack_completed["data"]["correlationId"] == terminal_calls[0]["data"]["correlationId"]
     assert defense_round["data"]["correlationId"] == terminal_calls[1]["data"]["correlationId"]
+
+
+def test_battle_injects_role_scoped_knowledge_into_remote_agents(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_ATTACKER_RPC_URL", "https://attacker.example/rpc")
+    monkeypatch.setenv("AGENT_DEFENDER_RPC_URL", "https://defender.example/rpc")
+
+    monkeypatch.setattr(
+        service._battle_store,
+        "list_admin_samples",
+        lambda **_kwargs: [{
+            "id": "sample-1",
+            "topic": "知识库注入",
+            "content": "合成样本",
+            "source": "内部",
+            "condition": "defender-only",
+        }],
+    )
+    monkeypatch.setattr(
+        service._battle_store,
+        "list_admin_rules",
+        lambda **_kwargs: [{
+            "id": "rule-1",
+            "name": "注入规则",
+            "condition": "忽略之前的指令",
+            "action": "拦截",
+            "content": "attacker-only",
+        }],
+    )
+    captured: dict[str, object] = {}
+
+    async def remote_attack(payload, *, correlation_id):
+        captured["attack"] = payload
+        return {"samples": [{"type": "defect", "content": "remote sample"}], "agentMode": "llm"}
+
+    async def remote_defend(payload, *, correlation_id):
+        captured["defend"] = payload
+        return {"caught": [], "risks": [], "fixed": [], "agentMode": "llm"}
+
+    monkeypatch.setattr(service, "call_attacker", remote_attack)
+    monkeypatch.setattr(service, "call_defender", remote_defend)
+
+    response = client.post("/battles", json={"difficulty": "low", "topic": "知识库注入", "rounds": 1})
+
+    assert response.status_code == 201
+    assert captured["attack"] == {
+        "difficulty": "low",
+        "topic": "知识库注入",
+        "rounds": 1,
+        "_knowledgeContext": {
+            "role": "attacker",
+            "records": [{"id": "sample-1", "topic": "知识库注入", "content": "合成样本"}],
+        },
+    }
+    assert captured["defend"] == {
+        "sample": {"type": "defect", "content": "remote sample"},
+        "_knowledgeContext": {
+            "role": "defender",
+            "records": [{
+                "id": "rule-1",
+                "name": "注入规则",
+                "condition": "忽略之前的指令",
+                "action": "拦截",
+            }],
+        },
+    }
 
 
 def test_sync_acp_failure_is_persisted_and_returns_battle_id(monkeypatch) -> None:
@@ -421,6 +485,7 @@ def test_background_battle_persists_staged_events() -> None:
 
 def test_external_case_route_is_read_only_and_keeps_provenance(tmp_path, monkeypatch) -> None:
     import json
+
     from scripts.import_external_cases import import_catalog
 
     catalog = {
@@ -549,9 +614,33 @@ def test_battle_events_report_filters_and_leaderboard() -> None:
     assert markdown.status_code == 200
     assert "# 智能体攻防战报" in markdown.text
     assert "内部运行质量评分" in markdown.text
-    assert client.get(f"/battles?difficulty=high&q=事件测试").json()[0]["id"] == battle_id
+    assert client.get("/battles?difficulty=high&q=事件测试").json()[0]["id"] == battle_id
     assert client.get("/leaderboard").json()["items"][0]["rounds"] >= 3
     assert client.get("/metrics").json()["events"] >= len(events.json())
+
+
+def test_existing_team_routes_are_exposed_and_protected_when_reads_are_enabled(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "team-contract.sqlite3"))
+    monkeypatch.setattr(service, "_battle_store", store)
+    monkeypatch.setattr(service, "_protect_read_routes", True)
+    monkeypatch.setattr(service, "_api_key", "team-secret")
+    created = client.post(
+        "/battles",
+        headers={"X-API-Key": "team-secret"},
+        json={"difficulty": "low", "topic": "团队接口契约"},
+    )
+    assert created.status_code == 201
+    battle_id = created.json()["id"]
+    assert client.get("/external-cases", params={"q": "", "limit": 8}).status_code == 200
+    assert client.get(f"/battles/{battle_id}/score").status_code == 401
+    assert client.delete(f"/battles/{battle_id}").status_code == 401
+    assert client.get(
+        f"/battles/{battle_id}/score", headers={"X-API-Key": "team-secret"}
+    ).status_code == 200
+    assert client.delete(
+        f"/battles/{battle_id}", headers={"X-API-Key": "team-secret"}
+    ).status_code == 204
+    store.close()
 
 
 def test_score_route_does_not_compute_or_expose_live_score_without_persisted_snapshot(tmp_path, monkeypatch) -> None:
@@ -959,8 +1048,9 @@ def test_dashboard_summary_exposes_distinct_real_counts_in_openapi(tmp_path, mon
 
 
 def test_alembic_initial_migration_is_safe_for_existing_sqlite_store(tmp_path, monkeypatch) -> None:
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     database = tmp_path / "migrated.sqlite3"
     BattleStore(str(database))
@@ -1013,6 +1103,54 @@ def test_event_payload_is_bounded(monkeypatch) -> None:
     encoded = __import__("json").dumps(event["data"], ensure_ascii=False).encode("utf-8")
     assert len(encoded) <= 1024
     assert event["data"]["dataTruncated"] is True
+
+
+def test_event_payload_has_replay_contract_metadata() -> None:
+    event = service._event(
+        "battle-contract",
+        1,
+        "round.completed",
+        "completed",
+        {"round": 2, "layerIndex": 1, "classification": "blocked", "scores": {"defender": 80}},
+    )
+    data = event["data"]
+    assert data["stageId"]
+    assert data["round"] == 2
+    assert data["layerIndex"] == 1
+    assert data["classification"] == "blocked"
+    assert data["scores"] == {"defender": 80}
+
+
+def test_rounds_endpoint_exposes_role_scores_per_round(tmp_path, monkeypatch) -> None:
+    store = BattleStore(str(tmp_path / "round-scores.sqlite3"))
+    store.save({
+        "id": "battle-round-scores",
+        "difficulty": "low",
+        "topic": "通用安全测试",
+        "status": "completed",
+        "rounds": 1,
+        "createdAt": "2026-10-24T00:00:00+00:00",
+        "attackerOut": {"samples": [{"type": "x", "topic": "通用安全测试", "severity": "low", "scenario": "s", "objective": "o", "content": "c", "testCaseId": "t", "attackDepth": "d", "difficulty": "low", "testVariation": "v"}]},
+        "defenderOut": [{"caught": [], "risks": [], "fixed": [], "verificationStatus": "样本已分析，目标未验证"}],
+    })
+    events = [
+        {"id": "e1", "battleId": "battle-round-scores", "sequence": 1, "type": "agent.call.started", "status": "running", "createdAt": "2026-10-24T00:00:00+00:00", "data": {"agentRole": "attacker", "correlationId": "a"}},
+        {"id": "e2", "battleId": "battle-round-scores", "sequence": 2, "type": "agent.call.completed", "status": "completed", "createdAt": "2026-10-24T00:00:01+00:00", "data": {"agentRole": "attacker", "correlationId": "a", "durationMs": 1000, "dispatchMode": "local", "resultSource": "local-rule"}},
+        {"id": "e3", "battleId": "battle-round-scores", "sequence": 3, "type": "attack.sample.generated", "status": "completed", "createdAt": "2026-10-24T00:00:02+00:00", "data": {"round": 1, "correlationId": "a", "sample": {"content": "c"}}},
+        {"id": "e4", "battleId": "battle-round-scores", "sequence": 4, "type": "agent.call.started", "status": "running", "createdAt": "2026-10-24T00:00:03+00:00", "data": {"agentRole": "defender", "correlationId": "d"}},
+        {"id": "e5", "battleId": "battle-round-scores", "sequence": 5, "type": "agent.call.completed", "status": "completed", "createdAt": "2026-10-24T00:00:04+00:00", "data": {"agentRole": "defender", "correlationId": "d", "durationMs": 1000, "dispatchMode": "local", "resultSource": "local-rule"}},
+        {"id": "e6", "battleId": "battle-round-scores", "sequence": 6, "type": "round.completed", "status": "completed", "createdAt": "2026-10-24T00:00:05+00:00", "data": {"round": 1, "correlationId": "d", "caught": [], "risks": [], "fixed": []}},
+    ]
+    for event in events:
+        store.save_event(event)
+    monkeypatch.setattr(service, "_battle_store", store)
+    response = client.get("/battles/battle-round-scores/rounds")
+    assert response.status_code == 200
+    round_item = response.json()["rounds"][0]
+    assert round_item["attacker"]["status"] == "scored"
+    assert round_item["defender"]["status"] == "scored"
+    assert round_item["scores"] == {"attacker": round_item["attacker"]["score"], "defender": round_item["defender"]["score"]}
+    store.close()
 
 
 def test_retry_failed_battle() -> None:
@@ -1591,6 +1729,20 @@ def test_cors_preflight_allows_quick_tunnel_frontend() -> None:
     )
     assert response.status_code == 200
     assert response.headers["Access-Control-Allow-Origin"] == "https://demo-front-end.trycloudflare.com"
+
+
+def test_cors_preflight_allows_production_frontend_with_credentials() -> None:
+    response = client.options(
+        "/battles",
+        headers={
+            "Origin": "https://yuanyiagentzhandui.cn",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["Access-Control-Allow-Origin"] == "https://yuanyiagentzhandui.cn"
+    assert response.headers["Access-Control-Allow-Credentials"] == "true"
 
 
 def test_rate_limit_returns_retry_after(monkeypatch) -> None:

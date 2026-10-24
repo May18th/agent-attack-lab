@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import inspect
+import json
 import logging
 import os
 import uuid
@@ -28,8 +28,9 @@ from acps_sdk.aip.aip_rpc_server import (
     TaskManager,
     handle_rpc_request,
 )
-from agent_attack_lab.aip_compat import server_identity_options
+
 from agent_attack_lab.agents.llm_runtime import is_configured as llm_configured
+from agent_attack_lab.aip_compat import server_identity_options
 
 
 def _command_payload(command: TaskCommand) -> dict[str, Any]:

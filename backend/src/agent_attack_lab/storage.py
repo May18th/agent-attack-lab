@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any
-
 
 _AUDIT_SENSITIVE_KEYS = {
     "api_key",
@@ -99,8 +98,8 @@ class BattleStore:
         self._closed = False
         if self._is_postgres:
             try:
-                from psycopg_pool import ConnectionPool
                 from psycopg.rows import dict_row
+                from psycopg_pool import ConnectionPool
             except ImportError as exc:
                 raise RuntimeError(
                     "PostgreSQL 需要安装 psycopg[binary,pool]，或改用 AGENT_BATTLE_DB 指定 SQLite 文件。"
@@ -659,7 +658,7 @@ class BattleStore:
             battle_id,
             str(score.get("version") or "unknown"),
             json.dumps(score, ensure_ascii=False),
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
         )
         with self._lock:
             if self._is_postgres:
@@ -836,7 +835,7 @@ class BattleStore:
         }
 
     def save_admin_sample(self, payload: dict[str, Any]) -> dict[str, Any]:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         record = {
             "id": str(payload.get("id") or f"sample-{os.urandom(8).hex()}"),
             "topic": str(payload.get("topic") or "通用安全测试").strip(),
@@ -846,9 +845,7 @@ class BattleStore:
         }
         with self._lock:
             values = tuple(record.values())
-            if self._is_postgres:
-                sql = "INSERT INTO admin_samples (id, topic, content, source, use_count, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s)"
-            elif self._is_mysql:
+            if self._is_postgres or self._is_mysql:
                 sql = "INSERT INTO admin_samples (id, topic, content, source, use_count, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s)"
             else:
                 sql = "INSERT INTO admin_samples (id, topic, content, source, use_count, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
@@ -876,7 +873,7 @@ class BattleStore:
         if not updates:
             rows = self.list_admin_samples()
             return next((item for item in rows if item["id"] == sample_id), None)
-        updates.append(("updated_at", datetime.now(timezone.utc).isoformat()))
+        updates.append(("updated_at", datetime.now(UTC).isoformat()))
         assignments = ", ".join(f"{column} = {self._placeholder}" for column, _ in updates)
         params = [value for _, value in updates] + [sample_id]
         with self._lock:
@@ -891,7 +888,7 @@ class BattleStore:
         return bool(getattr(result, "rowcount", 1))
 
     def save_admin_rule(self, payload: dict[str, Any]) -> dict[str, Any]:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         record = {
             "id": str(payload.get("id") or f"rule-{os.urandom(8).hex()}"),
             "name": str(payload.get("name") or "未命名规则").strip(),
@@ -924,7 +921,7 @@ class BattleStore:
         updates = [(column, changes[key]) for key, column in allowed.items() if key in changes]
         if not updates:
             return next((item for item in self.list_admin_rules() if item["id"] == rule_id), None)
-        updates.append(("updated_at", datetime.now(timezone.utc).isoformat()))
+        updates.append(("updated_at", datetime.now(UTC).isoformat()))
         assignments = ", ".join(f"{column} = {self._placeholder}" for column, _ in updates)
         params = [value for _, value in updates] + [rule_id]
         with self._lock:
@@ -968,7 +965,7 @@ class BattleStore:
         }
 
     def save_idempotency(self, key: str, fingerprint: str, battle_id: str) -> None:
-        values = (key, fingerprint, battle_id, datetime.now(timezone.utc).isoformat())
+        values = (key, fingerprint, battle_id, datetime.now(UTC).isoformat())
         with self._lock:
             if self._is_postgres:
                 self._connection.execute(
@@ -1308,12 +1305,12 @@ class BattleStore:
     def _to_record(row: Any) -> dict[str, Any]:
         return {
             "id": row["id"],
-            "code": row["code"] if "code" in row.keys() else None,
+            "code": row["code"] if "code" in row.keys() else None,  # noqa: SIM118 - SQLAlchemy Row compatibility.
             "difficulty": row["difficulty"],
             "topic": row["topic"],
             "status": row["status"],
-            "rounds": row["rounds"] if "rounds" in row.keys() else 3,
-            "verdict": row["verdict"] if "verdict" in row.keys() else None,
+            "rounds": row["rounds"] if "rounds" in row.keys() else 3,  # noqa: SIM118 - SQLAlchemy Row compatibility.
+            "verdict": row["verdict"] if "verdict" in row.keys() else None,  # noqa: SIM118 - SQLAlchemy Row compatibility.
             "createdAt": row["created_at"],
             "attackerOut": json.loads(row["attacker_out"]),
             "defenderOut": json.loads(row["defender_out"]),

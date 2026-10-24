@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import argparse
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from acps_sdk.acs import (
-    AgentCapabilitySpec,
     AgentCapabilities,
+    AgentCapabilitySpec,
     AgentProvider,
     AgentSkill,
 )
@@ -34,13 +34,13 @@ def build_acs(*, name: str, description: str, skill_id: str) -> AgentCapabilityS
     if not contact_name or not contact_email:
         raise RuntimeError("请设置 AGENT_CONTACT_NAME 和 AGENT_CONTACT_EMAIL")
     placeholders = ("平台分配", "真实AIC", "你的真实", "填写真实", "example.com")
-    if any(value in " ".join((organization, contact_name, contact_email)) for value in placeholders):
+    if any(value in f"{organization} {contact_name} {contact_email}" for value in placeholders):
         raise RuntimeError("组织、联系人和邮箱仍包含占位文本，请替换为真实信息")
 
     return AgentCapabilitySpec(
         aic=aic,
         active=True,
-        lastModifiedTime=datetime.now(timezone.utc).isoformat(),
+        lastModifiedTime=datetime.now(UTC).isoformat(),
         protocolVersion="02.02",
         name=name,
         description=description,

@@ -13,9 +13,7 @@ import uuid
 from typing import Any, Literal
 
 import httpx
-
 from acps_sdk.aip import AipRpcClient, StructuredDataItem, TaskResult, TextDataItem
-
 
 Role = Literal["attacker", "defender"]
 logger = logging.getLogger("agent_attack_lab.acp")
@@ -86,7 +84,7 @@ def _ssl_context() -> ssl.SSLContext | None:
         if cert_file:
             context.load_cert_chain(certfile=cert_file, keyfile=key_file)
         return context
-    except (OSError, ssl.SSLError, ValueError) as exc:
+    except (OSError, ssl.SSLError, ValueError):
         raise ACPAgentError("ACP mTLS 证书配置无效") from None
 
 
@@ -262,7 +260,7 @@ async def _invoke(
             poll_interval = 0.1
             while _state_name(task) in {"accepted", "working"}:
                 if time.monotonic() >= deadline:
-                    raise asyncio.TimeoutError
+                    raise TimeoutError
                 await asyncio.sleep(poll_interval)
                 poll_interval = min(poll_interval * 2, 0.5)
                 task = await client.get_task(task_id=task.taskId, session_id=session_id)
@@ -274,7 +272,7 @@ async def _invoke(
             try:
                 task = await asyncio.wait_for(start_and_wait(), timeout=timeout_seconds)
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _rpc_timeout_count += 1
                 if attempt >= retries:
                     raise
@@ -286,12 +284,12 @@ async def _invoke(
             await asyncio.sleep(min(0.1 * (2**attempt), 0.5))
             attempt += 1
         return _validate_result(role, _task_data(task))
-    except asyncio.TimeoutError as exc:
+    except TimeoutError:
         logger.warning("Remote %s ACP Agent timed out", role)
         raise ACPAgentError(f"远端 {role} ACP Agent 请求超时") from None
     except ACPAgentError:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - normalize unexpected remote SDK failures.
         logger.warning("Remote %s ACP Agent failed (%s)", role, type(exc).__name__)
         raise ACPAgentError(f"远端 {role} ACP Agent 调用失败") from None
     finally:

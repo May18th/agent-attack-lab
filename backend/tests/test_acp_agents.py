@@ -6,7 +6,7 @@ import json
 import pytest
 from acps_sdk.aip import Product, StructuredDataItem, TaskResult, TaskState, TaskStatus
 
-import agent_attack_lab.acp_agents as acp_agents
+from agent_attack_lab import acp_agents
 
 
 class FakeAipClient:

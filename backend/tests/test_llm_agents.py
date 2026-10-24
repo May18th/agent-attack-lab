@@ -4,8 +4,7 @@ import asyncio
 
 import pytest
 
-import agent_attack_lab.agents.attacker as attacker
-import agent_attack_lab.agents.defender as defender
+from agent_attack_lab.agents import attacker, defender
 from agent_attack_lab.agents.llm_runtime import LLMError
 
 

@@ -6,8 +6,8 @@ import json
 import logging
 import os
 import time
-from typing import Any, Callable, TypeVar
-
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 logger = logging.getLogger("agent_attack_lab.cache")
 _T = TypeVar("_T")
@@ -49,7 +49,7 @@ class RedisJsonCache:
             return default
         try:
             return operation(self._client)
-        except Exception as exc:  # Redis errors must never break the API.
+        except Exception as exc:  # noqa: BLE001 - Redis errors must never break the API.
             self._retry_after = time.monotonic() + 30
             if not self._warned_unavailable:
                 logger.warning("Redis cache unavailable; falling back to database: %s", type(exc).__name__)
@@ -79,7 +79,7 @@ class RedisJsonCache:
         if self._client is not None:
             try:
                 self._client.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - cache shutdown is best effort.
                 pass
 
 

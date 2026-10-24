@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 SCRIPT = Path(__file__).parents[1] / "scripts" / "verify_acp_mtls_config.ps1"
