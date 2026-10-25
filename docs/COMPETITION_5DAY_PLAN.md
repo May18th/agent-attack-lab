@@ -30,7 +30,7 @@
 - [x] LLM 供应商与 key：DeepSeek 官方，`backend/.env` 早已配置（10-18 的"未接模型"结论已作废）
 - [x] 本地四路实测：`attacker=acp-llm`、`defender=acp-llm`、`arbiter=arbiter-llm`、`report=report-llm`
 - [x] 修复阻塞点：仲裁把 `verification` 字段名当证据返回时**静默降级**，已改为逐条剔除噪声（后端 206 passed / 5 skipped）
-- [ ] **待补**：模型不可用时的降级实证（答辩必问，见 D1 末尾）
+- [x] 模型不可用时的降级实证（答辩必问，见 D1 "降级实证"条与 `TECH_EVIDENCE_PACK.md` 第四节）
 
 证据：本地战局 `A-006`（已删）、战报 `A-005` 的 `summary.agentSource=report-llm`。
 
@@ -38,12 +38,14 @@
 
 - [x] `AGENT_ARBITER/REPORT/RULE_DISCOVERY_LLM_ENABLED` 均为 1
 - [x] 生产 `.env` 注入：部署 run `40193395694` success，日志 `injected model and AMP settings`
-- [x] 公网验证：战局 `A-009` → `attacker=acp-llm`、`defender=acp-llm`、`arbiter=arbiter-llm`
+- [x] 公网验证：战局 `A-009` → `attacker=acp-llm`、`defender=acp-llm`、`arbiter=arbiter-llm`（该局 10-26 01:21 已删，结论以 `TECH_EVIDENCE_PACK.md` 记录为准，现场要复现请新建一局看 `agentSource`）
 - [x] 生产 `AGENT_AMP_ENABLED=1`；`start-service.sh` 按模块注入 role，解除本机依赖
 - [x] 平台缺省查询（不带 `extFilter`）命中 **3 条**在线
-- [x] 降级实证：端点不可达、密钥 401 两种场景，三路 Agent 均退回规则兜底且**不抛异常**（见 `TECH_EVIDENCE_PACK.md` 第四节）
+- [x] 降级实证：端点不可达、密钥 401 两种场景，三路 Agent 均退回规则兜底且**不抛异常**（见 `TECH_EVIDENCE_PACK.md` 第四节）——即 D0 那条"待补"，已补
 - [x] 平台可见性补强：`type=recent` 现在可搜到（三只分列最近 10 条第 3、5、6 位），此前"排不上"的结论作废
-- [ ] **待补**：清理生产探测战局 `A-008`/`A-009`（`DELETE` 返回 401，需生产管理员会话）
+- [x] 清理生产探测战局：`A-008` / `A-009`（`cleanup-probe-battles.yml`，10-26 01:21 删）
+- [x] 顺手清掉同主题重复试跑的 `A-005` / `A-006` / `A-007`（10-26 01:23），生产只剩 `A-010`
+- [x] 主调度身份切到 ACPs 1.2.1（`…1A7Q`，endpoint `leader-mtls`），平台侧旧 1.2.0 记录已删
 
 验收（已达）：公网战局 `agentSource=acp-llm`；平台三只 online 且由 VPS 心跳维持。
 
