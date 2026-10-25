@@ -1,0 +1,67 @@
+# leader-mtls 主调度 mTLS 入口（nginx server block 模板）
+#
+# 用途：让主调度智能体在独立域名上提供可校验服务端身份的 AIP 入口，
+#       与 attack / defense 的口径完全一致，但不影响 api 域名（后者继续走
+#       Cloudflare Tunnel 服务浏览器前端）。
+#
+# 结构与 /etc/nginx/sites-enabled/agent-attack-lab-mtls.conf 中现有两个
+# server block 逐行对齐（2026-10-26 00:27 从生产 nginx -T 实测取得）。
+#
+# 使用前替换：
+#   __CERT_DIR__  1.2.1 注册产物中 acps 目录的绝对路径，
+#                 形如 /home/deployer/.config/agent-attack-lab/partners/leader/workspace/acps
+#   __AIC__       审核通过后分配的新 AIC，仅用于注释标注，nginx 不读
+#
+# 证书文件要求（由 issue_acps_certificate.ps1 生成）：
+#   __CERT_DIR__/server/certificate.pem    serverAuth，SAN 含 DNS:leader-mtls.yuanyiagentzhandui.cn
+#   __CERT_DIR__/server/private-key.pem    对应私钥
+#   __CERT_DIR__/ca-verify.pem             Agent CA Root，用于校验调用方客户端证书
+#
+# 放置位置：追加到 /etc/nginx/sites-enabled/agent-attack-lab-mtls.conf 末尾，
+#           不要新建 sites-enabled 文件（ssl_session_cache 同名共享区可复用，
+#           但保持单文件便于一次 nginx -t 校验三个入口）。
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name leader-mtls.yuanyiagentzhandui.cn;
+
+    # AIC: __AIC__
+    ssl_certificate     __CERT_DIR__/server/certificate.pem;
+    ssl_certificate_key __CERT_DIR__/server/private-key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    ssl_client_certificate __CERT_DIR__/ca-verify.pem;
+    # optional 而非 on：与现有 attack/defense 保持一致。
+    # 真正的强制发生在 location /rpc 内对 $ssl_client_verify 的判断，
+    # 这样 /health 可以在无客户端证书时被探活。
+    ssl_verify_client optional;
+    ssl_verify_depth 3;
+    ssl_session_cache shared:AgentAttackLabSSL:10m;
+    ssl_session_timeout 10m;
+
+    # 探活不要求客户端证书，与 attack/defense 同口径
+    location = /health {
+        proxy_pass http://127.0.0.1:8787/health;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # 唯一对外开放的业务入口：无有效客户端证书一律 403
+    location /rpc {
+        if ($ssl_client_verify != SUCCESS) { return 403; }
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Client-Verify $ssl_client_verify;
+        proxy_set_header X-Client-Subject $ssl_client_s_dn;
+        proxy_read_timeout 120s;
+    }
+
+    # 其余路径不暴露：leader 后端还有 /dashboard、/docs、/battles，
+    # 这些必须继续只从 api 域名（Cloudflare Tunnel）访问，不要在此放行。
+    location / { return 404; }
+}
