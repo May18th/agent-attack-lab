@@ -41,12 +41,8 @@ jobs:
       BATTLE: ${{ inputs.battle }}
       STRICT: ${{ inputs.strict_sources }}
     steps:
-      - name: 取出仓库里的身份文件
-        uses: actions/checkout@v4
-        with:
-          sparse-checkout: backend/agent-identities.json
-          sparse-checkout-cone-mode: false
-
+      # 不能用 actions/checkout：VPS 到 github.com:443 不通（GnuTLS recv error /
+      # 连接超时，本机推代码也只能走 REST API）。改为读 VPS 上已有的副本。
       - name: 汇总检查
         run: |
           set +e -uo pipefail
@@ -251,10 +247,16 @@ jobs:
           # 我自己的 adopter 脚本只管仓库文件，管不到 VPS 的 .env——所以每次换 AIC
           # 这里都可能悄悄漂移：平台能探活、能调，但对端身份校验会用旧 AIC 拒绝。
           head2 "8. 身份一致性（AIC 漂移会让 AIP 对端校验失败）"
-          ids="$GITHUB_WORKSPACE/backend/agent-identities.json"
-          if [[ ! -r "$ids" ]]; then
-            warn "读不到身份文件 $ids，跳过一致性核对"
+          ids=""
+          for cand in \
+            /opt/agent-attack-lab/backend/agent-identities.json \
+            "$(ls -1dt /home/deployer/agent-attack-lab-releases/*/backend/agent-identities.json 2>/dev/null | head -1)"; do
+            [[ -n "$cand" && -r "$cand" ]] && { ids="$cand"; break; }
+          done
+          if [[ -z "$ids" ]]; then
+            warn "VPS 上找不到 agent-identities.json，跳过一致性核对"
           else
+            info "身份文件：$ids"
             read_aic() { python3 -c 'import json,sys;print((json.load(open(sys.argv[1],encoding="utf-8"))[sys.argv[2]].get("aic") or "").strip())' "$ids" "$1" 2>/dev/null || true; }
             L=$(read_aic leader)
             A=$(read_aic attack)
