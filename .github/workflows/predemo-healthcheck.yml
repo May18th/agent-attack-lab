@@ -43,7 +43,11 @@ jobs:
     steps:
       - name: 汇总检查
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
+
+          # runner 用 `bash -e` 调这个脚本，而本脚本的所有失败都由 ok/bad 自己计数，
+          # 不靠 -e 中止。若不关掉 -e，下面 python 段一旦返回非 0 会直接终止整个 step，
+          # 磁盘检查和「结论」段都不会执行（2026-10-26 首次运行踩到）。
 
           # systemctl --user 需要运行时目录；runner 是 deployer，和三个服务同用户
           export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"

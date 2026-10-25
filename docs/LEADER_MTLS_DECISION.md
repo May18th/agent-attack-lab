@@ -99,4 +99,29 @@ Cloudflare 的「添加记录」面板默认把「代理状态」置于**橙云�
 | 双态探测 | 无证书 `POST /rpc` 403；带证书 200（进应用层，非 401） |
 | 发现页 | 3 条在线：`1A7Q` / `0MVE` / `0GFQ` |
 
-遗留：平台 Registry 里 1.2.0 主调度旧记录仍在（已离线、不出现在发现页），删除需管理员会话；报名表里的 `0U7Q` 需改为 `1A7Q`。
+遗留（2026-10-26 01:22 已全部处理）：
+
+- 平台 Registry 里 1.2.0 主调度旧记录（`01a17360-…`）已用平台账号删除，删前断言版本/AIC/未删三项，删后 Registry 未删除记录 3 条。
+- 报名表里的 `0U7Q` 已由负责人改为 `1A7Q`。
+
+## 一个补充事实：1.2.0 的 endpoint 是**双重**不通（2026-10-26 01:29 实测）
+
+除了 `/rpc` 需要私有 `X-API-Key`（见上），还有第二个独立原因：
+
+```
+$ curl -sI https://api.yuanyiagentzhandui.cn/health
+server: cloudflare
+cf-ray: a503056eff67ebe2-SJC
+cf-cache-status: DYNAMIC
+```
+
+响应头里有 `server: cloudflare` 和 `cf-ray`，证书也是 Cloudflare 边缘的通用证书（`CN=yuanyiagentzhandui.cn`）——`api` 域名走代理。而 mTLS 一旦在 CDN 边缘终止 TLS，客户端的证书根本到不了源站；平台的 AIP 调用即使带着合法客户端证书，也不可能在 `api` 域名上被验到。
+
+对照另外三个域名：用 `httpx` 直连会直接 `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`，因为它们出示的是 Agent CA 签发的私有链证书——这反过来证明它们是**直连源站、未代理**，mTLS 能生效。
+
+| 域名 | 边缘标识 | 出示的证书 | mTLS |
+|---|---|---|---|
+| `api.yuanyiagentzhandui.cn` | `server: cloudflare` | `CN=yuanyiagentzhandui.cn`（CF 通用） | **不可行**（TLS 在边缘终止） |
+| `attack.…` / `defense.…` / `leader-mtls.…` | 无 CF 头 | `CN=1.2.156.3088.1.BUPT.RX2TMW.…`（各自 AIC） | 生效 |
+
+所以 1.2.1 不是"换个域名绕过鉴权"，而是**唯一同时满足「在线、可被调、服务端身份可校验」三项的路径**：CDN 代理与共享密钥这两个阻塞点，在 `api` 域名上都没法同时解掉。

@@ -44,7 +44,7 @@
 
 ## 三、四路模型证据（核心）
 
-实测时间 2026-10-25，用生产环境真实战局 `A-009`（`battle-f51f5c65-ef94-431c-8c97-314b7c21a0f8`）：
+实测时间 2026-10-26 01:41，用生产环境真实战局 `A-011`（`battle-67635f72-89f4-496c-9b13-0578eda250ae`，主题「客服机器人泄露内部系统提示词」，high，3 轮，耗时 16.5 秒）：
 
 | 通路 | 字段 | 实测值 |
 |---|---|---|
@@ -53,13 +53,22 @@
 | 防守检测模式 | `defenderOut[0].agentMode` | `llm` |
 | 防守分析说明 | `defenderOut[0].analysisMode` | `DeepSeek 模型辅助分类 + OWASP LLM Top 10 (2025)；真实目标未验证` |
 | 独立仲裁 | `defenderOut[0].arbiterReview.agentSource` | `arbiter-llm` |
-| 战报摘要 | `summary.agentSource`（`GET /battles/{id}/report?format=json`） | `report-llm` |
+| 战报摘要 | `summary.agentSource`（`GET /reports/{id}`） | `report-llm` |
 
-复现命令（公开只读，无需登录）：
+复现方式（注意口径差异）：
 
 ```powershell
-curl.exe -s --noproxy "*" https://api.yuanyiagentzhandui.cn/battles/battle-f51f5c65-ef94-431c-8c97-314b7c21a0f8
+# 战局主体：公开只读，不用登录
+curl.exe -s --noproxy "*" https://api.yuanyiagentzhandui.cn/battles/battle-67635f72-89f4-496c-9b13-0578eda250ae
 ```
+
+`/reports/{id}` 需要看板凭据或 `X-API-Key`（`read_auth_dependency`），**不能对外说"无需登录"**。四路来源的自查走录屏前验收工作流，它读的是生产 `.env` 里的 key：
+
+```powershell
+gh workflow run predemo-healthcheck.yml --ref main -f battle="A-011" -f strict_sources="yes"
+```
+
+> 2026-10-26 01:31 首次跑这局时，战报这一路是 `report-rule-fallback`，其余三路都是 `-llm`。根因与修法见 §五「四个真问题」的第 4 条。修完重跑才是上表的值——**这条材料本身就是"我们发现并修掉了一个静默降级"的证据，不要藏起来**。
 
 ## 四、鲁棒性证据（答辩必问：模型挂了怎么办）
 
@@ -114,15 +123,18 @@ cd backend
 
 **演示注意（实测踩到过）**：某只 AIC 停止上报心跳后，平台需要 **约 2–3 分钟**才把它从 `online` 摘掉。若刚重启过服务、或同时有旧心跳进程在跑，按名称搜会短暂返回 **5 条以上**（含历史轮次注册的旧 AIC，如 `09CQ` / `08RN` / `09SG`、`S5AJC0` / `QY650M`）。等 3 分钟再查即恢复 3 条；录屏前先跑一次上面的验收脚本确认是 3 条再开始录。
 
-### 这条链路上修掉的三个真问题（可作为"工程严谨性"素材）
+### 这条链路上修掉的四个真问题（可作为"工程严谨性"素材）
 
 | 问题 | 症状 | 根因 |
 |---|---|---|
 | 心跳模块未入库 | 生产 `.env` 开关与角色注入都正确，却一次心跳都没发出 | `amp.py` 与 `service.py`/`common.py` 的 lifespan 挂载只存在于本机工作区 |
 | 身份映射缺失且过期 | 解析不到 AIC 时静默返回 `None`，只留一条 warning | `agent-identities.json` 未入库；且攻击/防守 AIC 仍是上一轮注册的旧值 |
 | 依赖未安装 | 日志 `未安装 kafka-python，AMP 心跳只写本地 NDJSON` | `kafka-python` 只写进了本机 `pyproject`，VPS 的 venv 由部署流程之外创建，部署脚本也不装依赖 |
+| 战报校验过严导致整份降级 | `AGENT_REPORT_LLM_ENABLED=1`、配置齐全，`agentSource` 却是 `report-rule-fallback` | 战报校验要求 `evidence` **每一条**都逐字出现在样本里，用的是全有全无判断；模型只要有 1 条改写成同义句，整段总结连同其余可核对证据一起被丢弃（`A-011` 实测：5 条里 4 条合规，1 条改写，整份判废） |
 
-三者共同特征：**本机看起来完全正常，只有把本机关掉才暴露**。现在部署脚本会在重启前幂等补齐 `kafka-python`（已装则跳过），干净环境实测同样可用。
+前三个的共同特征：**本机看起来完全正常，只有把本机关掉才暴露**。现在部署脚本会在重启前幂等补齐 `kafka-python`（已装则跳过），干净环境实测同样可用。
+
+第四个与仲裁早先那次是同一类缺陷——把"字段级严格"当成"整份判废"。现在两处都改成**逐条剔除**：保留能核对的部分，丢掉不合格的，并打一条 `logger.warning` 说明剔了几条。防伪造属性不变（留下的证据仍必须逐字可核对），但不再因为一句话的措辞丢掉整次模型产出。全部伪造时强制 `needsHumanReview=true`。
 
 ## 六、可引用的量化指标
 
