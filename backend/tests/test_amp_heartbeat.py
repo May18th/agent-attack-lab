@@ -10,11 +10,12 @@ import pytest
 
 from agent_attack_lab import amp
 
-# 平台重新注册（ACPs 1.2.0）后换发的新 AIC。AIC 每次重新注册都会变，
+# 平台重新注册后换发的 AIC。AIC 每次重新注册都会变，
 # 换发时这里的常量与 backend/agent-identities.json 必须同步更新，
 # 否则 test_shipped_identity_file_has_three_roles 会失败——这是有意设计的守护，
 # 防止身份文件被误改回已失效的旧 AIC。
-LEADER_AIC = "1.2.156.3088.1.BUPT.RX2TMW.4IR05L.P3MRLO.0U7Q"
+# 主调度 2026-10-26 起切到 ACPs 1.2.1（独立 mTLS 入口 leader-mtls）。
+LEADER_AIC = "1.2.156.3088.1.BUPT.RX2TMW.KOPA19.GA39CB.1A7Q"
 ATTACK_AIC = "1.2.156.3088.1.BUPT.RX2TMW.IE3B57.C2049I.0MVE"
 DEFENDER_AIC = "1.2.156.3088.1.BUPT.RX2TMW.CWQD9X.JN4O8Y.0GFQ"
 
