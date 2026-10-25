@@ -247,7 +247,6 @@ async function checkSession() {
   try {
     const session = await json<SessionStatus>('/auth/session')
     updateSessionControls(session.enabled, session.authenticated)
-    if (session.enabled && !session.authenticated) showLogin()
     return !session.enabled || session.authenticated
   } catch { return true }
 }
