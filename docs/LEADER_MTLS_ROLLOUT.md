@@ -16,6 +16,10 @@
 | 注册脚本参数化 | `--version/--endpoint/--workspace` 已入库，可复现 |
 | DNS 记录 | `leader-mtls` → A → `47.108.92.113`，**仅 DNS（灰云）**，已用阿里公共 DNS 与系统解析双向确认 |
 | nginx 模板 | `backend/deploy/nginx/leader-mtls.conf.template`，与现网逐行对齐 |
+| 证书落盘到 VPS | **已完成**，经 Secret 中转，指纹与私钥配对均校验通过 |
+| nginx server block | **已上线并 reload**，`nginx -t` 无冲突 |
+| mTLS 验收 | **六项全过**，带证书访问 `/rpc` 返回 401（非 403），TLS 双向认证成立 |
+| 心跳切换 | **未执行**（保持 1.2.0，见第四节） |
 | 1.2.0 现状 | 未改动，三只仍在线（`0U7Q / 0MVE / 0GFQ`），`api` 入口照常 |
 
 ### 证书实测（openssl 3.5.7）
@@ -66,46 +70,67 @@ defense 证书 subject=CN=...JN4O8Y.0GFQ
 
 DNS SAN 就是 ACS 里填的 endpoint 主机名。所以 **1.2.1 的 endpoint 必须已经写好 `leader-mtls`，签出来的证书才带这个 SAN**——先注册后签证书的顺序是对的，不能颠倒。
 
-## 三、剩余步骤
+## 三、已完成：证书落盘、nginx 配置、mTLS 验收
 
-### 1. 把证书送到 VPS（当前唯一卡点）
+### 1. 证书落盘（2026-10-26 00:40）
 
-证书在本机 `backend/.data/acps-registration-v4-leader-mtls/leader/acps/`，VPS 上需要落到 `/home/deployer/.config/agent-attack-lab/partners/leader/workspace/acps/`。
+走 GitHub Secret 中转：`LEADER_MTLS_SERVER_CERT` / `LEADER_MTLS_SERVER_KEY` 写入 repository secret，由 `provision-leader-mtls.yml` 在 VPS 内落盘。
 
-**私钥绝对不能进 Git。** 本机到 VPS 的 22 端口被云侧安全组挡死，只有 self-hosted runner 能在 VPS 内执行，而 runner 无法从本机取文件。两条可行路径：
+实测结果：
 
-**路径 A：GitHub Secret 中转（可自动，需授权）**
-`server/private-key.pem` 与 `server/certificate.pem` 写入 repository secret，由 workflow 在 VPS 落盘到目标路径、`chmod 600`、再删 secret。私钥会短暂存在于 GitHub Secrets（加密存储，仅本仓库 Actions 可读）。
-
-**路径 B：控制台通道手动上传（不经第三方）**
-用阿里云控制台 VNC，或临时在安全组放行本机公网 IP 到 22，`scp` 上去后立刻收回规则。
-
-**无论哪条路径，落盘后必须核对指纹**：VPS 上 `openssl x509 -noout -fingerprint -sha256` 的结果要与本机一致，再往下走。
-
-`ca-verify.pem` 不需要传：直接复用 attack 现有那份（同一 Agent CA Root，subject `CN=Agent CA Root Certificate`，2036-07-11 到期），与现网两个入口保持完全一致。
-
-### 2. 落 nginx 配置
-
-在 `backend/deploy/nginx/leader-mtls.conf.template` 里把 `__CERT_DIR__` 替换成实际路径，把结果**追加**到 `/etc/nginx/sites-enabled/agent-attack-lab-mtls.conf` 末尾（不要新建 sites-enabled 文件）。
-
-```
-sudo -n nginx -t          # 必须 syntax is ok
-sudo -n systemctl reload nginx
-```
-
-**`nginx -t` 失败就立即回滚**（删掉追加的 block 再 reload），不要带着坏配置 reload，否则 attack/defense 入口一起挂。
-
-### 3. 验收（未开始）
-
-| 检查 | 期望 |
+| 检查 | 结果 |
 |---|---|
-| `https://leader-mtls.yuanyiagentzhandui.cn/health` | 200（无客户端证书也应通，与 attack 一致） |
-| `https://leader-mtls.yuanyiagentzhandui.cn/rpc` 无证书 | 403（不是 404、不是 502） |
-| 带 Leader clientAuth 证书调 `/rpc` | 200，返回 AIP 响应 |
-| `https://attack.../rpc` 与 `https://defense.../rpc` | 行为不变，未被新 block 影响 |
-| `https://api.yuanyiagentzhandui.cn/dashboard` | 仍可登录，前端未受影响 |
+| 落盘路径 | `/home/deployer/.config/agent-attack-lab/partners/leader/workspace/acps/server/` |
+| 文件权限 | `-rw------- deployer deployer` |
+| SHA-256 指纹 | `D7:A0:57:...:74:09:F8`，与本机**一致** |
+| SAN | `URI:acps://...1A7Q, DNS:leader-mtls.yuanyiagentzhandui.cn` |
+| 私钥配对 | `openssl x509 -pubkey` 与 `openssl pkey -pubout` 摘要相同 |
+| ca-verify.pem | 复用 attack 那份 Agent CA 根（`sudo cat` 读取，直接 cp 被拒） |
 
-### 4. 切换身份（原子动作，不可回退到"两条都在线"）
+### 2. nginx 配置（2026-10-26 00:40，00:43 修复）
+
+`leader-mtls` server block 已追加到 `agent-attack-lab-mtls.conf`，`nginx -t` 通过并 reload。
+
+**踩到并修掉一个自己造成的问题**：`sites-enabled/agent-attack-lab-mtls.conf` 是指向 `sites-available` 的**软链接**。首次用 `cp -a` 备份，`-a` 保留了链接属性，产出的"备份"是**指向同一文件的第二个软链接**；`include /etc/nginx/sites-enabled/*;` 通配把它一并加载，同一份配置被读两次，`attack` / `defense` / `leader-mtls` 三个 `server_name` 全部 `conflicting`，后者被 `ignored`。更糟的是那个"备份"回滚时等于 `cp` 自己到自己，等于没有回滚能力。
+
+修法（`repair-nginx-dup.yml` + `provision-leader-mtls.yml` 均已改）：备份移到 `/etc/nginx/backup/`，用 `cp -L -a` 解引用，`cmp` 校验一致；`nginx -t` 出现 `conflicting server name` 一律按失败处理并回滚。
+
+真实备份：`/etc/nginx/backup/agent-attack-lab-mtls.conf.20261026-004355`（6216 字节）。
+
+### 3. 验收：六项全过（runner 内部 + 本机外部双视角）
+
+runner 内部探测：
+
+| 探测点 | 期望 | 实际 |
+|---|---|---|
+| `leader-mtls /health` | 200 | 200 OK |
+| `leader-mtls /rpc` 无证书 | 403 | 403 OK |
+| `leader-mtls /dashboard` | 404 | 404 OK |
+| `attack /rpc` 无证书 | 403 | 403 OK |
+| `defense /rpc` 无证书 | 403 | 403 OK |
+| `api /health` | 200 | 200 OK |
+
+本机 Python 实测（`curl` 走 Windows schannel 对 Agent CA 链一直握手失败，attack/defense 也是如此，故改用 ssl 模块）：
+
+| 用例 | 期望 | 实际 |
+|---|---|---|
+| 无证书 `GET /health` | 200 | 200，返回 `{"status":"ok",...}` |
+| 无证书 `POST /rpc` | 403 | 403（nginx 拒绝） |
+| **带 Leader clientAuth 证书 `POST /rpc`** | **非 403** | **401** —— nginx 客户端证书校验通过，请求进入后端，401 是后端的 API 密钥鉴权 |
+| 带证书 `GET /health` | 200 | 200 |
+
+**服务端出示的证书已确认是 leader-mtls 自己的**：`subject=CN=...1A7Q`、`SAN=DNS:leader-mtls.yuanyiagentzhandui.cn`。修复前 SNI 未匹配会落到第一个 443 block（attack）并出示 attack 的证书。
+
+结论：**mTLS 入口已可用**。`401 而非 403` 是这个结论的关键证据——它说明 TLS 层的双向认证通过了，剩下的只是业务层 API 密钥，与 mTLS 无关。
+
+## 四、剩余最后一步：切换身份（未执行）
+
+### 为什么停在这里
+
+mTLS 入口通了，但**心跳还没切**，所以平台上 1.2.1 仍是离线、发现页仍只有 1.2.0 的三只。切换是原子的，且会让报名表里的 `0U7Q` 失效。
+
+### 切换清单
+
 
 前置：上面验收全部通过。
 
@@ -119,7 +144,7 @@ sudo -n systemctl reload nginx
 
 **这一步开始后 `0U7Q` 会真的掉线**，中间约 2–3 分钟两条都不在线。不要放在演示前 30 分钟内做。
 
-## 四、终止条件（比完成更重要）
+## 五、终止条件（比完成更重要）
 
 出现下列任一情况，**停止推进并保持 1.2.0 为唯一对外身份**：
 
@@ -132,19 +157,22 @@ sudo -n systemctl reload nginx
 
 理由：ACS 审核通过后不可修改，AIC 冻结。一个 endpoint 不可达的 1.2.1 记录留在平台上，比没有这条记录更难解释——虽然它不上报心跳就不会出现在发现页，但登录注册平台后台就能看到两条同名主调度。
 
-## 五、一个反向选择：也可以就停在这里
+## 六、一个反向选择：也可以就停在这里
 
-当前状态（1.2.1 已过审、证书已签、DNS 已通、nginx 未配、心跳未切）**本身是稳定且无副作用的**：
+当前状态（1.2.1 已过审、证书已签、DNS 已通、**nginx 已配且 mTLS 验收通过**、心跳未切）是**稳定且无副作用**的：
 
 - 发现页只显示 1.2.0 的三只，评委按名称或 AIC 搜索都不会看到 1.2.1。
-- `0U7Q` 等在报名表里的值继续有效。
-- 1.2.1 相当于一份"随时可启用"的备用身份。
+- `0U7Q` 等在报名表里的值继续有效，三只始终在线。
+- 1.2.1 的 mTLS 入口已经真的能用（`/rpc` 带客户端证书可进后端），相当于一份"随时可切换"的备用身份。
+- attack / defense / api 三个存量入口行为未变，回归测试已覆盖。
 
-如果答辩材料不打算把"服务端身份可校验的独立 mTLS 入口"作为亮点讲，那么**停在当前状态、把 4 天全部投入演示视频与成效数据，收益更高**。切换会带来报名表改号、约 2–3 分钟的双离线窗口、以及六处 AIC 同步的出错机会。
+如果答辩材料不打算把"服务端身份可校验的独立 mTLS 入口"作为亮点讲，那么**停在这里、把剩余时间全部投入演示视频与成效数据，收益更高**。切换会带来报名表改号、约 2–3 分钟的双离线窗口、以及六处 AIC 同步的出错机会。
 
 判断标准很简单：**这个架构优化能不能在答辩里换回分数**。换不回来就别切。
 
-## 六、与他人协作的接口
+**注意一个时间陷阱**：切心跳本身只要几分钟，但它会让 `0U7Q` 掉线。如果评审已经开始按现有 AIC 抽查，切换窗口要避开评审时段，不要放在演示或答辩当天。
+
+## 七、与他人协作的接口
 
 - nginx block 追加操作可由 `deployer` 免密 sudo 经 self-hosted runner 完成，**不需要 SSH 22**；证书文件的传入是唯一需要额外通道的环节（见三.1）。
 - 只读诊断入口：`gh workflow run diagnose-nginx.yml`（输出 server block、证书 subject/SAN/到期、监听端口，不含密钥内容）。
