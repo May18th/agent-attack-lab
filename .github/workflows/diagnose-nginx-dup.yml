@@ -1,0 +1,71 @@
+name: nginx 重复 server_name 排查
+
+# nginx -t 报 conflicting server name（attack/defense/leader-mtls 三条），
+# 说明同一个 server_name 被加载了不止一次。最常见原因是 sites-enabled 目录里
+# 有备份文件也被 `include sites-enabled/*;` 通配进去了。
+# 纯只读。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: 重复来源定位
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    steps:
+      - name: sites-enabled 目录清单
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== ls -la /etc/nginx/sites-enabled =="
+          sudo -n ls -la /etc/nginx/sites-enabled/ 2>/dev/null || echo "NO_DIR"
+          echo
+          echo "== sites-available 清单 =="
+          sudo -n ls -la /etc/nginx/sites-available/ 2>/dev/null | head -20 || echo "NO_DIR"
+
+      - name: include 指令
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== nginx.conf 中的 include =="
+          sudo -n grep -nE "^\s*include" /etc/nginx/nginx.conf 2>/dev/null || echo "NONE"
+
+      - name: 每个 server_name 出现次数
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== 各文件内 server_name 出现次数 =="
+          for f in /etc/nginx/sites-enabled/*; do
+            [ -e "$f" ] || continue
+            echo "--- $f"
+            sudo -n grep -cE "server_name\s+(attack|defense|leader-mtls)\.yuanyiagentzhandui\.cn" "$f" 2>/dev/null \
+              || echo "    0"
+          done
+          echo
+          echo "== nginx -T 实际加载后的总次数 =="
+          for h in attack defense leader-mtls; do
+            cnt=$(sudo -n nginx -T 2>/dev/null | grep -cE "server_name\s+$h\.yuanyiagentzhandui\.cn")
+            echo "  $h = $cnt"
+          done
+
+      - name: 当前 nginx -t 输出
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== nginx -t =="
+          sudo -n nginx -t 2>&1 | sed 's/^/  /'
+
+      - name: 判读
+        shell: bash
+        run: |
+          echo "判读口径："
+          echo "  1) sites-enabled 里存在 *.conf.bak-* 之类备份文件，且 include 用通配"
+          echo "     => 备份被当成配置加载，与主文件重复。修法：把备份移到 sites-enabled 之外（如 /etc/nginx/backup/）。"
+          echo "  2) 同一文件内 server_name 出现 >1 次"
+          echo "     => 文件本身有重复 block，需删除重复段。"
+          echo "  3) 目录清单干净、每处只 1 次，但 nginx -T 统计 >1"
+          echo "     => 存在额外 include（如 conf.d 里也有软链），需顺着 include 链查。"
