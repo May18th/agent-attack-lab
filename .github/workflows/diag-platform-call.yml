@@ -17,36 +17,29 @@ jobs:
           set -uo pipefail
           export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
-          echo "===== A. /rpc 完整访问行（最近 40 条） ====="
-          sudo -n grep "/rpc" /var/log/nginx/access.log 2>/dev/null | tail -40 || echo "(grep 失败)"
+          echo "===== A. 主调度(8787) 本次启动完整日志（前 40 行） ====="
+          journalctl --user -u agent-attack-lab-api --since "-3h" --no-pager 2>/dev/null | head -40 || echo "(无)"
 
           echo
-          echo "===== B. 按 IP + 状态码 + UA 聚合 ====="
-          sudo -n grep "/rpc" /var/log/nginx/access.log 2>/dev/null \
-            | awk '{print $1, $9, $12, $13, $14}' | sort | uniq -c | sort -rn | head -20 || true
+          echo "===== B. 主调度日志里的 AMP / AIC / warning 全量 ====="
+          journalctl --user -u agent-attack-lab-api --since "-6h" --no-pager 2>/dev/null \
+            | grep -iE "amp|aic|identit|心跳|warning|warn" | tail -20 || echo "(无)"
 
           echo
-          echo "===== C. 非本机探测的 /rpc 请求（排除 127.0.0.1/内网） ====="
-          sudo -n grep "/rpc" /var/log/nginx/access.log 2>/dev/null \
-            | grep -vE "^(127\.0\.0\.1|172\.|10\.|192\.168\.)" | tail -20 || echo "(全部来自本机)"
-
-          echo
-          echo "===== D. leader(8787) 的 AMP 心跳状态 ====="
-          journalctl --user -u agent-attack-lab-api --since "-3h" --no-pager 2>/dev/null \
-            | grep -iE "amp|heartbeat|心跳" | tail -10 || echo "(leader 无 AMP 日志)"
-
-          echo
-          echo "===== E. 各服务 AMP 相关环境变量（只看有无/取值） ====="
-          for port in 8787 8788 8789; do
-            pid=$(ss -lntp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | head -1)
-            echo "-- 127.0.0.1:$port pid=$pid --"
-            if [ -n "${pid:-}" ]; then
-              tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
-                | grep -E '^AGENT_(AMP|AIP|LOCAL|IDENTITY|ROLE)' | sed -E 's/(KEY|SECRET|TOKEN)=.*/\1=***/' || echo "  (无)"
-            fi
+          echo "===== C. 身份文件与心跳投递记录 ====="
+          sudo -n find /home/deployer /opt/agent-attack-lab -maxdepth 6 -name "agent-identities.json" 2>/dev/null | head -5
+          echo "-- 最近心跳 JSONL（各 role） --"
+          sudo -n find /home/deployer /opt/agent-attack-lab -maxdepth 8 -name "amp_heartbeat_*.jsonl" 2>/dev/null | while read -r f; do
+            echo "  $f  lines=$(sudo -n wc -l < "$f" 2>/dev/null)  last=$(sudo -n tail -1 "$f" 2>/dev/null | cut -c1-160)"
           done
 
           echo
-          echo "===== F. 近 3h 三个服务的所有 4xx/5xx 请求日志 ====="
-          journalctl --user -u agent-attack-lab-api -u agent-attack-lab-attacker -u agent-attack-lab-defender \
-            --since "-3h" --no-pager 2>/dev/null | grep -E '"(GET|POST)' | tail -40 || echo "(无)"
+          echo "===== D. Kafka 出口连通性（AMP 投递目标） ====="
+          timeout 8 bash -c 'cat < /dev/null > /dev/tcp/wt.ioa.pub/19092' 2>&1 && echo "  wt.ioa.pub:19092 TCP OK" || echo "  wt.ioa.pub:19092 TCP FAIL"
+
+          echo
+          echo "===== E. 三个服务最近一条心跳/错误 ====="
+          for svc in agent-attack-lab-api agent-attack-lab-attacker agent-attack-lab-defender; do
+            echo "-- $svc --"
+            journalctl --user -u "$svc" --since "-30min" --no-pager 2>/dev/null | tail -3 || echo "  (无)"
+          done
