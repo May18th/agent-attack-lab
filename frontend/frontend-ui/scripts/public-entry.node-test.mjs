@@ -12,8 +12,8 @@ test('public root entry mounts the backend-connected React experience', () => {
 })
 
 test('Pages routes the administrator aliases to the administrator entry', () => {
-  assert.match(redirects, /^\/admin \/admin\/index\.html 200$/m)
-  assert.match(redirects, /^\/admin\/\* \/admin\/index\.html 200$/m)
-  assert.match(redirects, /^\/dashboard \/admin\/index\.html 200$/m)
-  assert.match(redirects, /^\/dashboard\/\* \/admin\/index\.html 200$/m)
+  assert.match(redirects, /^\/admin \/admin\/ 302$/m)
+  assert.match(redirects, /^\/dashboard \/admin\/ 302$/m)
+  assert.match(redirects, /^\/dashboard\/ \/admin\/ 302$/m)
+  assert.match(redirects, /^\/dashboard\/\* \/admin\/ 302$/m)
 })
