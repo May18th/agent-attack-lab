@@ -164,6 +164,24 @@ AGENTS = {
 }
 
 
+def configure(
+    *,
+    version: str | None = None,
+    endpoint: str | None = None,
+    workspace: str | None = None,
+) -> None:
+    """覆盖版本号 / endpoint / workspace，便于为同一角色注册不同 endpoint 的版本。"""
+    global AGENT_VERSION, WORKSPACE_ROOT
+    if version:
+        AGENT_VERSION = version
+    if workspace:
+        WORKSPACE_ROOT = ROOT / workspace
+    if endpoint:
+        for spec in AGENTS.values():
+            if spec.get("capability") is leader_capability:
+                spec["endpoint"] = endpoint
+
+
 def runtime_for(kind: str) -> WitRuntime:
     spec = AGENTS[kind]
     agent = WitAgent(
@@ -249,7 +267,16 @@ def main() -> None:
         action="store_true",
         help="submit to Registry; without this flag only save and validate drafts",
     )
+    parser.add_argument("--version", help="覆盖注册版本号，例如 1.2.1")
+    parser.add_argument(
+        "--endpoint", help="覆盖 endpoint，例如 https://leader-mtls.example.cn/rpc"
+    )
+    parser.add_argument(
+        "--workspace",
+        help="覆盖 workspace 目录（相对 backend/），例如 .data/acps-registration-v4-leader-mtls",
+    )
     args = parser.parse_args()
+    configure(version=args.version, endpoint=args.endpoint, workspace=args.workspace)
     kinds = ["attack", "defender"] if args.agent == "both" else [args.agent]
     raise SystemExit(asyncio.run(run(kinds, submit=args.submit)))
 
