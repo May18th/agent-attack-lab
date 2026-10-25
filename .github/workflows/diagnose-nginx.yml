@@ -1,0 +1,91 @@
+name: nginx 与 mTLS 入口诊断
+
+# leader-mtls 子域名要能和 attack/defense 一样提供 mTLS 入口，
+# 需要先看清现有 server block、证书路径、443 默认 server 是谁。
+# 纯只读：不写配置、不 reload、不打印任何私钥内容。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: mTLS 入口现状
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    steps:
+      - name: nginx 概况
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== nginx 版本与状态 =="
+          sudo -n nginx -v 2>&1 || nginx -v 2>&1 || echo "NO_NGINX"
+          systemctl is-active nginx 2>/dev/null || echo "nginx: unknown"
+          echo "== 配置文件位置 =="
+          sudo -n nginx -T 2>/dev/null | grep -E "^# configuration file" | head -40 \
+            || echo "NO_NGINX_T_DUMP"
+
+      - name: 各 server block 的域名与证书
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== server_name / listen / 证书 / 客户端校验 =="
+          sudo -n nginx -T 2>/dev/null | grep -nE \
+            "server_name|listen .*(443|ssl)|ssl_certificate |ssl_certificate_key |ssl_client_certificate|ssl_verify_client|proxy_pass|root " \
+            | head -120 || echo "NO_CONFIG"
+
+      - name: 谁在处理 attack / defense / leader
+        shell: bash
+        run: |
+          set -uo pipefail
+          for h in attack.yuanyiagentzhandui.cn defense.yuanyiagentzhandui.cn leader-mtls.yuanyiagentzhandui.cn; do
+            echo "== $h =="
+            sudo -n nginx -T 2>/dev/null \
+              | awk -v host="$h" '
+                  /^# configuration file/ { file=$0 }
+                  /server_name/ && index($0, host) { found=1; print "  FILE:" file }
+                  found && /server_name|listen|ssl_certificate|ssl_verify_client|proxy_pass|return/ { print "  " $0 }
+                  found && /^}/ { found=0 }
+                ' | head -20
+          done
+          echo "== 默认 443 server（SNI 未匹配时落到这里） =="
+          sudo -n nginx -T 2>/dev/null | grep -nE "listen .*443.*default_server|listen .*ssl.*default_server" | head -10 || echo "NO_DEFAULT_443"
+
+      - name: 证书文件清点（只看路径与到期，不读私钥）
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== 443 相关证书目录 =="
+          for d in /etc/nginx/ssl /etc/nginx/certs /etc/ssl/agent-attack-lab /opt/agent-attack-lab/backend/.data; do
+            [ -d "$d" ] && { echo "--- $d"; sudo -n find "$d" -maxdepth 2 -name "*.pem" -o -maxdepth 2 -name "*.crt" 2>/dev/null | head -15; }
+          done
+          echo "== 每个证书的 subject / SAN / 到期 =="
+          for f in $(sudo -n nginx -T 2>/dev/null | grep -E "ssl_certificate |ssl_client_certificate" | grep -v key | awk '{print $2}' | tr -d ';' | sort -u); do
+            [ -f "$f" ] || continue
+            echo "--- $f"
+            sudo -n openssl x509 -in "$f" -noout -subject -enddate -ext subjectAltName 2>/dev/null \
+              | sed 's/^/    /' || echo "    UNREADABLE"
+          done
+
+      - name: 后端服务监听
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== 8787-8790 监听 =="
+          ss -lntp 2>/dev/null | grep -E ":(8787|8788|8789|8790)\b" || echo "NO_LISTEN_878x"
+          echo "== systemd user 服务 =="
+          systemctl --user list-units --type=service --no-pager 2>/dev/null | grep -i agent || echo "NO_USER_UNITS"
+
+      - name: 判读提示
+        shell: bash
+        run: |
+          echo "判读口径："
+          echo "  1) leader-mtls 没有独立 server block，且 443 有 default_server"
+          echo "     => 需新增 server block：server_name leader-mtls...; ssl_certificate 指向 CA 新签的 serverAuth 证书；"
+          echo "        ssl_client_certificate 复用现有 ca-verify.pem；ssl_verify_client on。"
+          echo "  2) 现有 block 用 proxy_pass 到 127.0.0.1:8787"
+          echo "     => leader-mtls 同样指向 8787，不需要新开进程。"
+          echo "  3) 现有 ssl_verify_client 是 optional / off"
+          echo "     => 说明 attack/defense 当前并未强制客户端证书，leader-mtls 应对齐同一口径，不要单独加严。"
