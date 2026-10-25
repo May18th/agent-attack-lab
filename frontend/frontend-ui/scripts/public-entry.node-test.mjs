@@ -5,10 +5,10 @@ import test from 'node:test'
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
 const redirects = readFileSync(new URL('../public/_redirects', import.meta.url), 'utf8')
 
-test('public root entry mounts the backend-connected React experience', () => {
-  assert.match(html, /<script type="module" src="\/src\/main\.tsx"><\/script>/)
-  assert.doesNotMatch(html, /var id='A-'/)
-  assert.doesNotMatch(html, /事件回放 · Defender\/Arbiter 事件驱动 · 模拟计时/)
+test('public root entry mounts the command center experience', () => {
+  assert.match(html, /<title>智能体攻防实验室 · 总控台<\/title>/)
+  assert.match(html, /<script type="module" src="\/src\/command-center\.ts"><\/script>/)
+  assert.doesNotMatch(html, /<script type="module" src="\/src\/main\.tsx"><\/script>/)
 })
 
 test('Pages routes the administrator aliases to the administrator entry', () => {
