@@ -50,10 +50,10 @@ curl.exe -s --noproxy "*" -X POST https://wt.ioa.pub/discovery/acps-adp-v2/disco
   -d "{\"type\":\"filtered\",\"limit\":10,\"filter\":{\"conditions\":[{\"field\":\"name\",\"op\":\"contains\",\"value\":\"智能体攻防实验室\"}]}}"
 ```
 
-判定：返回里的 `acsMap` **恰好 3 个键**。多于 3 说明旧 AIC 还没过期，**等 3 分钟再查**（实测摘除延迟 2–3 分钟）。
+判定：返回体里 `result.acsMap` **恰好 3 个键**（注意在 `result` 下面，不在顶层），且 `result.aliveMap` 三条都是 `alive=true`。多于 3 说明旧 AIC 还没过期，**等 3 分钟再查**（实测摘除延迟 2–3 分钟）。
 
-当前应出现的三个 AIC 尾号：主调度 `1A7Q`、攻击 `0MVE`、防守 `0GFQ`。
-（主调度 2026-10-26 01:03 已从 1.2.0 的 `0U7Q` 切到 1.2.1 的 `1A7Q`。）
+当前应出现的三个 AIC 尾号：主调度 `1A7Q`（`version` 显示 1.2.1）、攻击 `0MVE`、防守 `0GFQ`。
+（主调度 2026-10-26 01:03 已从 1.2.0 的 `0U7Q` 切到 1.2.1 的 `1A7Q`，实测 `acsMap` 里版本号直接显示 `1.2.1`。）
 若出现 `0U7Q` / `09CQ` / `08RN` / `09SG` / `S5AJC0` / `QY650M`，说明是历史轮次残留，等过期即可。
 
 ### 3.2 确认本机没在跑

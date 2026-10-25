@@ -76,6 +76,12 @@ DNS SAN 就是 ACS 里填的 endpoint 主机名。所以 **1.2.1 的 endpoint �
 
 走 GitHub Secret 中转：`LEADER_MTLS_SERVER_CERT` / `LEADER_MTLS_SERVER_KEY` 写入 repository secret，由 `provision-leader-mtls.yml` 在 VPS 内落盘。
 
+> **两个 secret 已于 2026-10-26 01:10 删除**。删除前做过一次指纹比对：本地注册产物
+> `.data/acps-registration-v4-leader-mtls/leader/acps/server/certificate.pem` 与线上 443 实际出示的证书
+> 同为 `SHA256=D7:A0:57:CD:03:88:52:8A:1B:EF:59:2D:40:29:3E:0F:D7:09:56:9C:85:11:E6:7E:72:A8:AE:24:0C:74:09:F8`，
+> 说明私钥只存在于两处可信位置（本地注册产物 + VPS 落盘文件），无需再留在 CI 里。
+> 如需重新落盘，从上述本地路径取，不要重新注册（重新注册会再换 AIC）。
+
 实测结果：
 
 | 检查 | 结果 |
