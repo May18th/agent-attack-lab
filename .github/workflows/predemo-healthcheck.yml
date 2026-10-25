@@ -259,7 +259,7 @@ jobs:
             info "身份文件：$ids"
             read_aic() { python3 -c 'import json,sys;print((json.load(open(sys.argv[1],encoding="utf-8"))[sys.argv[2]].get("aic") or "").strip())' "$ids" "$1" 2>/dev/null || true; }
             L=$(read_aic leader)
-            A=$(read_aic attack)
+            A=$(read_aic attacker)
             D=$(read_aic defender)
             info "仓库值：leader=${L##*.} attack=${A##*.} defender=${D##*.}"
 
