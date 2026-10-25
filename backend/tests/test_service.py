@@ -107,7 +107,10 @@ def test_dashboard_is_chinese_html() -> None:
     assert 'label for="low">低</label>' in response.text
     assert 'defect: "缺陷"' in response.text
     assert "发现问题（Findings）" not in response.text
-    assert "战局会真实写入后端并同步到后台；当前分析对象为合成安全样本，不会向外部目标发起请求" in response.text
+    assert (
+        "战局会真实写入后端并同步到后台；当前分析对象为合成安全样本，不会向外部目标发起请求"
+        in response.text
+    )
     assert "Battle console" not in response.text
     assert "Checking service" not in response.text
     assert "OpenAPI JSON" not in response.text
