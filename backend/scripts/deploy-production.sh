@@ -100,6 +100,33 @@ load_agent_env() {
 }
 
 load_agent_env
+
+ensure_amp_dependency() {
+  # AMP 心跳直投平台 Kafka 需要 kafka-python。缺失时 amp.py 只会写本地 NDJSON，
+  # 表现为「本机服务一停，梧桐平台三只智能体立刻掉线」。venv 在部署流程之外
+  # 创建，所以这里幂等补齐；补齐失败只告警，不影响业务服务启动。
+  if "$python_bin" -c 'import kafka' >/dev/null 2>&1; then
+    return 0
+  fi
+  local uv_bin=""
+  if command -v uv >/dev/null 2>&1; then
+    uv_bin=$(command -v uv)
+  elif [[ -x "$HOME/.local/bin/uv" ]]; then
+    uv_bin="$HOME/.local/bin/uv"
+  fi
+  if [[ -n "$uv_bin" ]]; then
+    "$uv_bin" pip install --python "$python_bin" 'kafka-python>=3.0' >&2 || true
+  else
+    "$python_bin" -m pip install 'kafka-python>=3.0' >&2 || true
+  fi
+  if "$python_bin" -c 'import kafka' >/dev/null 2>&1; then
+    printf 'installed kafka-python for AMP heartbeat\n'
+  else
+    printf 'WARNING: kafka-python missing; AMP heartbeat only writes NDJSON\n' >&2
+  fi
+}
+
+ensure_amp_dependency
 (cd "$release_backend" && "$python_bin" -m alembic -c alembic.ini upgrade head)
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"

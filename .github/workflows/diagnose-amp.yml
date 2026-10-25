@@ -35,7 +35,11 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          cd /opt/agent-attack-lab/backend
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          workdir=$(systemctl --user show agent-attack-lab-api.service -p WorkingDirectory --value)
+          echo "服务实际工作目录 = $workdir"
+          cd "$workdir" || exit 1
+          echo "uv = $(command -v uv || echo NONE)"
           export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
           ./.venv/bin/python - <<'PY' || true
           import os
@@ -72,7 +76,9 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          cd /opt/agent-attack-lab/backend
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          workdir=$(systemctl --user show agent-attack-lab-api.service -p WorkingDirectory --value)
+          cd "$workdir" || exit 1
           # 与 start-service.sh 同样的方式载入 .env，再由脚本覆盖角色
           while IFS= read -r line || [[ -n "$line" ]]; do
             [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
