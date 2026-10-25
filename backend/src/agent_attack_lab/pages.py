@@ -330,9 +330,9 @@ def dashboard_html(*, topic_value: str, selected_difficulty: str) -> str:
         <div class="panel">
           <div class="panel-title"><h2>开始新战局</h2><span>攻防编排</span></div>
           <form id="battle-form">
-            <div class="field"><label for="topic">测试主题</label><input id="topic" name="topic" type="text" maxlength="200" value="__INITIAL_TOPIC__" required></div>
+            <div class="field"><label for="topic">攻防主题</label><input id="topic" name="topic" type="text" maxlength="200" value="__INITIAL_TOPIC__" required></div>
             <div class="field"><label>对抗难度</label><div class="choices"><div><input id="low" name="difficulty" value="low" type="radio" __LOW_CHECKED__><label for="low">低</label></div><div><input id="mid" name="difficulty" value="mid" type="radio" __MID_CHECKED__><label for="mid">中</label></div><div><input id="high" name="difficulty" value="high" type="radio" __HIGH_CHECKED__><label for="high">高</label></div></div></div>
-            <button id="start" type="submit">开始攻防</button><p class="hint">完成后将在右侧显示攻击样本、风险依据和处置建议。演示环境使用本地模拟用例；真实 Agent 结果会标明来源。</p>
+            <button id="start" type="submit">开始攻防</button><p class="hint">战局会真实写入后端并同步到后台；当前分析对象为合成安全样本，不会向外部目标发起请求。各 Agent 来源会在结果中标明。</p>
           </form>
         </div>
       </section>
@@ -455,7 +455,7 @@ def dashboard_html(*, topic_value: str, selected_difficulty: str) -> str:
         attacker.classList.add("active");
         $("attacker-state").textContent = attackerLabel + " · 正在生成样本";
         $("defender-state").textContent = "待命";
-        $("visual-caption").textContent = "攻击智能体正在构造测试样本";
+        $("visual-caption").textContent = "攻击智能体正在构造合成样本";
       } else if (event.type === "attack.sample.generated") {
         var sample = event.data.sample || {};
         var severity = sample.severity === "medium" ? "中" : difficulty(sample.severity);
@@ -514,7 +514,7 @@ def dashboard_html(*, topic_value: str, selected_difficulty: str) -> str:
         var meta = document.createElement("div");
         meta.className = "dialog-side-title";
         var name = document.createElement("b");
-        name.textContent = side === "attacker" ? "攻击方 · 测试样本" : "防守方 · 分析结果";
+        name.textContent = side === "attacker" ? "攻击方 · 合成样本" : "防守方 · 分析结果";
         var status = document.createElement("small");
         status.textContent = side === "attacker" ? "等待提交" : "等待送检";
         meta.appendChild(name);
@@ -546,7 +546,7 @@ def dashboard_html(*, topic_value: str, selected_difficulty: str) -> str:
       var tag = document.createElement("div");
       tag.className = "dialog-topic";
       var severity = sample.severity === "medium" ? "中" : difficulty(sample.severity);
-      tag.textContent = (sample.simulation ? "本地模拟用例 · " : "") + (sample.testCaseId ? sample.testCaseId + " · " : "") + sampleType(sample.type) + " · " + severity + " · 主题：" + (sample.topic || "未指定");
+      tag.textContent = (sample.simulation ? "合成安全样本 · " : "") + (sample.testCaseId ? sample.testCaseId + " · " : "") + sampleType(sample.type) + " · " + severity + " · 主题：" + (sample.topic || "未指定");
       var content = document.createElement("p");
       content.className = "dialog-content";
       if (sample.scenario) {
@@ -894,7 +894,7 @@ def dashboard_html(*, topic_value: str, selected_difficulty: str) -> str:
       Object.keys(targets).forEach(function (key) { $(targets[key]).textContent = Number(summary[key] || 0).toLocaleString("zh-CN"); });
       $("acp-outcome").textContent = Number(summary.acpSuccessCount || 0).toLocaleString("zh-CN") + " / " + Number(summary.acpFailureCount || 0).toLocaleString("zh-CN");
       $("local-call-count").textContent = Number(summary.localRuleExecutionCount || 0).toLocaleString("zh-CN");
-      $("saved-data-note").textContent = "统计来自当前已保存战局 · " + Number(summary.agentExecutionCount || 0).toLocaleString("zh-CN") + " 次 Agent 执行（攻击 " + Number(summary.attackerCallCount || 0).toLocaleString("zh-CN") + " / 防守 " + Number(summary.defenderCallCount || 0).toLocaleString("zh-CN") + "）· 本地模拟样本 " + Number(summary.simulationSampleCount || 0).toLocaleString("zh-CN") + " 条。ACP 只表示协议调用；LLM 次数依据 Partner 返回来源字段，未做独立模型验证。";
+      $("saved-data-note").textContent = "统计来自当前已保存战局 · " + Number(summary.agentExecutionCount || 0).toLocaleString("zh-CN") + " 次 Agent 执行（攻击 " + Number(summary.attackerCallCount || 0).toLocaleString("zh-CN") + " / 防守 " + Number(summary.defenderCallCount || 0).toLocaleString("zh-CN") + "）· 合成安全样本 " + Number(summary.simulationSampleCount || 0).toLocaleString("zh-CN") + " 条。ACP 只表示协议调用；LLM 次数依据 Partner 返回来源字段，未做独立模型验证。";
     }
     function renderInternalScore(battleId, panel) {
       fetch("/battles/" + encodeURIComponent(battleId) + "/score", {cache: "no-store"}).then(function (response) {
@@ -948,14 +948,14 @@ def dashboard_html(*, topic_value: str, selected_difficulty: str) -> str:
       var defenderSources = Array.from(new Set(defenses.map(function (item) { return agentSourceLabel(item.agentSource); })));
       var isSimulation = samples.some(function (sample) { return sample.simulation === true; });
       $("agent-source-label").textContent = "本场来源：攻击 " + attackerSource + " · 防守 " + (defenderSources.join(" / ") || "等待记录");
-      $("verification-summary").textContent = isSimulation ? "本地模拟用例 · 真实目标验证：未执行" : "真实目标验证：未执行";
+      $("verification-summary").textContent = isSimulation ? "合成安全样本 · 真实目标验证：未执行" : "真实目标验证：未执行";
       $("result").hidden = false;
       var rounds = samples.map(function (sample, index) {
         var defense = defenses[index] || {};
         var state = defense.verificationStatus ? "检测完成 · 目标未验证" : battle.status === "failed" ? "战局失败" : "等待检测";
-        return `<article class="round"><div class="round-head"><span class="round-number">第 ${index + 1} 轮</span><span class="round-type">${escapeHtml(sampleType(sample.type))} · ${escapeHtml(difficulty(sample.severity))}</span><span class="round-state">${state}</span></div><div class="round-grid"><div class="attack-box"><h3>攻击方 · 样本生成</h3><div><b>场景：</b>${escapeHtml(sample.scenario || "未提供")}</div><div><b>检查目标：</b>${escapeHtml(sample.objective || "未提供")}</div><div><b>主题：</b>${escapeHtml(sample.topic)}</div><div><b>测试输入：</b></div><div class="round-content">${escapeHtml(sample.content)}</div></div><div class="defend-box"><h3>防守方 · 检测与处置</h3><div class="result-label">规则命中（样本证据）</div><ul class="result-list">${resultList(defense.caught, "reason", "未命中当前规则")}</ul><div class="result-label">条件性风险</div><ul class="result-list">${resultList(defense.risks, "reason", "无额外风险记录")}</ul><div class="result-label">修复方向与验收（建议，未执行）</div><ul class="result-list">${resultList(defense.fixed, "action", "暂无建议")}</ul></div></div></article>`;
+        return `<article class="round"><div class="round-head"><span class="round-number">第 ${index + 1} 轮</span><span class="round-type">${escapeHtml(sampleType(sample.type))} · ${escapeHtml(difficulty(sample.severity))}</span><span class="round-state">${state}</span></div><div class="round-grid"><div class="attack-box"><h3>攻击方 · 样本生成</h3><div><b>场景：</b>${escapeHtml(sample.scenario || "未提供")}</div><div><b>检查目标：</b>${escapeHtml(sample.objective || "未提供")}</div><div><b>主题：</b>${escapeHtml(sample.topic)}</div><div><b>样本内容：</b></div><div class="round-content">${escapeHtml(sample.content)}</div></div><div class="defend-box"><h3>防守方 · 检测与处置</h3><div class="result-label">规则命中（样本证据）</div><ul class="result-list">${resultList(defense.caught, "reason", "未命中当前规则")}</ul><div class="result-label">条件性风险</div><ul class="result-list">${resultList(defense.risks, "reason", "无额外风险记录")}</ul><div class="result-label">修复方向与验收（建议，未执行）</div><ul class="result-list">${resultList(defense.fixed, "action", "暂无建议")}</ul></div></div></article>`;
       }).join("") || '<div class="empty">本轮没有生成样本（No samples generated）</div>';
-      var sourceLabel = escapeHtml(isSimulation ? "本地模拟" : attackerSource);
+      var sourceLabel = escapeHtml(isSimulation ? "合成安全样本" : attackerSource);
       $("result").innerHTML = `<div class="battle-head"><strong>${escapeHtml(battle.topic)} · ${difficulty(battle.difficulty)}难度</strong><span>${sourceLabel} · ${escapeHtml(statusLabel(battle.status))} · ${formatTime(battle.createdAt)}</span></div><div class="flow"><div class="flow-step"><i>1</i><b>战局创建</b><small>接收主题与难度</small></div><div class="flow-step"><i>2</i><b>攻击生成</b><small>输出 ${samples.length} 个样本</small></div><div class="flow-step"><i>3</i><b>规则分析</b><small>检查提交样本文本</small></div><div class="flow-step"><i>4</i><b>结果汇总</b><small>提出 ${fixedCount} 项验证建议</small></div></div><div class="battle-summary"><div class="summary-item"><b>${samples.length}</b><span>样本数</span></div><div class="summary-item"><b>${caughtCount}</b><span>规则命中</span></div><div class="summary-item"><b>${riskCount}</b><span>条件性风险</span></div><div class="summary-item"><b>${fixedCount}</b><span>验证建议</span></div></div><details class="round-details"><summary>查看逐轮证据详情（${samples.length} 轮）</summary><div class="round-list">${rounds}</div></details>`;
       var scorePanel = document.createElement("section");
       scorePanel.className = "internal-score";
@@ -983,7 +983,7 @@ def dashboard_html(*, topic_value: str, selected_difficulty: str) -> str:
         var attackTitle = attackBox && attackBox.querySelector("h3");
         var defenseTitle = defenseBox && defenseBox.querySelector("h3");
         var labels = card.querySelectorAll(".result-label");
-        if (attackTitle) attackTitle.textContent = sample.simulation ? "攻击方 · 本地模拟用例" : "攻击方 · 提交样本";
+        if (attackTitle) attackTitle.textContent = sample.simulation ? "攻击方 · 合成安全样本" : "攻击方 · 提交样本";
         if (defenseTitle) defenseTitle.textContent = "防守方 · 样本规则分析";
         if (labels[0]) labels[0].textContent = "规则命中（样本证据）";
         if (labels[1]) labels[1].textContent = "条件性风险";

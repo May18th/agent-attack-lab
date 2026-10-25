@@ -67,7 +67,7 @@ def dashboard(
                 headers={"Cache-Control": "no-store"},
             )
         raise
-    topic_value = escape_html(topic or "通用安全测试", quote=True)
+    topic_value = escape_html(topic or "安全风险评估", quote=True)
     selected_difficulty = difficulty or "mid"
     return pages.dashboard_html(
         topic_value=topic_value, selected_difficulty=selected_difficulty

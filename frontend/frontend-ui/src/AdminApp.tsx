@@ -29,7 +29,7 @@ function battleVerdictLabel(verdict?: AdminBattle['verdict']): string {
   return verdict ? label(verdict, VERDICT_LABELS) : '未生成判定'
 }
 function battleReviewLabel(battle: AdminBattle): string {
-  if (battle.verdict === 'attacker_won') return '已验证结论'
+  if (battle.verdict === 'attacker_won') return '以证据记录为依据'
   if (battle.verdict === 'defender_won') return '有拦截证据'
   if (battle.verdict === 'undetermined') return '证据不足'
   return '等待后端判定'

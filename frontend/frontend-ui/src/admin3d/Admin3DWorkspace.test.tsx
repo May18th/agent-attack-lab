@@ -271,8 +271,10 @@ describe('Admin3DWorkspace', () => {
       { sequence: 1, type: 'attack.compromised', data: { round: 1, targetVerified: true, verificationMode: 'simulated', simulated: true, evidence: [{ kind: 'simulated_detection' }] } },
       { sequence: 2, type: 'battle.completed', data: { verdict: 'attacker_won', compromisedRounds: 1, interceptedRounds: 0, verificationMode: 'simulated' } },
     ] })
-    expect(screen.getByRole('status', { name: '战局最终总结' })).toHaveTextContent('模拟验证')
-    expect(screen.getByRole('status', { name: '战局最终总结' })).toHaveClass('outcome-attacker-won')
+    expect(screen.getByRole('status', { name: '战局最终总结' })).toHaveTextContent('规则推定穿透，但真实目标未验证')
+    expect(screen.getByRole('status', { name: '战局最终总结' })).not.toHaveTextContent(/模拟|测试/)
+    expect(screen.getByRole('status', { name: '战局最终总结' })).toHaveClass('outcome-undetermined')
+    expect(screen.getByRole('status', { name: '战局最终总结' })).toHaveTextContent('结果未判定')
 
     cleanup()
     renderWorkspace({ selectedBattle: { ...battle, status: 'completed', verdict: 'undetermined' }, events: [

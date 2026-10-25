@@ -36,3 +36,21 @@
 .score-role strong{color:#80d9c7;font-size:13px}
 .score-role ul{margin:8px 0 0;padding-left:18px;color:var(--muted);font-size:11px;line-height:1.6}
 @media(max-width:640px){.score-grid{grid-template-columns:1fr}.detail-actions{width:100%;justify-content:flex-start}}
+
+.page{display:flex;flex-direction:column}
+.layout{order:1}
+.stats{order:2;gap:8px;margin:24px 0 8px;opacity:.78}
+.stat-card{padding:12px 14px;background:#ffffff04;box-shadow:none;border-left-width:2px}
+.stat-card h3{min-height:0}
+.stat-num{font-size:24px;color:var(--muted)}
+.stat-note{min-height:0;font-size:10px}
+.stats-note{order:3;margin:0 0 14px;font-size:10px}
+.external-cases{order:4;margin-bottom:18px;box-shadow:none}
+.external-cases-summary .card-head{margin-bottom:0}
+.col-left>.card:first-child{border-color:#4da3ff55;background:linear-gradient(145deg,#12254188,var(--panel) 68%)}
+.col-left>.history{border-color:#4da3ff35}
+.operation-notice{margin:0 0 14px;padding:9px 11px;border:1px solid #4da3ff45;border-radius:9px;background:#4da3ff0d;color:var(--muted);font-size:11px;line-height:1.5}
+.sample-scope-note{margin:0 0 14px;padding:9px 11px;border:1px solid #f39c1245;border-radius:9px;background:#f39c120d;color:var(--muted);font-size:11px;line-height:1.5}
+.status{cursor:pointer}
+.admin-link{padding:8px 11px;border:1px solid var(--line);border-radius:9px;color:var(--muted);font-size:12px;text-decoration:none}
+.admin-link:hover{color:var(--text);border-color:#4da3ff99;background:#4da3ff14}

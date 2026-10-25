@@ -450,13 +450,14 @@ describe('AdminApp', () => {
     expect(screen.getByText('回合明细（2 轮）')).toBeInTheDocument()
     expect(screen.getByText('请求 3 轮，实际产出 2 轮')).toBeInTheDocument()
     expect(screen.getAllByText('已拦截').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('穿透（模拟验证）').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('穿透（规则推定，目标未验证）').length).toBeGreaterThan(0)
     expect(screen.getAllByText('证据不足').length).toBeGreaterThan(0)
     expect(screen.getAllByText('事件 ID 重复').length).toBeGreaterThan(0)
     expect(screen.getByText('结果未判定 · 需复核')).toBeInTheDocument()
     expect(screen.getByText('防守成功')).toBeInTheDocument()
     expect(screen.getByText(/独立裁决由 arbiter 单独复核/)).toBeInTheDocument()
     expect(screen.queryByText('原始数据（排查用）')).not.toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/模拟|测试/)
   })
 
   it('renders the raw data disclosure only with the debug query flag', async () => {
@@ -475,12 +476,13 @@ describe('AdminApp', () => {
     }
   })
 
-  it('reports a verified compromise instead of an undetermined result', async () => {
+  it('marks rule-inferred synthetic evidence as unverified instead of confirmed compromise', async () => {
     mockReadableBattle({ verdict: 'attacker_won' })
     render(<AdminApp />)
     await openWorkspace(/^战局/)
     fireEvent.click(await screen.findByRole('button', { name: '查看可读战局' }))
-    expect((await screen.findAllByText('攻击得手（目标已验证）')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('规则命中推定（真实目标未验证）')).length).toBeGreaterThan(0)
+    expect(within(screen.getByRole('region', { name: '战局结论' })).queryByText('目标已由真实证据验证')).not.toBeInTheDocument()
     expect(screen.queryByText(/未取得验证证据/)).not.toBeInTheDocument()
   })
 

@@ -1,0 +1,4 @@
+/admin /admin/index.html 200
+/admin/* /admin/index.html 200
+/dashboard /admin/index.html 200
+/dashboard/* /admin/index.html 200

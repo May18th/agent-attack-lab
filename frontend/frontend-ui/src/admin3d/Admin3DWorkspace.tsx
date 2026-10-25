@@ -27,7 +27,7 @@ type Admin3DWorkspaceProps = {
 
 const statusLabels: Record<string, string> = {
   pending: '等待中', running: '进行中', completed: '已完成', failed: '失败',
-  attacker_won: '攻击得手（目标已验证）', defender_won: '防守成功', undetermined: '结果未判定',
+  attacker_won: '目标已由真实证据验证', defender_won: '防守成功', undetermined: '结果未判定',
 }
 
 
@@ -58,8 +58,8 @@ function eventEvidenceItems(event: AdminBattleEvent): Array<{ label: string; val
   const items: Array<{ label: string; value: string }> = []
   if (typeof data.round === 'number') items.push({ label: '回合', value: `第 ${data.round} 轮` })
   if (typeof data.agentSource === 'string') items.push({ label: '调用来源', value: data.agentSource })
-  if (typeof data.verificationMode === 'string') items.push({ label: '验证模式', value: data.verificationMode === 'simulated' ? '模拟验证' : data.verificationMode === 'live' ? '真实验证' : data.verificationMode })
-  if (typeof data.targetVerified === 'boolean') items.push({ label: '目标验证', value: data.targetVerified ? (data.simulated === true ? '已模拟验证' : '已验证') : '未提供验证证据' })
+  if (typeof data.verificationMode === 'string') items.push({ label: '验证模式', value: data.verificationMode === 'simulated' ? '规则推定' : data.verificationMode === 'live' ? '真实目标验证' : data.verificationMode })
+  if (typeof data.targetVerified === 'boolean') items.push({ label: '目标验证', value: data.targetVerified ? (data.simulated === true ? '规则推定，目标未验证' : '已验证') : '未提供验证证据' })
   if (Array.isArray(data.caught)) items.push({ label: '命中', value: `${data.caught.length} 项` })
   if (Array.isArray(data.risks)) items.push({ label: '风险', value: `${data.risks.length} 项` })
   if (Array.isArray(data.fixed)) items.push({ label: '建议', value: `${data.fixed.length} 项` })
@@ -114,7 +114,8 @@ function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.l
   const finalEventData = (finalEvent?.data ?? {}) as Record<string, unknown>
   const compromiseEvents = orderedEvents.filter((event) => String(event.eventType ?? event.type ?? '') === 'attack.compromised' && event.data?.targetVerified === true)
   const recordedVerdict = finalEventData.verdict ?? selectedBattle?.verdict
-  const finalVerdict = recordedVerdict === 'attacker_won' && compromiseEvents.length > 0
+  const hasLiveCompromiseEvidence = compromiseEvents.some((event) => event.data?.simulated !== true)
+  const finalVerdict = recordedVerdict === 'attacker_won' && hasLiveCompromiseEvidence
     ? 'attacker_won'
     : recordedVerdict === 'defender_won' ? 'defender_won'
       : recordedVerdict === 'undetermined' ? 'undetermined'
@@ -130,7 +131,7 @@ function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.l
   const compromisedRounds = typeof finalEventData.compromisedRounds === 'number' ? finalEventData.compromisedRounds : compromiseEvents.length
   const verificationMode = finalEventData.verificationMode ?? compromiseEvents[0]?.data?.verificationMode
   const verdictSummary = finalVerdict === 'attacker_won'
-    ? `目标沦陷：${verificationMode === 'simulated' || compromiseEvents.some((event) => event.data?.simulated === true) ? '模拟验证，非真实目标验证' : '已有验证证据'}；沦陷 ${compromisedRounds} 轮，防守拦截 ${interceptedRounds} 轮。`
+    ? `目标沦陷：${verificationMode === 'simulated' || compromiseEvents.some((event) => event.data?.simulated === true) ? '规则推定，真实目标未验证' : '已有验证证据'}；沦陷 ${compromisedRounds} 轮，防守拦截 ${interceptedRounds} 轮。`
     : finalVerdict === 'defender_won'
       ? `防守成功：检测到拦截证据且没有已验证沦陷；拦截 ${interceptedRounds} 轮。`
       : finalVerdict === 'undetermined'

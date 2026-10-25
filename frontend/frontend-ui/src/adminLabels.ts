@@ -7,7 +7,7 @@ export const STATUS_LABELS: Record<string, string> = {
 export const DIFFICULTY_LABELS: Record<string, string> = { low: '低', mid: '中', high: '高' }
 
 export const VERDICT_LABELS: Record<string, string> = {
-  attacker_won: '攻击得手（目标已验证）',
+  attacker_won: '攻击方判定',
   defender_won: '防守成功',
   undetermined: '结果未判定',
 }
@@ -25,7 +25,7 @@ export const METRIC_LABELS: Record<string, string> = {
   // 前端计算的比率（不来自接口）
   completionRate: '完成率', failureRate: '失败率',
   // /dashboard/summary 的攻击样本与防守结果
-  defenseSummary: '防守命中（含建议/风险）', simulationSampleCount: '模拟样本',
+  defenseSummary: '防守命中（含建议/风险）', simulationSampleCount: '合成样本',
   // 智能体调用（ACP）
   acpCallBattles: '触发智能体战局', agentExecutionCount: '智能体执行次数', acpRequestCount: '智能体调用次数',
   acpSuccessCount: '智能体调用成功', acpFailureCount: '智能体调用失败', acpRuleFallbackCount: '规则兜底次数',
@@ -88,7 +88,7 @@ export const SEVERITY_LABELS: Record<string, string> = {
 }
 
 export const VERIFICATION_MODE_LABELS: Record<string, string> = {
-  off: '未开启验证', simulated: '模拟验证', live: '真实验证',
+  off: '未开启验证', simulated: '规则推定', live: '真实目标验证',
 }
 
 export function labelOf(value: unknown, labels: Record<string, string>, fallback = '暂无'): string {

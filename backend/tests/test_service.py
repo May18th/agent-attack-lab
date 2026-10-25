@@ -86,7 +86,7 @@ def test_dashboard_is_chinese_html() -> None:
     assert "acp-rule-fallback" in response.text
     assert '"local-rule": "主服务 · 本地规则"' in response.text
     assert '"未识别来源 · " + value' in response.text
-    assert 'escapeHtml(isSimulation ? "本地模拟" : attackerSource)' in response.text
+    assert 'escapeHtml(isSimulation ? "合成安全样本" : attackerSource)' in response.text
     assert "统计来自当前已保存战局" in response.text
     assert 'id="acp-request-count"' in response.text
     assert 'id="acp-outcome"' in response.text
@@ -107,7 +107,7 @@ def test_dashboard_is_chinese_html() -> None:
     assert 'label for="low">低</label>' in response.text
     assert 'defect: "缺陷"' in response.text
     assert "发现问题（Findings）" not in response.text
-    assert "演示环境使用本地模拟用例；真实 Agent 结果会标明来源" in response.text
+    assert "战局会真实写入后端并同步到后台；当前分析对象为合成安全样本，不会向外部目标发起请求" in response.text
     assert "Battle console" not in response.text
     assert "Checking service" not in response.text
     assert "OpenAPI JSON" not in response.text
@@ -252,7 +252,10 @@ def test_dashboard_prefills_query_params_and_escapes_topic() -> None:
         assert '<script>alert("xss")</script>' not in response.text
 
     default_response = client.get("/dashboard")
-    assert 'value="通用安全测试"' in default_response.text
+    assert 'value="安全风险评估"' in default_response.text
+    assert "测试主题" not in default_response.text
+    assert "本地模拟用例" not in default_response.text
+    assert "演示环境使用" not in default_response.text
     assert (
         'id="mid" name="difficulty" value="mid" type="radio" checked'
         in default_response.text

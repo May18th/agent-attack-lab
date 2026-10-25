@@ -50,9 +50,9 @@ export const SECURITY_PATH_THEMES: Array<{ match: RegExp; theme: SecurityPathThe
   { match: /提示注入|工单注入|工单备注注入|越狱诱导|偏见注入/i, theme: { name: '输入诱导类攻击', focusedLayers: [1, 2] } },
   { match: /上下文投毒/i, theme: { name: '上下文投毒', focusedLayers: [1, 2] } },
   { match: /sql\s*注入|数据窃取/i, theme: { name: 'SQL 注入 / 数据窃取', focusedLayers: [1, 3] } },
-  { match: /权限校验|权限提升|越权测试|越权/i, theme: { name: '权限校验 / 越权测试', focusedLayers: [2, 3] } },
+  { match: /权限校验|权限提升|越权/i, theme: { name: '权限校验 / 越权攻防', focusedLayers: [2, 3] } },
   { match: /工具调用滥用|工具滥用/i, theme: { name: '工具调用滥用', focusedLayers: [2, 3] } },
-  { match: /通用安全测试/i, theme: { name: '通用安全测试', focusedLayers: [1, 2, 3, 4] } },
+  { match: /通用安全评估/i, theme: { name: '通用安全评估', focusedLayers: [1, 2, 3, 4] } },
 ]
 
 export function securityPathTheme(topic?: string): SecurityPathTheme {
@@ -73,7 +73,8 @@ export function replayEventCue(event: Pick<AdminBattleEvent, 'eventType' | 'type
     return { kind: 'defense', label: caught ? `防守命中 ${caught} 项` : '防守未命中', color: '#57e8c7' }
   }
   if (/compromis|breach|被攻陷|沦陷|入侵成功/.test(value)) {
-    if (event.data?.targetVerified === true) return { kind: 'compromised', label: '已验证沦陷', color: '#ff435f' }
+    if (event.data?.targetVerified === true && event.data?.simulated !== true) return { kind: 'compromised', label: '已验证沦陷', color: '#ff435f' }
+    if (event.data?.targetVerified === true && event.data?.simulated === true) return { kind: 'exploit', label: '规则推定穿透', color: '#F39C12' }
     return { kind: 'exploit', label: '穿透未验证', color: '#F39C12' }
   }
   if (/fail|失败|error|异常/.test(value)) return { kind: 'other', label: '战局失败', color: '#ff4e64' }
@@ -219,8 +220,10 @@ export function replayEventSummary(event: AdminBattleEvent, events: AdminBattleE
     const risks = countItems(data.risks)
     const fixed = countItems(data.fixed)
     const result = caught ? `命中 ${caught} 条样本规则` : '未命中当前规则'
-    const verification = data.targetVerified === true
+    const verification = data.targetVerified === true && data.simulated !== true
       ? '已记录真实目标验证证据。'
+      : data.targetVerified === true && data.simulated === true
+        ? '规则推定穿透，但真实目标未验证。'
       : '真实目标未验证，不能据此判定沦陷。'
     return `防守方完成第 ${typeof data.round === 'number' ? data.round : '—'} 轮检测：${result}，记录 ${risks} 项风险和 ${fixed} 条验证建议。${verification}`
   }
@@ -240,16 +243,24 @@ export function replayEventSummary(event: AdminBattleEvent, events: AdminBattleE
     const fixed = defenses.reduce((sum, item) => sum + countItems(eventData(item).fixed), 0)
     const verifiedCompromises = events.filter((item) => {
       const itemData = eventData(item)
-      return /compromis|breach|沦陷|攻陷/i.test(eventType(item)) && itemData.targetVerified === true
+      return /compromis|breach|沦陷|攻陷/i.test(eventType(item)) && itemData.targetVerified === true && itemData.simulated !== true
+    }).length
+    const inferredCompromises = events.filter((item) => {
+      const itemData = eventData(item)
+      return /compromis|breach|沦陷|攻陷/i.test(eventType(item)) && itemData.targetVerified === true && itemData.simulated === true
     }).length
     const scope = verifiedCompromises
       ? `记录到 ${verifiedCompromises} 条目标验证沦陷证据。`
+      : inferredCompromises
+        ? `记录到 ${inferredCompromises} 条规则推定穿透，但真实目标未验证；不能据此判定沦陷。`
       : '真实目标未验证，不能据此判定沦陷；这是样本分析流程结果，不代表攻击成功。'
     return `流程成功完成：生成 ${samples.length} 份攻击样本，防守完成 ${defenses.length} 轮检测（命中 ${caught} 条规则、记录 ${risks} 项风险、提出 ${fixed} 条验证建议）。${scope}`
   }
   if (type === 'attack.compromised') {
-    return data.targetVerified === true
+    return data.targetVerified === true && data.simulated !== true
       ? '已记录目标验证沦陷证据。'
+      : data.targetVerified === true && data.simulated === true
+        ? '记录到规则推定穿透，但真实目标未验证。'
       : '该事件未提供真实目标验证证据，不能据此判定目标已沦陷。'
   }
   return undefined

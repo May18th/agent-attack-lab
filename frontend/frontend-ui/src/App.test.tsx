@@ -8,7 +8,7 @@ const battle = {
   topic: '已有战局',
   status: 'completed',
   createdAt: '2026-10-07T00:00:00Z',
-  attackerOut: { agentSource: 'acp-llm', samples: [{ type: 'defect', topic: '已有战局', severity: 'low', content: 'sample' }] },
+  attackerOut: { agentSource: 'acp-llm', samples: [{ type: 'defect', topic: '已有战局', severity: 'low', content: 'sample', simulation: true }] },
   defenderOut: [{ agentSource: 'acp-rule-fallback', caught: [], risks: [], fixed: [] }],
 }
 
@@ -117,6 +117,67 @@ afterEach(() => {
 })
 
 describe('App', () => {
+  it('states that creating a battle persists a battle record and analyzes synthetic samples', async () => {
+    installFetchMock()
+    render(<App />)
+
+    expect(await screen.findByText('战局会真实写入后端并同步到后台；当前分析对象为合成安全样本，不会向外部目标发起请求。')).toBeInTheDocument()
+    expect(screen.queryByText(/实时战局/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/测试/)).not.toBeInTheDocument()
+  })
+
+  it('distinguishes persisted backend battles from synthetic sample evaluation', async () => {
+    installFetchMock()
+    render(<App />)
+
+    expect(await screen.findByText('战局会真实写入后端并同步到后台；当前分析对象为合成安全样本，不会向外部目标发起请求。')).toBeInTheDocument()
+    expect(screen.getByText('合成安全样本 · 未向外部目标发起请求')).toBeInTheDocument()
+    expect(screen.getByText('本场处理的是合成安全样本；没有向真实目标发起请求。')).toBeInTheDocument()
+    expect(screen.queryByText(/持久化的模拟|测试/)).not.toBeInTheDocument()
+  })
+
+  it('lets users refresh the live health check while the service is healthy', async () => {
+    const fetchMock = installFetchMock()
+    render(<App />)
+
+    const status = await screen.findByRole('button', { name: /服务运行正常.*点击刷新检查/ })
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/health'))).toHaveLength(1))
+    fireEvent.click(status)
+
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/health'))).toHaveLength(2))
+  })
+
+  it('links the public header to the administrator backend', async () => {
+    installFetchMock()
+    render(<App />)
+
+    const adminLink = await screen.findByRole('link', { name: '管理员后台' })
+    expect(adminLink).toHaveAttribute('href', '/admin')
+  })
+
+  it('visually prioritizes saved-battle history over secondary statistics and external references', async () => {
+    installFetchMock()
+    render(<App />)
+
+    await screen.findByRole('heading', { name: '开始新战局（New battle）' })
+    const primaryLayout = screen.getByRole('heading', { name: '历史战局（Battle history）' }).closest('.layout')!
+    const stats = screen.getByRole('region', { name: '真实统计口径（Persisted statistics）' })
+    const external = screen.getByRole('group', { name: '外部安全案例库（External case references）' })
+
+    expect(primaryLayout.compareDocumentPosition(stats) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(primaryLayout.compareDocumentPosition(external) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('omits pagination controls when the saved-battle history is empty', async () => {
+    installFetchMock(0)
+    render(<App />)
+
+    expect(await screen.findByText('暂无匹配记录（No matching battles）')).toBeInTheDocument()
+    expect(screen.queryByText('第 1 / 1 页 · 每页 10 场')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
+  })
+
   it('loads independently sourced statistics and validates an empty topic', async () => {
     const fetchMock = installFetchMock()
     render(<App />)
@@ -135,10 +196,10 @@ describe('App', () => {
     expect(screen.getByText('防守来源：独立 Agent（规则兜底）')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /已有战局/ }))
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('battle_id')).toBe('battle-test'))
-    fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^攻防主题/ }), { target: { value: '' } })
     fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('请输入测试主题')
+    expect(await screen.findByRole('alert')).toHaveTextContent('请输入攻防主题')
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/battles'), expect.objectContaining({ method: 'POST' }))
   })
 
@@ -163,7 +224,7 @@ describe('App', () => {
     installFetchMock()
     const view = render(<App />)
 
-    expect(await screen.findByRole('textbox', { name: /^测试主题/ })).toHaveValue('订单查询权限校验')
+    expect(await screen.findByRole('textbox', { name: /^攻防主题/ })).toHaveValue('订单查询权限校验')
     expect(view.container.querySelector<HTMLInputElement>('input[name="difficulty"]:checked')?.parentElement?.textContent).toContain('高（High）')
   })
 
@@ -171,7 +232,7 @@ describe('App', () => {
     installFetchMock()
     const view = render(<App />)
 
-    expect(await screen.findByRole('textbox', { name: /^测试主题/ })).toHaveValue('提示注入与输入校验')
+    expect(await screen.findByRole('textbox', { name: /^攻防主题/ })).toHaveValue('提示注入与输入校验')
     expect(view.container.querySelector<HTMLInputElement>('input[name="difficulty"]:checked')?.parentElement?.textContent).toContain('中（Medium）')
   })
 
@@ -207,7 +268,7 @@ describe('App', () => {
     const fetchMock = installFetchMock()
     render(<App />)
     await screen.findByRole('heading', { name: '已有战局', level: 2 })
-    fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '新战局' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^攻防主题/ }), { target: { value: '新战局' } })
     fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
 
     await waitFor(() => expect(screen.getByText('战局创建完成')).toBeInTheDocument())
@@ -244,7 +305,7 @@ describe('App', () => {
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles?'), expect.anything())
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/auth/session'), expect.anything())
 
-    fireEvent.change(screen.getByRole('textbox', { name: /^测试主题/ }), { target: { value: '公开体验' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^攻防主题/ }), { target: { value: '公开体验' } })
     fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
     expect(await screen.findByText('战局创建完成')).toBeInTheDocument()
   })

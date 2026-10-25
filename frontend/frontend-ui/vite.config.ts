@@ -2,22 +2,32 @@ import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 
 /**
- * 让 `/admin` 命中 `admin/index.html`。
+ * 让管理员入口和兼容别名命中 `admin/index.html`。
  *
  * 根目录的 index.html 是前台原型单页，Vite 的 SPA fallback 会把所有未命中
- * 的路径都交给它，因此 `/admin`（无尾斜杠）会错误地渲染前台页面。这里在
- * 静态中间件之前把 `/admin` 重写成 `/admin/`，目录请求就能落到 admin 入口。
+ * 的路径都交给它，因此无尾斜杠入口会错误地渲染前台页面。这里在静态中间件
+ * 之前把管理员入口重写成 `/admin/`，目录请求就能落到 admin 入口。
  */
 function adminEntryPlugin(): Plugin {
   return {
     name: 'admin-entry',
     configureServer(server) {
       // 直接 use（不 return）才能在 Vite 内部静态/回退中间件之前改写 URL。
+      const rewriteAdminEntry = (req: { url?: string }, _res: unknown, next: () => void) => {
+        const url = req.url ?? ''
+        const match = url.match(/^\/(admin|dashboard)(?:\/[^?]*)?(\?.*)?$/)
+        if (match) {
+          req.url = '/admin/' + (match[2] ?? '')
+        }
+        next()
+      }
+      server.middlewares.use(rewriteAdminEntry)
+    },
+    configurePreviewServer(server) {
       server.middlewares.use((req, _res, next) => {
         const url = req.url ?? ''
-        if (url === '/admin' || url.startsWith('/admin?')) {
-          req.url = '/admin/' + (url.includes('?') ? url.slice(url.indexOf('?')) : '')
-        }
+        const match = url.match(/^\/(admin|dashboard)(?:\/[^?]*)?(\?.*)?$/)
+        if (match) req.url = '/admin/index.html' + (match[2] ?? '')
         next()
       })
     },

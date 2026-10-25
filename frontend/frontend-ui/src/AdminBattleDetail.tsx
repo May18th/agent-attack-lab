@@ -36,6 +36,11 @@ function arbiterOutcome(round: AdminBattleRounds['rounds'][number]): Outcome | n
   return { label: review?.needsHumanReview ? `${base} · 需复核` : base, tone }
 }
 
+function verdictLabel(verdict: string | undefined, verificationMode?: string): string {
+  if (verdict === 'attacker_won' && verificationMode === 'simulated') return '规则命中推定（真实目标未验证）'
+  return labelOf(verdict, VERDICT_LABELS)
+}
+
 function arbiterTitle(round: AdminBattleRounds['rounds'][number]): string {
   const review = round.arbiterReview
   if (!review) return ''
@@ -45,7 +50,7 @@ function arbiterTitle(round: AdminBattleRounds['rounds'][number]): string {
 function roundOutcome(round: AdminBattleRounds['rounds'][number]): Outcome {
   if (round.compromised?.targetVerified) {
     return round.compromised.simulated
-      ? { label: '穿透（模拟验证）', tone: 'orange' }
+      ? { label: '穿透（规则推定，目标未验证）', tone: 'orange' }
       : { label: '已沦陷（已验证）', tone: 'red' }
   }
   if (asArray(round.caught).length > 0) return { label: '已拦截', tone: 'green' }
@@ -68,8 +73,10 @@ function eventSummary(event: AdminBattleEvent): string {
     return [round, `命中 ${asArray(data.caught).length}`, `风险 ${asArray(data.risks).length}`, `修复 ${asArray(data.fixed).length}`].filter(Boolean).join(' · ')
   }
   if (type === 'attack.compromised') {
-    const simulated = data.simulated === true ? '（模拟）' : ''
-    return [round, `目标已验证${simulated}`].filter(Boolean).join(' · ')
+    const outcome = data.simulated === true
+      ? '规则推定穿透，真实目标未验证'
+      : data.targetVerified === true ? '目标已验证' : '目标未验证'
+    return [round, outcome].filter(Boolean).join(' · ')
   }
   if (type.startsWith('agent.call.')) {
     const correlation = typeof data.correlationId === 'string' ? data.correlationId.slice(0, 8) : ''
@@ -78,7 +85,8 @@ function eventSummary(event: AdminBattleEvent): string {
   return ''
 }
 
-function verdictTone(verdict?: string): Tone {
+function verdictTone(verdict?: string, verificationMode?: string): Tone {
+  if (verdict === 'attacker_won' && verificationMode === 'simulated') return 'orange'
   if (verdict === 'attacker_won') return 'red'
   if (verdict === 'defender_won') return 'green'
   return 'gray'
@@ -97,7 +105,11 @@ export function AdminBattleDetail(props: Props) {
   const finalData = eventData(finalEvent)
   const recordedVerdict = finalData.verdict ?? battle.verdict
   const verdict = typeof recordedVerdict === 'string' && recordedVerdict ? recordedVerdict : undefined
-  const verificationMode = typeof finalData.verificationMode === 'string' ? finalData.verificationMode : undefined
+  const compromiseEvent = [...orderedEvents].reverse().find((event) => eventType(event) === 'attack.compromised')
+  const compromiseData = eventData(compromiseEvent)
+  const verificationMode = typeof finalData.verificationMode === 'string'
+    ? finalData.verificationMode
+    : compromiseData.simulated === true ? 'simulated' : typeof compromiseData.verificationMode === 'string' ? compromiseData.verificationMode : undefined
   const compromisedRounds = typeof finalData.compromisedRounds === 'number' ? finalData.compromisedRounds : undefined
   const interceptedRounds = typeof finalData.interceptedRounds === 'number' ? finalData.interceptedRounds : undefined
   const stats = rounds?.stats
@@ -105,7 +117,7 @@ export function AdminBattleDetail(props: Props) {
 
   const verdictNote = (() => {
     if (verdict === 'attacker_won') {
-      const mode = verificationMode === 'simulated' ? '模拟验证，非真实目标验证' : '已有验证证据'
+      const mode = verificationMode === 'simulated' ? '规则推定，真实目标未验证' : '已有验证证据'
       return `沦陷 ${formatNumber(compromisedRounds)} 轮、拦截成功 ${formatNumber(interceptedRounds)} 轮；验证方式：${mode}`
     }
     if (verdict === 'defender_won') return `拦截成功 ${formatNumber(interceptedRounds)} 轮，未发现已验证沦陷`
@@ -126,7 +138,7 @@ export function AdminBattleDetail(props: Props) {
   return <div className="admin-readable" aria-label="战局可读视图">
     <section className="readable-card readable-verdict" aria-label="战局结论">
       <header className="readable-card-head"><h3>战局结论</h3><small>依据事件链与验证证据得出</small></header>
-      <div className={`verdict-line tone-${verdictTone(verdict)}`}><strong>{labelOf(verdict, VERDICT_LABELS, '暂无判定')}</strong><span>{verdictNote}</span></div>
+      <div className={`verdict-line tone-${verdictTone(verdict, verificationMode)}`}><strong>{verdictLabel(verdict, verificationMode)}</strong><span>{verdictNote}</span></div>
       <dl className="readable-stats">
         <div><dt>攻击样本</dt><dd>{formatNumber(stats?.attackGenerated)}</dd></div>
         <div><dt>防守命中</dt><dd>{formatNumber(stats?.defenderDetected)}</dd></div>
