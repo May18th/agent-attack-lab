@@ -43,6 +43,10 @@ uv sync
 .\verify.ps1
 ```
 
+`backend/agent-identities.json` 是平台在线可见性的必需文件：它把 leader / attacker / defender
+三个角色映射到已注册智能体的 AIC，AMP 心跳按角色取 AIC 上报。**该文件缺失时服务仍能正常启动，
+但梧桐平台上的三只智能体恒为 `unknown`，按名称和 AIC 都搜不到**（日志只有一条 warning）。
+
 中文后台页面：`http://127.0.0.1:8787/dashboard`
 
 接口文档：`http://127.0.0.1:8787/docs`
