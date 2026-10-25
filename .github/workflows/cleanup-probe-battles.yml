@@ -1,0 +1,145 @@
+name: 清理探针战局
+
+# 用途：删除生产环境里遗留的验收/探针战局（当前为 A-008 / A-009）。
+#
+# 为什么走 workflow 而不是直接调 API：
+#   battle 是我们自己后端的资源，删除需要 AGENT_API_KEY 或看板会话。
+#   key 只存在于 VPS 的 /opt/agent-attack-lab/backend/.env，本机与仓库都没有。
+#
+# 安全约束：
+#   - 只删「编号完全等于目标值」的战局，按编号精确核对，不做模糊匹配后批量删。
+#   - 删前完整打印将被删除对象的 id / 编号 / 主题 / 状态 / 创建时间。
+#   - 只允许删除 completed / failed，运行中的直接中止（后端也会 409）。
+#   - key 只在进程环境里传递，不进命令行参数、不打印、不落盘。
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "输入 delete 确认执行删除"
+        required: true
+        default: ""
+      codes:
+        description: "要删除的战局编号，逗号分隔"
+        required: true
+        default: "A-008,A-009"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cleanup-probe-battles
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: 删除探针战局
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    steps:
+      - name: 前置检查
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.confirm }}" == "delete" ]] || { echo "需要 confirm=delete" >&2; exit 1; }
+          [[ "$(id -un)" == deployer ]] || { echo 'Runner must run as deployer' >&2; exit 1; }
+          sudo -n true
+          command -v python3 >/dev/null
+
+      - name: 查找并删除
+        shell: bash
+        env:
+          CODES: ${{ inputs.codes }}
+        run: |
+          set -euo pipefail
+          env_file=/opt/agent-attack-lab/backend/.env
+          [ -f "$env_file" ] || { echo "找不到 $env_file" >&2; exit 1; }
+
+          key=$(sudo -n grep -E '^AGENT_API_KEY=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r\n')
+          [[ -n "$key" ]] || { echo "AGENT_API_KEY 为空，无法删除" >&2; exit 1; }
+          echo "已读取 AGENT_API_KEY（长度 ${#key}），不打印内容"
+
+          # 只通过环境变量传递，不进 argv
+          export AGENT_API_KEY="$key"
+          unset key
+
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8787"
+          KEY = os.environ["AGENT_API_KEY"]
+          CODES = [c.strip() for c in os.environ["CODES"].split(",") if c.strip()]
+
+          def call(method: str, path: str, params: dict | None = None) -> tuple[int, object]:
+              url = BASE + path
+              if params:
+                  url += "?" + urllib.parse.urlencode(params)
+              req = urllib.request.Request(url, method=method)
+              req.add_header("X-API-Key", KEY)
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      body = resp.read()
+                      return resp.status, (json.loads(body) if body else None)
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.read()[:300].decode("utf-8", "replace")
+
+          def find(code: str) -> list[dict]:
+              status, data = call("GET", "/battles", {"q": code, "limit": 50})
+              if status != 200:
+                  print(f"查询 {code} 失败：{status} {data}", file=sys.stderr)
+                  sys.exit(1)
+              if not isinstance(data, list):
+                  print(f"查询 {code} 返回非列表，中止：{type(data)}", file=sys.stderr)
+                  sys.exit(1)
+              # 编号必须完全相等，避免 "A-008" 命中 "A-0080"
+              return [b for b in data if str(b.get("code")) == code]
+
+          failures = 0
+          for code in CODES:
+              hits = find(code)
+              if not hits:
+                  print(f"[跳过] {code}：生产环境不存在该编号的战局")
+                  continue
+
+              print(f"[找到] {code}：{len(hits)} 条")
+              for b in hits:
+                  print(
+                      f"    id={b.get('id')} 状态={b.get('status')} "
+                      f"难度={b.get('difficulty')} 创建={b.get('createdAt') or b.get('created_at')} "
+                      f"主题={b.get('topic')}"
+                  )
+
+              for b in hits:
+                  if b.get("status") not in {"completed", "failed"}:
+                      print(f"[中止] {code} 状态为 {b.get('status')}，不删除", file=sys.stderr)
+                      failures += 1
+                      continue
+                  status, data = call("DELETE", f"/battles/{b['id']}")
+                  if status == 204:
+                      print(f"[已删除] {code} id={b['id']}")
+                  else:
+                      print(f"[失败] {code} id={b['id']} -> {status} {data}", file=sys.stderr)
+                      failures += 1
+
+          print()
+          print("== 复验（应全部为空） ==")
+          for code in CODES:
+              left = find(code)
+              print(f"  {code}: 剩余 {len(left)} 条")
+              if left:
+                  failures += 1
+
+          sys.exit(1 if failures else 0)
+          PY
+
+      - name: 结果摘要
+        if: always()
+        shell: bash
+        run: |
+          echo "任务结果：${{ job.status }}"
+          echo "若失败，可登录生产看板按编号手工删除（/battles/{id} DELETE）"
