@@ -1,0 +1,171 @@
+name: 轮换内部 API Key
+
+# 用途：轮换生产 .env 里的 AGENT_API_KEY，并同步重写 leader-mtls 的鉴权卸载配置。
+#
+# 为什么需要这个：2026-10-26 01:46–01:53，临时取证工作流把 `nginx -T` 的输出直接打进
+# Actions 日志，其中包含本文件的 key 值，而仓库当时是 public。含 key 的两轮 run 已删除、
+# 临时工作流也已移除，但密码学意义上的"已暴露"不会因此撤销——知道它的人仍可用它调
+# /metrics、/reports、/rpc（经 api 域名绕过 mTLS）。所以按泄露处理，直接换掉。
+#
+# 安全性：
+# - 新 key 由 VPS 本机 `openssl rand -hex 32` 生成，**不经过** GitHub、不落 Git；
+# - 传入后续步骤走文件（RUNNER_TEMP，600），不进 argv、不打印；
+# - 任一步验收失败自动回滚 .env 与 nginx 配置并重启，避免"改了 key 但 nginx 还是旧的"。
+#
+# 影响面：平台侧调用不受影响（平台走 mTLS，key 由 nginx 在本机注入）；
+# 只有我们自己拿 key 直连 api 域名的脚本会失效，它们都从 .env 读 key，无需改代码。
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 输入 rotate 才会执行
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rotate-api-key
+  cancel-in-progress: false
+
+env:
+  ENV_FILE: /opt/agent-attack-lab/backend/.env
+  AUTH_CONF: /etc/nginx/leader-mtls-auth.conf
+  PUBLIC_BASE: https://api.yuanyiagentzhandui.cn
+  LEADER_MTLS: leader-mtls.yuanyiagentzhandui.cn
+
+jobs:
+  rotate:
+    if: github.event.inputs.confirm == 'rotate'
+    name: 生成、写入、重启、验收、必要时回滚
+    runs-on: [self-hosted, production]
+    timeout-minutes: 15
+    steps:
+      - name: 轮换
+        shell: bash
+        run: |
+          set +e -uo pipefail
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          env_backup="${ENV_FILE}.bak-${stamp}"
+          auth_backup="/etc/nginx/leader-mtls-auth.conf.bak-${stamp}"
+          key_file="$RUNNER_TEMP/newkey"
+          fails=0
+
+          ok()  { printf '  [ OK ] %s\n' "$1"; }
+          bad() { printf '  [CRIT] %s\n' "$1"; fails=$((fails + 1)); }
+
+          rollback() {
+            printf '\n== 回滚 ==\n'
+            sudo -n cp -f "$env_backup" "$ENV_FILE" && echo "  已恢复 .env"
+            if sudo -n test -f "$auth_backup"; then
+              sudo -n cp -f "$auth_backup" "$AUTH_CONF" && echo "  已恢复 nginx 鉴权配置"
+            fi
+            sudo -n systemctl reload nginx || true
+            for svc in api attacker defender; do
+              systemctl --user restart "agent-attack-lab-${svc}.service" || true
+            done
+            rm -f "$key_file"
+            echo "  已重启三服务；退出码非 0，请人工确认 /health"
+          }
+
+          echo "== 1. 备份 =="
+          if [[ ! -r "$ENV_FILE" ]]; then
+            echo "  读不到 $ENV_FILE，中止"; exit 1
+          fi
+          cp -p "$ENV_FILE" "$env_backup" && echo "  已备份 .env -> $env_backup"
+          if sudo -n test -f "$AUTH_CONF"; then
+            sudo -n cp -p "$AUTH_CONF" "$auth_backup" && echo "  已备份鉴权配置 -> $auth_backup"
+          else
+            echo "  未发现 $AUTH_CONF（将新建）"
+          fi
+
+          echo
+          echo "== 2. 生成新 key（本机生成，不传输） =="
+          openssl rand -hex 32 > "$key_file"
+          chmod 600 "$key_file"
+          new_len=$(wc -c < "$key_file")
+          echo "  已生成，长度 $new_len（不打印内容）"
+
+          echo
+          echo "== 3. 写入 .env =="
+          python3 - "$ENV_FILE" "$key_file" <<'PY'
+          import sys
+
+          env_path, key_path = sys.argv[1], sys.argv[2]
+          new_key = open(key_path, encoding="utf-8").read().strip()
+          lines = open(env_path, encoding="utf-8").read().split("\n")
+          out, replaced = [], False
+          for line in lines:
+              if line.startswith("AGENT_API_KEY="):
+                  out.append("AGENT_API_KEY=" + new_key)
+                  replaced = True
+              else:
+                  out.append(line)
+          if not replaced:
+              out.append("AGENT_API_KEY=" + new_key)
+          open(env_path, "w", encoding="utf-8", newline="\n").write("\n".join(out))
+          print("  replaced" if replaced else "  appended")
+          PY
+          if [[ $? -ne 0 ]]; then bad "写 .env 失败"; rollback; exit 1; fi
+          grep -c '^AGENT_API_KEY=' "$ENV_FILE" | sed 's/^/  AGENT_API_KEY 行数：/'
+
+          echo
+          echo "== 4. 重写 nginx 鉴权卸载配置 =="
+          if ! { printf 'proxy_set_header X-API-Key "%s";\n' "$(cat "$key_file")" \
+                 | sudo -n tee "$AUTH_CONF" > /dev/null; }; then
+            bad "写 $AUTH_CONF 失败"; rollback; exit 1
+          fi
+          sudo -n chmod 600 "$AUTH_CONF"
+          sudo -n nginx -t > /tmp/ngx-rotate.log 2>&1 || {
+            tail -3 /tmp/ngx-rotate.log | sed 's/^/  /'
+            bad "nginx -t 失败"; rollback; exit 1
+          }
+          ok "nginx -t 通过"
+          sudo -n systemctl reload nginx
+          ok "nginx 已 reload"
+
+          echo
+          echo "== 5. 重启三个服务（新 key 需重启才生效） =="
+          for svc in api attacker defender; do
+            systemctl --user restart "agent-attack-lab-${svc}.service" || bad "重启 $svc 失败"
+          done
+          for i in $(seq 1 30); do
+            sleep 2
+            up=0
+            for port in 8787 8788 8789; do
+              [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:${port}/health")" == "200" ]] && up=$((up + 1))
+            done
+            [[ "$up" -eq 3 ]] && break
+          done
+          [[ "$up" -eq 3 ]] && ok "三个端口 /health 均 200" || bad "只有 $up/3 个端口起来"
+
+          echo
+          echo "== 6. 验收：新 key 生效、旧口径被拒、mTLS 仍强制 =="
+          printf 'header = "X-API-Key: %s"\n' "$(cat "$key_file")" > "$RUNNER_TEMP/curlrc"
+          chmod 600 "$RUNNER_TEMP/curlrc"
+
+          no_key=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "${PUBLIC_BASE}/metrics")
+          with_key=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 --config "$RUNNER_TEMP/curlrc" "${PUBLIC_BASE}/metrics")
+          rpc_no_cert=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST \
+            "https://${LEADER_MTLS}/rpc" -H 'Content-Type: application/json' -d '{}' -k)
+
+          [[ "$no_key" == "401" ]] && ok "api /metrics 无 key -> 401" || bad "api /metrics 无 key -> $no_key（期望 401）"
+          [[ "$with_key" == "200" ]] && ok "api /metrics 带新 key -> 200" || bad "api /metrics 带新 key -> $with_key（期望 200）"
+          [[ "$rpc_no_cert" == "403" ]] && ok "leader-mtls /rpc 无证书 -> 403" || bad "leader-mtls /rpc 无证书 -> $rpc_no_cert（期望 403）"
+
+          rm -f "$key_file" "$RUNNER_TEMP/curlrc"
+
+          echo
+          echo "== 结论 =="
+          if [[ "$fails" -eq 0 ]]; then
+            echo "  轮换完成：CRIT 0 项。旧 key 已失效，nginx 与三服务均使用新 key。"
+            echo "  旧 .env 备份保留在 $env_backup（确认稳定后可删）。"
+            exit 0
+          fi
+          echo "  轮换未通过：CRIT $fails 项，已回滚。"
+          rollback
+          exit 1

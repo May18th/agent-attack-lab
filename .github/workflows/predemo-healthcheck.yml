@@ -41,6 +41,12 @@ jobs:
       BATTLE: ${{ inputs.battle }}
       STRICT: ${{ inputs.strict_sources }}
     steps:
+      - name: 取出仓库里的身份文件
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: backend/agent-identities.json
+          sparse-checkout-cone-mode: false
+
       - name: 汇总检查
         run: |
           set +e -uo pipefail
@@ -238,8 +244,63 @@ jobs:
             fi
           fi
 
-          # ---------- 8. 磁盘 ----------
-          head2 "8. 磁盘"
+          # ---------- 8. 身份一致性 ----------
+          # AIC 每次重新注册都会变。仓库 agent-identities.json 是唯一可信源，
+          # 但生产 .env 里的 AGENT_LOCAL_AIC / AGENT_AIP_LEADER_ID /
+          # AGENT_AIP_EXPECTED_PARTNER_AIC 是手写的，重新注册后不会自动跟着变。
+          # 我自己的 adopter 脚本只管仓库文件，管不到 VPS 的 .env——所以每次换 AIC
+          # 这里都可能悄悄漂移：平台能探活、能调，但对端身份校验会用旧 AIC 拒绝。
+          head2 "8. 身份一致性（AIC 漂移会让 AIP 对端校验失败）"
+          ids="$GITHUB_WORKSPACE/backend/agent-identities.json"
+          if [[ ! -r "$ids" ]]; then
+            warn "读不到身份文件 $ids，跳过一致性核对"
+          else
+            read_aic() { python3 -c 'import json,sys;print((json.load(open(sys.argv[1],encoding="utf-8"))[sys.argv[2]].get("aic") or "").strip())' "$ids" "$1" 2>/dev/null || true; }
+            L=$(read_aic leader)
+            A=$(read_aic attack)
+            D=$(read_aic defender)
+            info "仓库值：leader=${L##*.} attack=${A##*.} defender=${D##*.}"
+
+            env_of() {
+              local port=$1 key=$2 pid
+              pid=$(ss -lntp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | head -1)
+              [[ -n "$pid" ]] || return 0
+              tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -m1 "^${key}=" | cut -d= -f2-
+            }
+
+            check_aic() {
+              local label=$1 want=$2 got=$3
+              if [[ -z "$got" ]]; then
+                warn "$label 未设置（值应为 ${want##*.}；未设置表示关闭对端身份校验）"
+              elif [[ "$got" == "$want" ]]; then
+                ok "$label=${got##*.}"
+              else
+                bad "$label=${got##*.}，但应为 ${want##*.}（身份漂移）"
+              fi
+            }
+
+            check_service() {
+              local port=$1 role=$2 want_local=$3 want_leader=$4 got_local got_leader got_peer
+              got_local=$(env_of "$port" AGENT_LOCAL_AIC)
+              got_leader=$(env_of "$port" AGENT_AIP_LEADER_ID)
+              got_peer=$(env_of "$port" AGENT_AIP_EXPECTED_PARTNER_AIC)
+              check_aic ":$port $role AGENT_LOCAL_AIC" "$want_local" "$got_local"
+              check_aic ":$port $role AGENT_AIP_LEADER_ID" "$want_leader" "$got_leader"
+              [[ -n "$got_peer" ]] && check_aic ":$port $role AGENT_AIP_EXPECTED_PARTNER_AIC" "$want_local" "$got_peer"
+              return 0
+            }
+
+            if [[ -z "$L" || -z "$A" || -z "$D" ]]; then
+              warn "身份文件里 leader/attack/defender 有空的 aic，跳过一致性核对"
+            else
+              check_service 8787 主调度 "$L" "$L"
+              check_service 8788 攻击 "$A" "$L"
+              check_service 8789 防守 "$D" "$L"
+            fi
+          fi
+
+          # ---------- 9. 磁盘 ----------
+          head2 "9. 磁盘"
           used=$(df -h /opt 2>/dev/null | awk 'NR==2 {print $5" 已用，剩余 "$4}')
           avail=$(df --output=avail -BG /opt 2>/dev/null | awk 'NR==2 {gsub("G",""); print $1}')
           if [[ "${avail:-0}" -ge 5 ]]; then
