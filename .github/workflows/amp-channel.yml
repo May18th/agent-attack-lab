@@ -1,0 +1,98 @@
+name: 排查 AMP 心跳通道
+
+# 平台方指引：先测网络是否畅通，再重启 Fluent Bit 试试。
+# 本工作流只做只读检查 + 重启 fluent-bit（若存在）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      restart:
+        description: "填 yes 才重启 fluent-bit（默认只检查）"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    steps:
+      - name: Fluent Bit 现状
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "===== 1. fluent-bit 是否安装 ====="
+          command -v fluent-bit || echo "  未安装 fluent-bit（/usr/bin 下没有）"
+
+          echo
+          echo "===== 2. system 级服务 ====="
+          systemctl is-active fluent-bit 2>/dev/null || echo "  system 单元不存在/未运行"
+          systemctl is-enabled fluent-bit 2>/dev/null || true
+
+          echo
+          echo "===== 3. 进程 ====="
+          ps -ef | grep -i "[f]luent" | head -10 || echo "  无 fluent 进程"
+
+          echo
+          echo "===== 4. 配置文件位置 ====="
+          ls -l /etc/fluent-bit/ 2>/dev/null | head -10 || echo "  /etc/fluent-bit 不存在"
+          ls -l /opt/fluent-bit 2>/dev/null | head -5 || true
+
+          echo
+          echo "===== 5. 与 AMP 相关的本地心跳文件 ====="
+          for f in /opt/agent-attack-lab/backend/.data/amp/amp_heartbeat_leader.jsonl \
+                   /opt/agent-attack-lab/backend/.data/amp/amp_heartbeat_attacker.jsonl \
+                   /opt/agent-attack-lab/backend/.data/amp/amp_heartbeat_defender.jsonl; do
+            [ -r "$f" ] && echo "  $f  lines=$(wc -l < "$f")  last=$(tail -1 "$f" | cut -c1-120)"
+          done
+
+      - name: 网络连通性
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "===== 1. Kafka broker wt.ioa.pub:19092 ====="
+          timeout 8 bash -c 'cat < /dev/null > /dev/tcp/wt.ioa.pub/19092' 2>&1 \
+            && echo "  TCP OK" || echo "  TCP FAIL"
+          getent hosts wt.ioa.pub || echo "  DNS 解析失败"
+
+          echo
+          echo "===== 2. 平台注册/CA/发现 ====="
+          for u in https://wt.ioa.pub https://wt.ioa.pub/registry-server https://wt.ioa.pub/ca-server; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$u" || echo ERR)
+            echo "  $u -> $code"
+          done
+
+          echo
+          echo "===== 3. 本机三个 mTLS 入口回环 ====="
+          for p in 8787 8788 8789; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 6 "http://127.0.0.1:$p/health" || echo ERR)
+            echo "  127.0.0.1:$p/health -> $code"
+          done
+
+      - name: Kafka 投递日志
+        shell: bash
+        run: |
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          for svc in agent-attack-lab-api agent-attack-lab-attacker agent-attack-lab-defender; do
+            echo "===== $svc ====="
+            journalctl --user -u "$svc" --since "-40min" --no-pager 2>/dev/null \
+              | grep -iE "kafka|amp|心跳|broker|error" | tail -8 || echo "  (无)"
+            echo
+          done
+
+      - name: 重启 fluent-bit（仅在需要时）
+        if: ${{ inputs.restart == 'yes' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if command -v fluent-bit >/dev/null 2>&1; then
+            echo "重启 system 级 fluent-bit"
+            sudo -n systemctl restart fluent-bit 2>&1 || echo "重启失败"
+            sleep 3
+            systemctl is-active fluent-bit 2>/dev/null || echo "未运行"
+          else
+            echo "本机没有 fluent-bit，无需重启（我们走 kafka-python 直投平台 Kafka）"
+          fi
