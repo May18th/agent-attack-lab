@@ -15,11 +15,15 @@
 
 | 角色 | 端口 | 平台身份 | 端点 |
 |---|---|---|---|
-| Leader 主调度 | 8787 | AIC 尾号 `0U7Q` | `https://api.yuanyiagentzhandui.cn/rpc` |
+| Leader 主调度 | 8787 | AIC 尾号 `1A7Q`（ACPs 1.2.1） | `https://leader-mtls.yuanyiagentzhandui.cn/rpc` |
 | 攻击智能体 | 8788 | AIC 尾号 `0MVE` | `https://attack.yuanyiagentzhandui.cn/rpc` |
 | 防守智能体 | 8789 | AIC 尾号 `0GFQ` | `https://defense.yuanyiagentzhandui.cn/rpc` |
 
-> AIC 口径（2026-10-25 23:58 复核）：以上为 ACPs **1.2.0 重新注册后**当前生效的 AIC，与平台 Discovery 返回值、`backend/agent-identities.json`、心跳上报值三者一致。此前材料中出现的 `09CQ` / `08RN` / `09SG`（以及更早的 `S5AJC0` / `QY650M`）均为历史轮次注册值，**已失效，不要写进材料**。
+> AIC 口径（2026-10-26 01:05 复核，**已实测三方一致**）：以上为当前生效值，与平台 Discovery 返回值、`backend/agent-identities.json`、心跳上报值三者一致。
+>
+> **主调度在 2026-10-26 01:03 从 1.2.0 的 `0U7Q` 切到 1.2.1 的 `1A7Q`**，原因是 1.2.0 的 endpoint 是 `api.yuanyiagentzhandui.cn/rpc`，而该路径强制校验后端 `AGENT_API_KEY`——平台 AIP 调用不携带我们的私有 key，会被 401 挡住（旧身份「在线但调不通」）。1.2.1 走独立 mTLS 入口 `leader-mtls`，无客户端证书 403、有客户端证书 200，且由 nginx 在 mTLS 通过后注入内部 key，做到「在线且调用层可用，同时服务端身份可校验」。切换后 `0U7Q` 已于 17:04 前后掉线（Discovery 缺省 `alive=online` 查询返回空）。
+>
+> 此前材料中出现的 `09CQ` / `08RN` / `09SG`（以及更早的 `S5AJC0` / `QY650M`）均为历史轮次注册值，**已失效，不要写进材料**。
 
 数据流：
 
@@ -95,6 +99,7 @@ curl.exe -s --noproxy "*" -X POST https://wt.ioa.pub/discovery/acps-adp-v2/disco
 | **13:12:36** | **全部停止** | **3 条** |
 | 13:13:41（复查） | 全部停止 | 3 条，AIC 尾号 `09CQ` / `08RN` / `09SG` |
 | 15:57:43（后台服务自然结束 2h33m 后） | 零进程、三端口全 DOWN | **3 条**，AIC 尾号 `0U7Q` / `0MVE` / `0GFQ` |
+| 17:05:03（主调度已切 1.2.1） | 零进程、三端口全 DOWN | **3 条**，AIC 尾号 `1A7Q` / `0MVE` / `0GFQ` |
 
 结论可以这样讲：**关掉本机全部服务，平台仍显示三只在线**，心跳由 VPS 常驻服务独立上报。
 

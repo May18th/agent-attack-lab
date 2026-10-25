@@ -123,26 +123,65 @@ runner 内部探测：
 
 结论：**mTLS 入口已可用**。`401 而非 403` 是这个结论的关键证据——它说明 TLS 层的双向认证通过了，剩下的只是业务层 API 密钥，与 mTLS 无关。
 
-## 四、剩余最后一步：切换身份（未执行）
+## 四、切换身份（已执行 2026-10-26 01:03）
 
-### 为什么停在这里
+### 为什么必须切换，而不是"可切可不切"
 
-mTLS 入口通了，但**心跳还没切**，所以平台上 1.2.1 仍是离线、发现页仍只有 1.2.0 的三只。切换是原子的，且会让报名表里的 `0U7Q` 失效。
+一开始的判断是"1.2.0 三只在线可调用，1.2.1 只是可选亮点"。**这个判断是错的**，因为漏看了一层：
 
-### 切换清单
+- 主调度 `/rpc` 强制 `api_key_dependency`（`routers/rpc.py` 三个入口都挂了 `Depends(security.api_key_dependency)`）。
+- 生产 `AGENT_API_KEY` 已设置（64 位），而 **平台 AIP 调用不会携带我们的私有 key**。
+- 8788 / 8789 不带 key 返回 200，是因为它们的进程没有拿到 `AGENT_API_KEY`；只有 8787 会 401。
+- 所以 1.2.0 的 endpoint `https://api.yuanyiagentzhandui.cn/rpc` 在**调用层是死的**：平台上在线，但被调就 401。
 
+清空 `AGENT_API_KEY` 也不行：`check_api_key()` 在 key 为空且 `browser_password` 或 Cloudflare Access 已配置时同样返回 401（`security.py:36`）。也就是说这个 key **不能去掉**，只能由可信中介补上。
 
-前置：上面验收全部通过。
+1.2.1 的 mTLS 入口正好是这个可信中介：mTLS 已经完成强身份认证（Agent CA 签发、证书 SAN 绑定 AIC），nginx 在 `$ssl_client_verify == SUCCESS` 之后注入 `X-API-Key`，等价于"通过 mTLS 即通过业务鉴权"。于是身份从"在线但调不通"变成"在线、可调、且服务端身份可校验"。
 
-1. `backend/agent-identities.json` 的 `leader.aic` 改为 `...1A7Q`
-2. `backend/tests/test_amp_heartbeat.py` 的 `LEADER_AIC` 常量同步（不同步 CI 立刻红）
-3. 生产 `.env` 的 Leader client 证书换成 1.2.1 的，AIC 同步
-4. 比赛报名表的 Leader AIC（`0U7Q` 将失效，约 2–3 分钟后掉线）
-5. `docs/TECH_EVIDENCE_PACK.md`、答辩材料、`scripts/verify_amp_alive.py` 的比对值
+### 鉴权卸载的落点
 
-`start-service.sh` 的角色注入按模块走，不写死 AIC，**不需要改**。
+`.github/workflows/enable-leader-mtls-auth.yml`（`workflow_dispatch`，需 `confirm=auth`）：
 
-**这一步开始后 `0U7Q` 会真的掉线**，中间约 2–3 分钟两条都不在线。不要放在演示前 30 分钟内做。
+1. 从 `/opt/agent-attack-lab/backend/.env` 读 `AGENT_API_KEY`，**只校验字符集、不打印**；
+2. 写成 `/etc/nginx/leader-mtls-auth.conf`（`root:root 600`，内容仅一行 `proxy_set_header X-API-Key "..."`），不进 Git、不落 runner 工作目录；
+3. 在 `agent-attack-lab-mtls.conf` 的 leader-mtls `location /rpc` 内、`if ($ssl_client_verify != SUCCESS) return 403;` **之后**、`proxy_pass` 之前插入 `include`；
+4. `nginx -t` 失败或出现 `conflicting server name` 一律回滚；通过则 reload；
+5. 验收：无证书 `/rpc` 应 403，带证书 `/rpc` 不应再是 401。
+
+**`api` 域名整条链路未改动**——它继续走 Cloudflare Tunnel 服务浏览器前端，也不在公网上开放 `/rpc`（否则等于把带 LLM 成本的接口裸奔）。
+
+> 首次提交该工作流时踩了一个 YAML 坑：`run: |` 块标量里嵌 `python3 - "$tmp" <<'PY'`，Python 代码从第 0 列开始写，直接终止了块标量，`yaml.safe_load` 报 `could not find expected ':'`。修法是把 heredoc 内容整体与 `run` 块同缩进（YAML 会剥掉公共缩进，渲染出来仍是第 0 列）。
+
+### 已完成的切换动作
+
+1. `backend/agent-identities.json`：`leader.aic` → `...KOPA19.GA39CB.1A7Q`，`endpoint` → `https://leader-mtls.yuanyiagentzhandui.cn/rpc`，`registrationId` → `01a173d3-f433-7240-9f3b-17cf13a7f486`
+2. `backend/tests/test_amp_heartbeat.py`：`LEADER_AIC` 同步（守护测试 `test_shipped_identity_file_has_three_roles` 会拦住漂移）
+3. `docs/TECH_EVIDENCE_PACK.md`、`docs/DEMO_SCRIPT.md`、`docs/CLEAN_DEPLOY_VERIFICATION.md`：AIC 与 endpoint 口径同步
+4. 走 `deploy-backend.yml` 部署并重启，心跳按新身份上报
+
+`start-service.sh` 的角色注入按模块走、不写死 AIC，**未改动**；生产 `.env` 里也没有 `AGENT_AMP_AIC`（若有，会把三只都报成同一个 AIC，反证它不存在）。
+
+### 切换后的实测结果
+
+| 项 | 结果 |
+|---|---|
+| Discovery 缺省查询（`alive=online`） | 3 条：`1A7Q` / `0MVE` / `0GFQ`，`lastSeen=2026-10-25T17:05:03Z` |
+| 旧身份 `0U7Q` 精确查 | 返回空（约 2 分钟 TTL 后掉线） |
+| 服务端证书 | `subject=CN=...1A7Q`，SAN `URI:acps://...1A7Q, DNS:leader-mtls.yuanyiagentzhandui.cn` |
+| 无证书 `GET /health` | 200 |
+| 无证书 `POST /rpc` | 403（nginx） |
+| 带主调度自己客户端证书 `POST /rpc` | **200**，返回 `-32601 Method not found`（已进应用层，非 401） |
+
+复现命令（在 `backend` 目录）：`.venv\Scripts\python.exe scripts\probe_leader_mtls.py`
+
+### 还差一件事（需要平台侧操作）
+
+1.2.0 的旧记录仍留在平台 Registry 里（已离线，不参与发现页查询，属于"灰掉的历史条目"）。删除方式二选一：
+- 平台控制台里找到该主调度旧版本条目删除；
+- 或 `DELETE /api/v1/agent/client/{id}`，**需要管理员会话**，SDK 与脚本都不持这类凭据。
+
+**在报名表里的 `0U7Q` 需要改成 `1A7Q`**，否则按旧 AIC 查在线会查不到。
+
 
 ## 五、终止条件（比完成更重要）
 

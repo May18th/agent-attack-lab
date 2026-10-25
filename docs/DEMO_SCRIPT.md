@@ -52,8 +52,9 @@ curl.exe -s --noproxy "*" -X POST https://wt.ioa.pub/discovery/acps-adp-v2/disco
 
 判定：返回里的 `acsMap` **恰好 3 个键**。多于 3 说明旧 AIC 还没过期，**等 3 分钟再查**（实测摘除延迟 2–3 分钟）。
 
-当前应出现的三个 AIC 尾号：主调度 `0U7Q`、攻击 `0MVE`、防守 `0GFQ`。
-若出现 `09CQ` / `08RN` / `09SG` / `S5AJC0` / `QY650M`，说明是历史轮次残留，等过期即可。
+当前应出现的三个 AIC 尾号：主调度 `1A7Q`、攻击 `0MVE`、防守 `0GFQ`。
+（主调度 2026-10-26 01:03 已从 1.2.0 的 `0U7Q` 切到 1.2.1 的 `1A7Q`。）
+若出现 `0U7Q` / `09CQ` / `08RN` / `09SG` / `S5AJC0` / `QY650M`，说明是历史轮次残留，等过期即可。
 
 ### 3.2 确认本机没在跑
 
@@ -79,8 +80,8 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
 |---|---|---|---|
 | 0:00–0:20 | 架构图（见 `docs/ARCHITECTURE.svg`） | 全屏展示 | 三个智能体：1 个 Leader 编排 + 攻击、防守各 1 个 Partner，经 AIP 互联，跑在梧桐平台上 |
 | 0:20–0:55 | 平台首页 → 名称搜索"智能体攻防实验室" | 输入名称，回车 | 三只都在线；说明存活来自 AMP 心跳，由云端常驻服务上报，**不是这台笔记本** |
-| 0:55–1:15 | 切"最新智能体"列表 | 点最新列表 | 三只都排在最近上榜里（1.2.0 重新注册后已进榜） |
-| 1:15–1:35 | `https://api.yuanyiagentzhandui.cn/docs` | 展开 `/rpc` 与 `/battles` | AIP JSON-RPC 2.0 接口，mTLS 双向认证；接口全公开可查 |
+| 0:55–1:15 | 切"最新智能体"列表 | 点最新列表 | 三只都排在最近上榜里（1.2.1 主调度已进榜） |
+| 1:15–1:35 | `https://leader-mtls.yuanyiagentzhandui.cn/rpc` 双态探测 | 见 §5.0 | 无客户端证书 **403**、带客户端证书 **200**：AIP 走 mTLS，服务端证书 SAN 绑到 AIC，身份双向可校验；`api` 域名只服务浏览器前端，不暴露 RPC |
 | 1:35–2:20 | 创建战局 → 战局详情 | 见 §5.1、§5.2 | 提出测试主题，Leader 先调攻击智能体生成合成样本，再逐条调防守智能体检测 |
 | 2:20–2:50 | 详情 JSON 的 `agentSource` 字段 | 高亮四个字段 | 四次模型调用分别落在攻击、防守、仲裁、战报，字段名与取值都在屏幕上 |
 | 2:50–3:15 | 战报页（`/dashboard` 内） | 打开战报 | 结论 + 风险等级 + 修复建议，摘要由模型生成 |
@@ -92,6 +93,35 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
 ---
 
 ## 五、关键步骤的精确操作与预期输出
+
+### 5.0 主调度 mTLS 入口双态探测（1:15–1:35 那一镜）
+
+在 `backend` 目录执行（`curl` 在 Windows 走 schannel，对私有 Agent CA 链握手会返回 000，所以用脚本）：
+
+```powershell
+.venv\Scripts\python.exe scripts\probe_leader_mtls.py
+```
+
+预期输出（四行 PASS，实测 2026-10-26 01:07）：
+
+```
+服务端证书：
+   {"version": "TLSv1.3", "der_len": 1305,
+    "fields": ["subject=CN=1.2.156.3088.1.BUPT.RX2TMW.KOPA19.GA39CB.1A7Q, O=智能体攻防实验室项目组, C=CN",
+               "URI:acps://1.2.156.3088.1.BUPT.RX2TMW.KOPA19.GA39CB.1A7Q, DNS:leader-mtls.yuanyiagentzhandui.cn"]}
+PASS  无证书 GET /health      期望 200  实际 200
+PASS  无证书 POST /rpc        期望 403  实际 403
+PASS  带证书 POST /rpc        期望 200  实际 200
+PASS  带证书 GET /health      期望 200  实际 200
+```
+
+口播只需三句：
+
+1. 服务端出示的证书 `subject` 和 SAN 里的 `URI:acps://` 就是那只智能体的 AIC —— 平台侧可以据此确认"对面真的是它"。
+2. 不带客户端证书，`/rpc` 直接 403，请求根本到不了应用层。
+3. 带上它自己的客户端证书，200，返回的是 `-32601 Method not found`——**这说明请求已经穿过 mTLS、穿过内部鉴权、进到应用层并走到了方法分发**，不是被鉴权挡住的 401。
+
+> 不要念成"我们自己验了一遍"。准确说法是：**nginx 校验客户端证书链与 EKU，`$ssl_client_verify != SUCCESS` 一律 403；通过后由 nginx 注入内部 key，业务层因此不需要知道共享密钥。**
 
 ### 5.1 创建战局
 
