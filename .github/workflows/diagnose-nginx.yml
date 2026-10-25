@@ -69,6 +69,14 @@ jobs:
               | sed 's/^/    /' || echo "    UNREADABLE"
           done
 
+      - name: mTLS server block 全文
+        shell: bash
+        run: |
+          set -uo pipefail
+          f=/etc/nginx/sites-enabled/agent-attack-lab-mtls.conf
+          echo "== $f（只含证书路径，无密钥内容） =="
+          sudo -n cat "$f" 2>/dev/null | sed 's/^/  /' || echo "NO_FILE"
+
       - name: 后端服务监听
         shell: bash
         run: |
