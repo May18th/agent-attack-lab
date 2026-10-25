@@ -85,10 +85,6 @@ jobs:
             echo "missing $env_file" >&2
             exit 1
           fi
-          if [[ -z "${LLM_API_KEY:-}" ]]; then
-            echo "AGENT_LLM_API_KEY secret is empty; skip model injection"
-            exit 0
-          fi
           upsert() {
             local key=$1 value=$2 tmp found=0
             tmp=$(mktemp)
@@ -106,6 +102,30 @@ jobs:
             cat "$tmp" > "$env_file"
             rm -f "$tmp"
           }
+
+          # 身份变量随部署自愈。
+          # AGENT_AIP_LEADER_ID 是手写在生产 .env 里的，每次重新注册换 AIC 都不会
+          # 自动跟着变（adopt_partner_aics.py 只回填仓库文件，管不到 VPS 的 .env）。
+          # 2026-10-26 实测：主调度已切 1A7Q，三个服务的 AGENT_AIP_LEADER_ID 仍是
+          # 两轮前的 09CQ，AIP 调用里带的对端身份是错的。以仓库 agent-identities.json
+          # 为唯一可信源，在重启前幂等对齐。放在 LLM 密钥判断之前，避免 Secret 缺失时被跳过。
+          ids="$DEPLOY_SOURCE_DIR/backend/agent-identities.json"
+          if [[ -f "$ids" ]]; then
+            leader_aic=$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1],encoding="utf-8"))["leader"].get("aic") or "").strip())' "$ids" 2>/dev/null || true)
+            if [[ -n "$leader_aic" ]]; then
+              upsert AGENT_AIP_LEADER_ID "$leader_aic"
+              printf 'synced AGENT_AIP_LEADER_ID=%s\n' "${leader_aic##*.}"
+            else
+              echo "leader aic missing in $ids; leave AGENT_AIP_LEADER_ID untouched" >&2
+            fi
+          else
+            echo "missing $ids; skip identity sync" >&2
+          fi
+
+          if [[ -z "${LLM_API_KEY:-}" ]]; then
+            echo "AGENT_LLM_API_KEY secret is empty; skip model injection"
+            exit 0
+          fi
           upsert AGENT_LLM_BASE_URL "https://api.deepseek.com/v1"
           upsert AGENT_LLM_MODEL "deepseek-chat"
           upsert AGENT_LLM_API_KEY "$LLM_API_KEY"
