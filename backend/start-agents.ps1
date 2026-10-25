@@ -64,6 +64,7 @@ try {
         }
 
         Test-PortAvailable $Agent.Port | Out-Null
+        & (Join-Path $ProjectRoot 'scripts\amp-env.ps1') -Role $Agent.Name
         $process = Start-Process -FilePath $Python -ArgumentList @(
             '-m', 'uvicorn', $Agent.App,
             '--host', '127.0.0.1', '--port', "$($Agent.Port)", '--log-level', 'warning'

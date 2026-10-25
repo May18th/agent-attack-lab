@@ -31,6 +31,7 @@ foreach ($process in $oldProcesses) {
 }
 
 Set-Location -LiteralPath $ProjectRoot
+& (Join-Path $ProjectRoot 'scripts\amp-env.ps1') -Role leader
 $LogDirectory = Join-Path $ProjectRoot '.data'
 New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
 $StandardOutput = Join-Path $LogDirectory 'server.out.log'

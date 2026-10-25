@@ -26,6 +26,7 @@ if ([string]::IsNullOrWhiteSpace($env:AGENT_DEFENDER_RPC_URL)) {
 & (Join-Path $ProjectRoot "start-agents.ps1")
 
 Set-Location -LiteralPath $ProjectRoot
+& (Join-Path $ProjectRoot "scripts\amp-env.ps1") -Role leader
 $Arguments = @("-m", "uvicorn", "agent_attack_lab.service:app", "--host", "0.0.0.0", "--port", "$Port")
 if ($Reload) { $Arguments += "--reload" }
 & $Python @Arguments
