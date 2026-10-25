@@ -126,7 +126,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          backup="$NGINX_CONF.bak-$(date +%Y%m%d-%H%M%S)"
+          # 备份必须放在 sites-enabled 之外，且必须解引用软链接：
+          # sites-enabled 下是符号链接，cp -a 会保留链接属性，产出指向同一文件的
+          # 第二个链接，被 `include sites-enabled/*;` 一并加载 → server_name 冲突。
+          backup_dir=/etc/nginx/backup
+          backup="$backup_dir/agent-attack-lab-mtls.conf.$(date +%Y%m%d-%H%M%S)"
 
           if sudo -n grep -q "server_name leader-mtls.yuanyiagentzhandui.cn" "$NGINX_CONF"; then
             echo "已存在 leader-mtls server block，跳过追加（幂等）"
@@ -134,8 +138,10 @@ jobs:
             exit 0
           fi
 
-          sudo -n cp -a "$NGINX_CONF" "$backup"
-          echo "已备份到 $backup"
+          sudo -n mkdir -p "$backup_dir"
+          sudo -n cp -L -a "$NGINX_CONF" "$backup"
+          sudo -n cmp -s "$NGINX_CONF" "$backup" || { echo "备份内容不一致" >&2; exit 1; }
+          echo "已备份到 $backup（$(sudo -n wc -c < "$backup") 字节）"
           echo "BACKUP=$backup" >> "$GITHUB_ENV"
 
           # 渲染模板：替换证书目录占位符后追加
@@ -147,11 +153,18 @@ jobs:
           printf '\n' | sudo -n tee -a "$NGINX_CONF" > /dev/null
           sudo -n tee -a "$NGINX_CONF" < "$RUNNER_TEMP/leader-mtls.block" > /dev/null
 
-          if sudo -n nginx -t; then
+          if out=$(sudo -n nginx -t 2>&1); then
+            echo "$out" | sed 's/^/  /'
+            if echo "$out" | grep -q "conflicting server name"; then
+              echo "存在 conflicting server name，回滚" >&2
+              sudo -n cp -L "$backup" "$NGINX_CONF"
+              exit 1
+            fi
             echo "nginx -t 通过"
           else
+            echo "$out" >&2
             echo "nginx -t 失败，回滚配置" >&2
-            sudo -n cp -a "$backup" "$NGINX_CONF"
+            sudo -n cp -L "$backup" "$NGINX_CONF"
             sudo -n nginx -t || true
             exit 1
           fi
@@ -159,13 +172,20 @@ jobs:
       - name: reload nginx
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          # 无论本次是追加还是幂等跳过，reload 前都要求配置无冲突
+          out=$(sudo -n nginx -t 2>&1) || { echo "$out" >&2; echo "nginx -t 失败，不 reload" >&2; exit 1; }
+          echo "$out" | sed 's/^/  /'
+          if echo "$out" | grep -q "conflicting server name"; then
+            echo "存在 conflicting server name，不 reload" >&2
+            exit 1
+          fi
           if sudo -n systemctl reload nginx; then
             echo "nginx reload 完成"
           else
             echo "reload 失败，回滚" >&2
             if [[ -n "${BACKUP:-}" ]]; then
-              sudo -n cp -a "$BACKUP" "$NGINX_CONF"
+              sudo -n cp -L "$BACKUP" "$NGINX_CONF"
               sudo -n nginx -t || true
               sudo -n systemctl reload nginx || true
             fi
