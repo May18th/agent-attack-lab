@@ -1,0 +1,120 @@
+name: 修复 nginx 重复加载
+
+# 背景：provision-leader-mtls 用 cp -a 备份 sites-enabled 里的软链接，
+# 备份保留了链接属性，变成指向同一文件的第二个软链接，被
+# `include /etc/nginx/sites-enabled/*;` 一并加载 → attack/defense/leader-mtls
+# 三个 server_name 全部 conflicting，且该"备份"回滚时等于 cp 自己到自己。
+#
+# 本工作流：
+#   1. 删除 sites-enabled 里的 *.bak-* 软链接（只删链接，不动目标文件）
+#   2. 在 sites-enabled 之外做真实备份（cp -L 解引用）
+#   3. nginx -t 必须无 conflicting 警告
+#   4. reload 并复验六个探测点
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "输入 repair 确认执行"
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-nginx-dup
+  cancel-in-progress: false
+
+env:
+  NGINX_CONF: /etc/nginx/sites-enabled/agent-attack-lab-mtls.conf
+
+jobs:
+  repair:
+    name: 去重并复验
+    runs-on: [self-hosted, production]
+    timeout-minutes: 15
+    steps:
+      - name: 前置检查
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.confirm }}" == "repair" ]] || { echo "需要 confirm=repair" >&2; exit 1; }
+          [[ "$(id -un)" == deployer ]] || { echo 'Runner must run as deployer' >&2; exit 1; }
+          sudo -n true
+          echo "== 修改前 sites-enabled =="
+          sudo -n ls -la /etc/nginx/sites-enabled/
+          echo "== 修改前 nginx -t =="
+          sudo -n nginx -t 2>&1 | sed 's/^/  /' || true
+
+      - name: 删除重复的软链接备份
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "待删除："
+          sudo -n find /etc/nginx/sites-enabled -maxdepth 1 -name '*.bak-*' -print
+          # 只删除文件名匹配 *.bak-* 的条目；即使它是软链接，-delete 也只删链接本身
+          sudo -n find /etc/nginx/sites-enabled -maxdepth 1 -name '*.bak-*' -delete
+          echo "删除后："
+          sudo -n ls -la /etc/nginx/sites-enabled/
+          # 防御：确认主配置仍在
+          sudo -n test -e "$NGINX_CONF" || { echo "主配置消失，立即停止" >&2; exit 1; }
+
+      - name: 在 sites-enabled 之外做真实备份
+        shell: bash
+        run: |
+          set -euo pipefail
+          backup_dir=/etc/nginx/backup
+          sudo -n mkdir -p "$backup_dir"
+          real="$backup_dir/agent-attack-lab-mtls.conf.$(date +%Y%m%d-%H%M%S)"
+          # -L 解引用软链接，产出真实文件；-a 保留属性
+          sudo -n cp -L -a "$NGINX_CONF" "$real"
+          sudo -n test -f "$real" || { echo "备份失败" >&2; exit 1; }
+          sudo -n cmp -s "$NGINX_CONF" "$real" || { echo "备份内容不一致" >&2; exit 1; }
+          echo "真实备份：$real（$(sudo -n wc -c < "$real") 字节）"
+          echo "BACKUP_REAL=$real" >> "$GITHUB_ENV"
+
+      - name: nginx -t 必须无冲突
+        shell: bash
+        run: |
+          set -uo pipefail
+          out=$(sudo -n nginx -t 2>&1) || { echo "$out" >&2; echo "nginx -t 失败" >&2; exit 1; }
+          echo "$out" | sed 's/^/  /'
+          if echo "$out" | grep -q "conflicting server name"; then
+            echo "仍存在 conflicting server name，不 reload" >&2
+            exit 1
+          fi
+          echo "无 conflicting server name"
+
+      - name: reload
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n systemctl reload nginx
+          sleep 2
+          systemctl is-active nginx
+
+      - name: 复验六个探测点
+        shell: bash
+        run: |
+          set -uo pipefail
+          probe() {
+            local want="$1" label="$2" url="$3"
+            local code
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo "ERR")
+            if [[ "$code" == "$want" ]]; then mark="OK"; else mark="MISMATCH"; fi
+            printf '%-8s %-46s 期望 %-3s 实际 %s\n' "$mark" "$label" "$want" "$code"
+          }
+          probe 200 "leader-mtls /health"        "https://leader-mtls.yuanyiagentzhandui.cn/health"
+          probe 403 "leader-mtls /rpc 无证书"    "https://leader-mtls.yuanyiagentzhandui.cn/rpc"
+          probe 404 "leader-mtls /dashboard"     "https://leader-mtls.yuanyiagentzhandui.cn/dashboard"
+          probe 403 "attack /rpc 无证书"         "https://attack.yuanyiagentzhandui.cn/rpc"
+          probe 403 "defense /rpc 无证书"        "https://defense.yuanyiagentzhandui.cn/rpc"
+          probe 200 "api /health"                "https://api.yuanyiagentzhandui.cn/health"
+
+      - name: 摘要
+        shell: bash
+        run: |
+          echo "真实备份（回滚用）：${BACKUP_REAL:-未知}"
+          echo "回滚：sudo cp -L $BACKUP_REAL $NGINX_CONF && sudo nginx -t && sudo systemctl reload nginx"
+          echo "注意：备份目录 /etc/nginx/backup 不在 sites-enabled 下，不会被 include 通配加载。"
