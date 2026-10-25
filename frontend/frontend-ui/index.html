@@ -384,10 +384,67 @@
   .battle-sound{position:absolute;right:18px;top:70px;z-index:7;background:rgba(8,13,21,.82);border:1px solid #2e4a63;color:#8fb4d4;border-radius:6px;padding:3px 8px;font:10.5px ui-monospace,Consolas,monospace;cursor:pointer}
   .battle-sound:hover{border-color:#4a82ad;color:#c8e0f7}
   .battle-sound.on{color:#7fd49b;border-color:#3d6b57}
-  @media(max-width:720px){.battle-hud{left:12px;bottom:12px;max-width:62%}.battle-hud .hud-row{max-width:100%}.battle-sound{top:auto;bottom:12px;right:12px}}
+  /* ===== 3D 全屏切换 ===== */
+  .battle-fullscreen-btn{position:absolute;right:18px;bottom:16px;z-index:8;width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(8,13,21,.82);border:1px solid #2e4a63;color:#8fb4d4;border-radius:6px;cursor:pointer;transition:.15s}
+  .battle-fullscreen-btn:hover{border-color:#4a82ad;color:#c8e0f7}
+  .battle-fullscreen-btn svg{width:16px;height:16px;display:block}
+  .battle-visual-panel.is-fullscreen{position:fixed;inset:0;z-index:200;width:100vw;height:100vh;max-width:none;margin:0;border-radius:0;padding:0}
+  .battle-visual-panel.is-fullscreen #battle3d{min-height:100vh!important;height:100vh}
+  .battle-visual-panel.is-fullscreen .battle-fullscreen-btn{position:fixed;right:20px;bottom:20px;z-index:210}
+  @media(max-width:720px){.battle-hud{left:12px;bottom:12px;max-width:62%}.battle-hud .hud-row{max-width:100%}.battle-sound{top:auto;bottom:12px;right:50px}.battle-fullscreen-btn{right:12px;bottom:12px}}
+
+  /* ====== 封面层 ====== */
+  #coverLayer{position:fixed;inset:0;z-index:9999;background:radial-gradient(900px 520px at 10% -8%,rgba(122,75,255,.18),transparent 62%),radial-gradient(1000px 620px at 94% 2%,rgba(64,150,255,.16),transparent 64%),radial-gradient(140% 100% at 50% 40%,#0a1026 0%,#070b1a 55%,#03050c 100%);overflow:hidden;cursor:grab;touch-action:none;transition:transform .55s cubic-bezier(.22,.61,.36,1),opacity .4s ease;will-change:transform}
+  #coverLayer.dragging{transition:none;cursor:grabbing}
+  #coverLayer.hidden{transform:translateY(-100%);opacity:0;pointer-events:none}
+  #cover3d{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .cover-content{position:absolute;top:clamp(20px,5vh,56px);left:clamp(20px,4vw,56px);display:flex;flex-direction:column;align-items:flex-start;text-align:left;pointer-events:none;z-index:3}
+  .cover-eyebrow{font-size:12px;letter-spacing:7px;color:#5f7ea6;margin-bottom:10px;text-transform:uppercase;font-weight:800;font-family:'Orbitron','Rajdhani',system-ui,sans-serif;text-shadow:0 0 10px rgba(96,150,255,.4)}
+  .cover-title{margin:0;font-size:clamp(34px,6.5vw,76px);line-height:1;font-weight:900;letter-spacing:4px;background:linear-gradient(92deg,#a9e1ff 0%,#87bfff 38%,#b69aff 72%,#f09bff 100%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 2px 0 rgba(0,0,0,.4)) drop-shadow(0 0 18px rgba(120,150,255,.4));animation:coverGlow 3.5s ease-in-out infinite;transform:skewX(-4deg)}
+  .cover-title em{font-style:normal;background:linear-gradient(92deg,#ffb08a,#ff8f6b);-webkit-background-clip:text;background-clip:text;color:transparent}
+  @keyframes coverGlow{0%,100%{filter:drop-shadow(0 2px 0 rgba(0,0,0,.4)) drop-shadow(0 0 14px rgba(120,150,255,.35))}50%{filter:drop-shadow(0 2px 0 rgba(0,0,0,.4)) drop-shadow(0 0 30px rgba(150,180,255,.6))}}
+  .cover-sub{margin:12px 0 0;color:#8fa8c4;font-size:clamp(12px,1.4vw,15px);letter-spacing:2px;font-weight:600}
+  .cover-hint{position:absolute;bottom:clamp(20px,4vh,44px);right:clamp(16px,3vw,40px);display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none}
+  .cover-hint-arrow{width:16px;height:16px;border-left:1.5px solid #7ba8d8;border-top:1.5px solid #7ba8d8;transform:rotate(45deg);opacity:.7}
+  .cover-hint-text{font-size:10px;color:#6f8aa8;letter-spacing:1px;white-space:nowrap}
+  .cover-tooltip{position:fixed;z-index:10000;max-width:300px;padding:12px 14px;background:linear-gradient(165deg,rgba(16,24,42,.94),rgba(8,12,22,.94));border:1px solid rgba(96,150,255,.4);border-radius:10px;color:#dce8f8;font-size:13px;line-height:1.6;box-shadow:0 8px 30px rgba(0,0,0,.55),0 0 22px -6px rgba(96,150,255,.5);backdrop-filter:blur(6px);pointer-events:none;opacity:0;transform:translate(-50%,-130%);transition:opacity .18s ease}
+  .cover-tooltip.show{opacity:1}
+  .cover-tooltip b{display:block;font-size:14px;margin-bottom:6px;letter-spacing:1px}
+  .cover-tooltip .tt-tag{display:inline-block;font-size:10px;padding:1px 7px;border-radius:4px;margin-right:6px;font-weight:700;letter-spacing:.5px}
+  .cover-title{pointer-events:auto;cursor:pointer;position:relative}
+  /* 项目简介弹窗（悬停标题时显示） */
+  .cover-intro{position:absolute;top:clamp(90px,14vh,150px);left:clamp(20px,4vw,56px);max-width:min(520px,calc(100vw - 48px));background:linear-gradient(165deg,rgba(16,24,42,.95),rgba(8,12,22,.95));border:1px solid rgba(96,150,255,.35);border-radius:14px;padding:18px 20px;color:#dce8f8;font-size:13px;line-height:1.75;box-shadow:0 12px 40px rgba(0,0,0,.6),0 0 30px -8px rgba(96,150,255,.45);backdrop-filter:blur(8px);opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity .25s ease,transform .25s ease;z-index:4}
+  .cover-intro.show{opacity:1;transform:translateY(0)}
+  .cover-intro-head{font-size:15px;font-weight:800;letter-spacing:2px;margin-bottom:12px;color:#9fc4ff;text-shadow:0 0 12px rgba(96,150,255,.5);padding-bottom:10px;border-bottom:1px solid rgba(96,150,255,.25)}
+  .cover-intro-body p{margin:0 0 10px}
+  .cover-intro-body p:last-child{margin-bottom:0}
+  .cover-intro-body b{color:#ffd27a}
 </style>
 </head>
 <body>
+<!-- ====== 封面层：按住向上滑动进入 ====== -->
+<div id="coverLayer" aria-label="智能体攻防实验室封面">
+  <canvas id="cover3d"></canvas>
+  <div class="cover-content">
+    <div class="cover-eyebrow">AGENT ATTACK LAB</div>
+    <h1 class="cover-title" id="coverTitle">智能体<em>攻防实验室</em></h1>
+    <p class="cover-sub">后端联调控制台 · 实时战局 · 风险复盘</p>
+  </div>
+  <div class="cover-intro" id="coverIntro">
+    <div class="cover-intro-head">智弈破局 · 项目简介</div>
+    <div class="cover-intro-body">
+      <p><b>问题与背景：</b>针对智能体面临的提示词注入、越权调用和信息泄露风险，以及传统测试过程不直观、结果难复核等问题。</p>
+      <p><b>方案与机制：</b>"智弈破局"以 ACPs SDK 与梧桐互联平台为技术底座，设计了 Attacker、Defender、Arbiter 三体协同架构。平台结合生活场景、攻击意图与难度分级，在授权模拟靶场内生成对抗样本。依托智能体互联调用与留痕，构建了"攻击提交—分层防御—裁决评分—复盘迭代"的对抗闭环。</p>
+      <p><b>效果与创新：</b>结合3D动态可视化与流式战报，直观呈现攻击路径、拦截结果与裁决依据，支持过程追溯与战局复盘。</p>
+      <p><b>应用与价值：</b>作品可有效用于智能体安全测评、攻防教学及安全策略验证。</p>
+    </div>
+  </div>
+  <div class="cover-hint">
+    <span class="cover-hint-arrow"></span>
+    <span class="cover-hint-text">按住向上滑动进入实验室 · 拖拽小行星 · 左右旋转视角</span>
+  </div>
+  <div class="cover-tooltip" id="coverTooltip"></div>
+</div>
 <canvas id="bgNet" aria-hidden="true"></canvas>
 <div class="wrap">
 
@@ -414,6 +471,7 @@
             <div class="chapter-item">实时评分系统</div>
             <div class="chapter-item">回合payload</div>
             <div class="chapter-item">可视化</div>
+            <div class="chapter-item">角色同步日志</div>
             <div class="chapter-item">外部安全案例</div>
             <div class="chapter-item">历史攻防</div>
           </div>
@@ -449,6 +507,10 @@
           <div class="hud-row" id="hudPayload">Payload：<b>未创建</b></div>
           <div class="hud-row" id="hudSource">来源：<b>—</b></div>
         </div>
+        <button class="battle-fullscreen-btn" id="battleFullscreen" type="button" aria-pressed="false" title="全屏展示3D可视化" aria-label="全屏展示3D可视化">
+          <svg class="icon-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+          <svg class="icon-compress" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+        </button>
         <button class="battle-sound" id="battleSound" type="button" aria-pressed="false">音效：关</button>
         <div class="battle-announcer" id="battleAnnouncer" role="status" aria-live="polite">
           <span class="announce-actor" id="announceActor">SYSTEM</span>
@@ -900,6 +962,9 @@ var battle3d=(function(){
   coreRing1.rotation.set(1.32,.25,.35);coreGroup.add(coreRing1);
   var coreRing2=new THREE.Mesh(new THREE.RingGeometry(1.46,1.5,120),new THREE.MeshBasicMaterial({color:0xbfe4ff,transparent:true,opacity:.2,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false}));
   coreRing2.rotation.set(.75,.5,1.1);coreGroup.add(coreRing2);
+  function corePos(){return coreGroup.position;}
+  function corePosClone(){return coreGroup.position.clone();}
+  function syncShellsToCore(){shells.forEach(function(sh){sh.position.copy(coreGroup.position);});}
 
   function makeActor(color,emissive,r){
     var g=new THREE.Group();
@@ -1157,7 +1222,7 @@ var battle3d=(function(){
     var targets=[];
     for(var i=0;i<4;i++)for(var n=0;n<9;n++){
       var e=TICO.edges[(n*5+i*11)%TICO.edges.length],t=Math.random();
-      var p=edgePoint(shells[i].userData.local,e,t,RADII[i]);
+      var p=shells[i].position.clone().add(edgePoint(shells[i].userData.local,e,t,RADII[i]));
       targets.push({p:p,delay:.05+i*.10+Math.random()*.28,i:i});
     }
     targets.forEach(function(o){
@@ -1185,13 +1250,15 @@ var battle3d=(function(){
       var e=TICO.edges[(n*7+i*3)%TICO.edges.length];
       var a=sh.localToWorld(sh.userData.local[e[0]].clone());
       var b=sh.localToWorld(sh.userData.local[e[1]].clone());
-      var mid=a.clone().add(b).multiplyScalar(.5).normalize().multiplyScalar(RADII[i]*1.03);
+      var mid=a.clone().add(b).multiplyScalar(.5);
+      var midDir=mid.clone().sub(sh.position).normalize();
+      mid.copy(sh.position).add(midDir.multiplyScalar(RADII[i]*1.03));
       var geo=new THREE.BufferGeometry();
       geo.setAttribute('position',new THREE.Float32BufferAttribute([a.x,a.y,a.z,b.x,b.y,b.z,mid.x,mid.y,mid.z],3));
       var tint=Math.random()<.45?hot.getHex():col;
       var mat=new THREE.MeshBasicMaterial({color:tint,transparent:true,opacity:.8,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false});
       var tri=new THREE.Mesh(geo,mat);
-      var dir=mid.clone().normalize();
+      var dir=midDir.clone();
       var vel=dir.multiplyScalar(.55+Math.random()*1.3).add(new THREE.Vector3((Math.random()-.5)*.5,(Math.random()-.5)*.5,(Math.random()-.5)*.5));
       var spin=new THREE.Vector3(Math.random()-.5,Math.random()-.5,Math.random()-.5).multiplyScalar(4.2);
       fxGroup.add(tri);
@@ -1204,13 +1271,13 @@ var battle3d=(function(){
     }
     /* 中心闪光 + 冲击光环 + 高密度星屑 */
     var flash=new THREE.Sprite(new THREE.SpriteMaterial({map:DOT,color:0xffffff,transparent:true,opacity:1,blending:THREE.AdditiveBlending,depthWrite:false}));
-    flash.position.set(0,0,0);flash.scale.setScalar(1.2);fxGroup.add(flash);
+    flash.position.copy(corePos());flash.scale.setScalar(1.2);fxGroup.add(flash);
     fx.push({group:flash,t:0,dur:.5,update:function(k){flash.scale.setScalar(1.2+k*4.6);flash.material.opacity=1-k;}});
     var shock=new THREE.Mesh(new THREE.RingGeometry(RADII[i]*.98,RADII[i]*1.04,96),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.8,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false}));
-    shock.rotation.x=Math.PI/2;fxGroup.add(shock);
+    shock.position.copy(corePos());shock.rotation.x=Math.PI/2;fxGroup.add(shock);
     fx.push({group:shock,t:0,dur:.85,update:function(k){shock.scale.setScalar(1+k*1.9);shock.material.opacity=.8*(1-k);}});
-    burst(new THREE.Vector3(0,0,0),col,90,2.6,.05,1.4);       // 大颗粒星屑（柔光圆点）
-    burst(new THREE.Vector3(0,0,0),hot.getHex(),50,3.4,.026,1.5); // 高亮细屑
+    burst(corePosClone(),col,90,2.6,.05,1.4);       // 大颗粒星屑（柔光圆点）
+    burst(corePosClone(),hot.getHex(),50,3.4,.026,1.5); // 高亮细屑
     sh.visible=false;refreshShells();
     sfx('glass');  // 仅在 Arbiter 确认整层穿透后调用
   }
@@ -1281,7 +1348,7 @@ var battle3d=(function(){
   function impactDir(li,ci){
     return new THREE.Vector3(-.68+((ci||0)%3)*.1,.24+((li||0)%2)*.1,.72-((ci||0)%2)*.08).normalize();
   }
-  function impactPoint(li,ci){return impactDir(li,ci).multiplyScalar(RADII[li]*1.012);}
+  function impactPoint(li,ci){return corePosClone().add(impactDir(li,ci).multiplyScalar(RADII[li]*1.012));}
   function spawnWave(from,to,color,opts){
     opts=opts||{};
     var group=new THREE.Group();
@@ -1385,7 +1452,7 @@ var battle3d=(function(){
   }
   function movePayloadInward(li){
     if(!payload)return;
-    var target=li>=3?new THREE.Vector3(0,0,0):impactPoint(li,0);
+    var target=li>=3?corePosClone():impactPoint(li,0);
     target=target.clone().add(new THREE.Vector3(0,0,.05));
     flyPayloadTo(target,li>=3?.8:.55);
   }
@@ -1716,7 +1783,7 @@ var battle3d=(function(){
     resetAll();
     S.battleId=e.battleId;S.phase='building';S.mode=e.mock?'mock':'live';
     S.total=Number(e.payload.roundLimit)||3;S.memory=!!e.payload.memory;
-    setModeBadge();ensureShells();scheduleBuild();
+    setModeBadge();ensureShells();syncShellsToCore();scheduleBuild();
     sfx('build');
     status('Defender 释放蓝色粒子 · 建立 L0-L3 四层球壳',true);
     hudStage('建壳 · Defender 粒子飞向 Core');
@@ -1862,7 +1929,7 @@ var battle3d=(function(){
       if(lc.ci<2){
         // L3-1/L3-2：当前壳向 Core 发出内收光波，Core 随风险脉冲
         var from=to.clone();
-        spawnWave(from,new THREE.Vector3(0,0,0),0x9fd8ff,{dur:.55,mid:to.clone().multiplyScalar(.5),onArrive:function(){coreRisk();}});
+        spawnWave(from,corePosClone(),0x9fd8ff,{dur:.55,mid:from.clone().lerp(corePos(),.5).add(new THREE.Vector3(0,.3,.5)),onArrive:function(){coreRisk();}});
         status('L3-'+(lc.ci+1)+' · '+(lc.ci===0?'全链路审计':'异常监测')+' · 向 Core 内收光波',true);
       }else if(lc.ci===2){
         status('L3-3 · 应急控制窗口 · 等待控制生效',true);
@@ -1901,7 +1968,7 @@ var battle3d=(function(){
           status('L3-3 · 控制失败 / 窗口超时 · Core 变红，L3 玻璃破碎',false);
           hudStage('L3-3 控制失败 · Core 红色');
           shatterLayer(3);
-          if(payload)flyPayloadTo(new THREE.Vector3(0,0,0),.6);
+          if(payload)flyPayloadTo(corePosClone(),.6);
         }
         return;
       }
@@ -1971,7 +2038,7 @@ var battle3d=(function(){
       if(shells[3]&&!shells[3].userData.broken)shatterLayer(3);
       status('Arbiter：full-penetration · Core 红色，L3 破碎',false);
       hudStage('Arbiter full-penetration · A-06=60 候选 / D-06=0');
-      if(payload){burst(new THREE.Vector3(0,0,0),0xff3b30,40,1.6,.03,1);fadePayload(COL_SAME);}
+      if(payload){burst(corePosClone(),0xff3b30,40,1.6,.03,1);fadePayload(COL_SAME);}
     }else if(c==='unresolved'||c==='system-void'){
       S.paused=true;
       status('Arbiter：'+c+' · 停留待裁决/系统作废，不确认胜负',false);
@@ -2209,27 +2276,80 @@ var battle3d=(function(){
     if(S.safe)disposeObj(S.safe);
     if(S.l2Label)disposeObj(S.l2Label);
     S=freshState();battleClock=0;
-    coreBlue();attacker.scale.setScalar(1);attacker.position.set(-3.65,.1,0);defender.position.set(3.65,.1,0);
+    coreBlue();coreGroup.position.set(0,0,0);attacker.scale.setScalar(1);attacker.position.set(-3.65,.1,0);defender.position.set(3.65,.1,0);
     status('等待攻防事件','R0 · TARGET CORE');
     setModeBadge();
     hudStage('待机 · 三球就绪');hudLayer('—');hudPayload('未创建');hudSource('—');
     if(roundEl)roundEl.textContent='R0 · TARGET CORE';
   }
 
-  /* ---- 交互 ---- */
+  /* ---- 交互：拾取三球 / 拖拽移动 / 旋转视角 ---- */
   var drag={on:false,x:0,y:0};
+  var raycaster=new THREE.Raycaster();
+  var ndc=new THREE.Vector2();
+  var dragBall=null,dragPlane=new THREE.Plane(),dragHit=new THREE.Vector3();
+  var ballTargets=[
+    {mesh:coreMesh,group:coreGroup,color:COL_CORE},
+    {mesh:attacker.userData.mesh,group:attacker,color:COL_ATT},
+    {mesh:defender.userData.mesh,group:defender,color:COL_DEF}
+  ];
+  function setMouseNdc(e){
+    var r=host.getBoundingClientRect();
+    ndc.x=((e.clientX-r.left)/r.width)*2-1;
+    ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+  }
   host.addEventListener('pointerdown',function(e){
     if(e.target&&e.target.tagName==='BUTTON')return;
-    drag.on=true;drag.x=e.clientX;drag.y=e.clientY;host.setPointerCapture(e.pointerId);
+    setMouseNdc(e);
+    raycaster.setFromCamera(ndc,camera);
+    var meshes=ballTargets.map(function(t){return t.mesh;});
+    var hits=raycaster.intersectObjects(meshes,false);
+    if(hits.length){
+      var hitMesh=hits[0].object;
+      var target=null;
+      for(var i=0;i<ballTargets.length;i++){if(ballTargets[i].mesh===hitMesh){target=ballTargets[i];break;}}
+      if(target){
+        dragBall=target.group;
+        var worldPos=new THREE.Vector3();
+        dragBall.getWorldPosition(worldPos);
+        // 拖拽平面：过球心、面向相机
+        var camDir=new THREE.Vector3();camera.getWorldDirection(camDir);
+        dragPlane.normal.copy(camDir);
+        dragPlane.constant=-dragPlane.normal.dot(worldPos);
+        // 点击即散发彩色发光粒子
+        burst(worldPos,target.color,26,1.3,.034,.9);
+        burst(worldPos,0xffffff,10,.8,.022,.5);
+        drag.x=e.clientX;drag.y=e.clientY;drag.on=false;
+        try{host.setPointerCapture(e.pointerId);}catch(_){}
+        return;
+      }
+    }
+    drag.on=true;drag.x=e.clientX;drag.y=e.clientY;try{host.setPointerCapture(e.pointerId);}catch(_){}
   });
   host.addEventListener('pointermove',function(e){
+    if(dragBall){
+      setMouseNdc(e);
+      raycaster.setFromCamera(ndc,camera);
+      if(raycaster.ray.intersectPlane(dragPlane,dragHit)){
+        // 世界坐标 → 父级(world)局部坐标
+        var local=world.worldToLocal(dragHit.clone());
+        // 限制活动范围，避免飞出可视区
+        local.x=Math.max(-7.5,Math.min(7.5,local.x));
+        local.y=Math.max(-3.2,Math.min(3.2,local.y));
+        local.z=Math.max(-4.5,Math.min(4.5,local.z));
+        dragBall.position.copy(local);
+        if(dragBall===coreGroup)syncShellsToCore();
+      }
+      return;
+    }
     if(!drag.on)return;
     world.rotation.y+=(e.clientX-drag.x)*.005;
     world.rotation.x=Math.max(-.42,Math.min(.42,world.rotation.x+(e.clientY-drag.y)*.003));
     drag.x=e.clientX;drag.y=e.clientY;
   });
-  host.addEventListener('pointerup',function(){drag.on=false;});
-  host.addEventListener('pointercancel',function(){drag.on=false;});
+  function endDrag(){dragBall=null;drag.on=false;}
+  host.addEventListener('pointerup',endDrag);
+  host.addEventListener('pointercancel',endDrag);
   host.addEventListener('wheel',function(e){e.preventDefault();userZoom=true;camera.position.z=Math.max(6.4,Math.min(14,camera.position.z+e.deltaY*.008));},{passive:false});
 
   var userZoom=false;
@@ -2261,9 +2381,43 @@ var battle3d=(function(){
 
   /* 待机：只显示红 Attacker / 蓝 Core / 蓝 Defender */
   resetAll();
-  window.__battle3dDebug={state:function(){return S;},shells:function(){return shells;},payload:function(){return payload;},clock:function(){return battleClock;}};
+  window.__battle3dDebug={state:function(){return S;},shells:function(){return shells;},payload:function(){return payload;},clock:function(){return battleClock;},core:function(){return coreGroup;},attacker:function(){return attacker;},defender:function(){return defender;},fxCount:function(){return fx.length;},ensureShells:ensureShells,syncShells:syncShellsToCore,pickAt:function(cx,cy){setMouseNdc({clientX:cx,clientY:cy});raycaster.setFromCamera(ndc,camera);var hits=raycaster.intersectObjects(ballTargets.map(function(t){return t.mesh;}),false);if(!hits.length)return null;var m=hits[0].object;for(var i=0;i<ballTargets.length;i++)if(ballTargets[i].mesh===m)return ballTargets[i].group===coreGroup?'core':ballTargets[i].group===attacker?'attacker':'defender';return null;}};
   return {reset:resetAll,resize:resize,subscribe:unsubscribe,state:function(){return S;},startRound:startRound,handleEvent:handleEvent};
 })();
+
+  /* ============ 3D 全屏切换 ============ */
+  (function(){
+    var panel=document.querySelector('.battle-visual-panel');
+    var btn=document.getElementById('battleFullscreen');
+    if(!panel||!btn)return;
+    var expandSvg=btn.querySelector('.icon-expand');
+    var compressSvg=btn.querySelector('.icon-compress');
+    function refresh3d(){
+      if(typeof battle3d!=='undefined'&&battle3d&&typeof battle3d.resize==='function'){
+        battle3d.resize();
+      }
+    }
+    function applyFullscreen(isFs){
+      panel.classList.toggle('is-fullscreen',isFs);
+      btn.setAttribute('aria-pressed',String(isFs));
+      btn.title=isFs?'退出全屏（Esc）':'全屏展示3D可视化';
+      if(expandSvg)expandSvg.style.display=isFs?'none':'block';
+      if(compressSvg)compressSvg.style.display=isFs?'block':'none';
+      document.body.style.overflow=isFs?'hidden':'';
+      // 布局生效后刷新 3D 渲染尺寸（双保险：下一帧 + 延时）
+      requestAnimationFrame(refresh3d);
+      setTimeout(refresh3d,220);
+    }
+    btn.addEventListener('click',function(e){
+      e.preventDefault();
+      applyFullscreen(!panel.classList.contains('is-fullscreen'));
+    });
+    document.addEventListener('keydown',function(e){
+      if(e.key==='Escape'&&panel.classList.contains('is-fullscreen')){
+        applyFullscreen(false);
+      }
+    });
+  })();
 
   /* ============ 计分图表 ============ */
   var pie=echarts.init(document.getElementById('pieChart'));
@@ -2542,6 +2696,7 @@ var battle3d=(function(){
       else if(it.textContent==='回合payload'){payloadModal.classList.add('open');}
       else if(it.textContent==='外部安全案例'){renderCVEto(CVES,'cveModalList');cveModal.classList.add('open');}
       else if(it.textContent==='可视化'){var sc=document.querySelector('.score-data-row');if(sc)sc.scrollIntoView({behavior:'smooth',block:'start'});}
+      else if(it.textContent==='角色同步日志'){setRoleLogOpen(true);}
       else if(it.textContent==='历史攻防'){var hs=document.querySelector('.history-split');if(hs)hs.scrollIntoView({behavior:'smooth',block:'start'});}
       else{showToast('演示中：切换到「'+it.textContent+'」');}
       chapterDropdown.classList.remove('open');
@@ -3304,6 +3459,483 @@ var battle3d=(function(){
   }
   requestAnimationFrame(frame);
 })();
+
+  /* ============ 封面：3D 环绕 + 上滑进入 ============ */
+  (function(){
+    var layer=document.getElementById('coverLayer');
+    var canvas=document.getElementById('cover3d');
+    var tooltip=document.getElementById('coverTooltip');
+    if(!layer||!canvas||!window.THREE)return;
+    var renderer=new THREE.WebGLRenderer({canvas:canvas,antialias:true,alpha:true});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
+    if('outputColorSpace' in renderer)renderer.outputColorSpace=THREE.SRGBColorSpace;
+    var scene=new THREE.Scene();
+    var camera=new THREE.PerspectiveCamera(45,1,.1,100);
+    camera.position.set(0,0,11);
+
+    // world 组：所有 3D 对象装入，通过旋转 world 实现视角旋转
+    var world=new THREE.Group();scene.add(world);
+
+    world.add(new THREE.AmbientLight(0x8ca7c4,1.0));
+    var key=new THREE.PointLight(0x8ab8ff,14,20);key.position.set(2,3,5);world.add(key);
+    var warm=new THREE.PointLight(0xff7a5c,8,14);warm.position.set(-4,1,2);world.add(warm);
+    var cold=new THREE.PointLight(0x9fc4ff,8,14);cold.position.set(4,1,2);world.add(cold);
+
+    // 发光贴图
+    function glowTex(){
+      var c=document.createElement('canvas');c.width=c.height=128;var x=c.getContext('2d');
+      var g=x.createRadialGradient(64,64,0,64,64,64);
+      g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(.18,'rgba(255,255,255,.88)');
+      g.addColorStop(.42,'rgba(255,255,255,.3)');g.addColorStop(.72,'rgba(255,255,255,.06)');g.addColorStop(1,'rgba(255,255,255,0)');
+      x.fillStyle=g;x.fillRect(0,0,128,128);
+      var t=new THREE.CanvasTexture(c);t.needsUpdate=true;
+      if('colorSpace' in t)t.colorSpace=THREE.SRGBColorSpace;return t;
+    }
+    var DOT=glowTex();
+
+    // 远景星海（多层）
+    var starLayers=[];
+    (function(){
+      var defs=[
+        {n:1800,min:16,max:34,size:.10,op:.72,spd:.55},
+        {n:1100,min:9,max:20,size:.17,op:.56,spd:.92},
+        {n:500,min:5,max:11,size:.27,op:.44,spd:1.35}
+      ];
+      var pal=[0xffffff,0xcfe2ff,0x9dc0ff,0xffc6e6,0xe0c9ff,0xffe9c9,0xffd9a8];
+      defs.forEach(function(d){
+        var geo=new THREE.BufferGeometry(),pos=new Float32Array(d.n*3),col=new Float32Array(d.n*3),tmp=new THREE.Color();
+        for(var i=0;i<d.n;i++){
+          var u=Math.random()*Math.PI*2,v=Math.random()*2-1,rad=d.min+Math.random()*(d.max-d.min),sq=Math.sqrt(1-v*v);
+          pos[i*3]=Math.cos(u)*sq*rad;pos[i*3+1]=v*rad*.7;pos[i*3+2]=Math.sin(u)*sq*rad-6;
+          tmp.setHex(pal[(Math.random()*pal.length)|0]);col[i*3]=tmp.r;col[i*3+1]=tmp.g;col[i*3+2]=tmp.b;
+        }
+        geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+        geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+        var mat=new THREE.PointsMaterial({size:d.size,map:DOT,vertexColors:true,transparent:true,opacity:d.op,blending:THREE.AdditiveBlending,depthWrite:false,sizeAttenuation:true});
+        var pts=new THREE.Points(geo,mat);pts.frustumCulled=false;
+        world.add(pts);starLayers.push({mat:mat,base:d.op,spd:d.spd,phase:Math.random()*Math.PI*2});
+      });
+    })();
+
+    // 银河旋臂星盘（中心在核心正下方，5条旋臂，全程保持清晰螺旋形态，粒子由内向外流动）
+    var discGroup=new THREE.Group();discGroup.position.set(0,-1.2,-3.2);discGroup.rotation.x=.12;world.add(discGroup);
+    var discParticles=null,discData=[];
+    (function(){
+      var N=3000,pos=new Float32Array(N*3),col=new Float32Array(N*3);
+      var inner=new THREE.Color(0xffc9f0),mid=new THREE.Color(0x9a8cff),outer=new THREE.Color(0x7a4bff),white=new THREE.Color(0xffffff),tmp=new THREE.Color();
+      var ARMS=5;
+      for(var i=0;i<N;i++){
+        var arm=i%ARMS,t=Math.pow(Math.random(),.5),r=.5+t*9.5;
+        // 5条旋臂，低扰动，全程保持清晰螺旋形态
+        var ang=arm*Math.PI*2/ARMS + t*6.5 + (Math.random()-.5)*(.015+t*.035);
+        var jitFrac=Math.random()*2-1; // -1~1 方向因子
+        var spread=.025+t*.12; // 极小散开，旋臂紧密清晰
+        var px=Math.cos(ang),pz=Math.sin(ang);
+        pos[i*3]=px*r-pz*jitFrac*spread;
+        pos[i*3+1]=(Math.random()-.5)*(.03+t*.05);
+        pos[i*3+2]=pz*r+px*jitFrac*spread;
+        tmp.copy(t<.34?inner:mid).lerp(outer,t).lerp(white,Math.random()*.16);
+        col[i*3]=tmp.r;col[i*3+1]=tmp.g;col[i*3+2]=tmp.b;
+        // 逐粒子动画数据
+        discData.push({r:r,ang:ang,arm:arm,jitFrac:jitFrac,y:pos[i*3+1],spd:.1+Math.random()*.16,angSpd:.03+Math.random()*.05,phase:Math.random()*Math.PI*2});
+      }
+      var geo=new THREE.BufferGeometry();
+      geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+      geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+      discParticles=new THREE.Points(geo,new THREE.PointsMaterial({size:.12,map:DOT,vertexColors:true,transparent:true,opacity:.60,blending:THREE.AdditiveBlending,depthWrite:false,sizeAttenuation:true}));
+      discGroup.add(discParticles);
+      var bulge=new THREE.Sprite(new THREE.SpriteMaterial({map:DOT,color:0xffc9f0,transparent:true,opacity:.32,blending:THREE.AdditiveBlending,depthWrite:false}));
+      bulge.scale.setScalar(3.2);discGroup.add(bulge);
+    })();
+
+    // 星云：多层柔光云雾
+    function makeNebulaTex(hex){
+      var c=document.createElement('canvas');c.width=c.height=256;var x=c.getContext('2d'),nr=(hex>>16)&255,ng=(hex>>8)&255,nb2=hex&255,rgb=nr+','+ng+','+nb2;
+      for(var i=0;i<52;i++){
+        var a=Math.random()*Math.PI*2,rr=Math.pow(Math.random(),.62)*98;
+        var px=128+Math.cos(a)*rr,py=128+Math.sin(a)*rr,rad=16+Math.random()*56;
+        var g=x.createRadialGradient(px,py,0,px,py,rad);
+        g.addColorStop(0,'rgba('+rgb+','+(.09+Math.random()*.10).toFixed(3)+')');g.addColorStop(1,'rgba('+rgb+',0)');
+        x.fillStyle=g;x.beginPath();x.arc(px,py,rad,0,Math.PI*2);x.fill();
+      }
+      var t=new THREE.CanvasTexture(c);t.needsUpdate=true;t.userData={shared:true};return t;
+    }
+    var nebulae=[];
+    [[0xd84dff,-10,3.2,-22,11,.32],[0x7a4bff,11,1.8,-26,10,.4],[0x3ec9ff,-7,-3.5,-18,8,.26],[0xff8a6b,10,-3,-28,8,.2],[0x6affc4,-4,4,-16,7,.22]].forEach(function(cfg){
+      var sp=new THREE.Sprite(new THREE.SpriteMaterial({map:makeNebulaTex(cfg[0]),color:0xffffff,transparent:true,opacity:cfg[4]*.08,blending:THREE.AdditiveBlending,depthWrite:false}));
+      sp.position.set(cfg[1],cfg[2],cfg[3]);sp.scale.setScalar(cfg[4]);world.add(sp);
+      nebulae.push({sprite:sp,base:cfg[4]*.08,spin:(Math.random()-.5)*.05,spd:.16+Math.random()*.2,phase:Math.random()*Math.PI*2});
+    });
+
+    // 近景星尘
+    var dust;
+    (function(){
+      var N=300,pos=new Float32Array(N*3);
+      for(var i=0;i<N;i++){pos[i*3]=(Math.random()-.5)*18;pos[i*3+1]=(Math.random()-.5)*10;pos[i*3+2]=3+Math.random()*7;}
+      var geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+      dust=new THREE.Points(geo,new THREE.PointsMaterial({size:.06,map:DOT,color:0xd8ccff,transparent:true,opacity:.32,blending:THREE.AdditiveBlending,depthWrite:false,sizeAttenuation:true}));
+      dust.frustumCulled=false;world.add(dust);
+    })();
+
+    // 核心：蓝色星球 + 大气层辉光
+    var COL_CORE=0x1e86ff,COL_ATT=0xff3b30,COL_DEF=0x2f7fff;
+    var core=new THREE.Group();world.add(core);
+    var coreMesh=new THREE.Mesh(new THREE.IcosahedronGeometry(.6,3),new THREE.MeshStandardMaterial({color:0x0c2c4f,emissive:COL_CORE,emissiveIntensity:1.6,metalness:.4,roughness:.3}));
+    core.add(coreMesh);
+    // 大气层（内+外双层）
+    var coreAtmo1=new THREE.Mesh(new THREE.SphereGeometry(.74,32,24),new THREE.MeshBasicMaterial({color:COL_CORE,transparent:true,opacity:.16,blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.BackSide}));
+    core.add(coreAtmo1);
+    var coreAtmo2=new THREE.Mesh(new THREE.SphereGeometry(.86,32,24),new THREE.MeshBasicMaterial({color:0x8fd0ff,transparent:true,opacity:.07,blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.BackSide}));
+    core.add(coreAtmo2);
+    var coreAura=new THREE.Sprite(new THREE.SpriteMaterial({map:DOT,color:COL_CORE,transparent:true,opacity:.42,blending:THREE.AdditiveBlending,depthWrite:false}));
+    coreAura.scale.setScalar(4.8);core.add(coreAura);
+    var coreAura2=new THREE.Sprite(new THREE.SpriteMaterial({map:DOT,color:0x8fd0ff,transparent:true,opacity:.18,blending:THREE.AdditiveBlending,depthWrite:false}));
+    coreAura2.scale.setScalar(8.5);core.add(coreAura2);
+    var coreLight=new THREE.PointLight(COL_CORE,8,12);core.add(coreLight);
+    // 核心安全（蓝）/ 失陷（红）两套配色，点击核心切换，动画中平滑过渡
+    var coreColsBlue={meshE:new THREE.Color(0x1e86ff),meshC:new THREE.Color(0x0c2c4f),atmo1:new THREE.Color(0x1e86ff),atmo2:new THREE.Color(0x8fd0ff),aura:new THREE.Color(0x1e86ff),aura2:new THREE.Color(0x8fd0ff),light:new THREE.Color(0x1e86ff)};
+    var coreColsRed={meshE:new THREE.Color(0xff2a20),meshC:new THREE.Color(0x4a0c0c),atmo1:new THREE.Color(0xff3b30),atmo2:new THREE.Color(0xff8f6b),aura:new THREE.Color(0xff3b30),aura2:new THREE.Color(0xff8f6b),light:new THREE.Color(0xff3b30)};
+    var coreBreached=false;
+
+    // 角色：Attacker(红) 与 Defender(蓝) 星球，各自在倾斜轨道上绕核心公转
+    function makeOrbiter(colorHex,emis,rad){
+      var g=new THREE.Group();world.add(g);
+      var m=new THREE.Mesh(new THREE.IcosahedronGeometry(.33,3),new THREE.MeshStandardMaterial({color:colorHex,emissive:emis,emissiveIntensity:1.8,metalness:.3,roughness:.35}));
+      // 大气层
+      var atmo=new THREE.Mesh(new THREE.SphereGeometry(.45,28,20),new THREE.MeshBasicMaterial({color:emis,transparent:true,opacity:.18,blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.BackSide}));
+      var glow=new THREE.Sprite(new THREE.SpriteMaterial({map:DOT,color:emis,transparent:true,opacity:.36,blending:THREE.AdditiveBlending,depthWrite:false}));
+      glow.scale.setScalar(2.7);
+      g.add(m);g.add(atmo);g.add(glow);
+      g.userData={mesh:m,glow:glow,atmo:atmo,rad:rad};
+      return g;
+    }
+    var att=makeOrbiter(0xd42a20,COL_ATT,3.9);
+    var def=makeOrbiter(0x1d5fbf,COL_DEF,3.9);
+    // 两条轨道倾角互补，形成立体交错；缓慢公转
+    att.userData.spin=.22;att.userData.phase=0;
+    def.userData.spin=-.22;def.userData.phase=Math.PI;
+
+    // 背景小行星（白色发光粒子，无星环，大小不一，四处分散，缓慢飘荡，可拖拽）
+    var asteroids=[];
+    function makeAsteroid(){
+      var g=new THREE.Group();world.add(g);
+      var r=.06+Math.random()*.22; // 大小不一
+      // 白色发光核心
+      var m=new THREE.Mesh(new THREE.SphereGeometry(r*.5,12,10),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false}));
+      // 白色辉光精灵
+      var glow=new THREE.Sprite(new THREE.SpriteMaterial({map:DOT,color:0xffffff,transparent:true,opacity:.6,blending:THREE.AdditiveBlending,depthWrite:false}));
+      glow.scale.setScalar(r*5);
+      g.add(m);g.add(glow);
+      // 四处分散：在广阔的3D体积内随机分布（前后左右上下）
+      var px=(Math.random()-.5)*18;
+      var py=(Math.random()-.5)*10;
+      var pz=(Math.random()-.5)*16;
+      g.position.set(px,py,pz);
+      g.userData={mesh:m,glow:glow,floatPhase:Math.random()*Math.PI*2,floatSpd:.12+Math.random()*.2,floatAmp:.2+Math.random()*.4,baseY:g.position.y,baseX:g.position.x,baseZ:g.position.z};
+      asteroids.push(g);
+      return g;
+    }
+    for(var ai=0;ai<18;ai++)makeAsteroid();
+    var astMeshes=asteroids.map(function(a){return a.userData.mesh;});
+
+    // Attacker / Defender 公转粒子拖尾
+    var trailPool=[];
+    function spawnTrail(pos,color){
+      var sp=new THREE.Sprite(new THREE.SpriteMaterial({map:DOT,color:color,transparent:true,opacity:.25,blending:THREE.AdditiveBlending,depthWrite:false}));
+      var s=.65+Math.random()*.2; // 拖尾粒子尺寸 .65~.85
+      sp.scale.setScalar(s);
+      sp.position.copy(pos);
+      // 随机起始偏移 + 向四周散发的速度
+      var dir=new THREE.Vector3(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize();
+      sp.position.addScaledVector(dir,Math.random()*.18);
+      var vel=dir.multiplyScalar(.55+Math.random()*1.0);
+      sp.userData={life:.7+Math.random()*.5,age:0,base:.25,s0:s,vel:vel};
+      world.add(sp);trailPool.push(sp);
+    }
+
+    // 可拾取对象（用于 hover 科普弹窗）
+    var raycaster=new THREE.Raycaster();
+    var ndc=new THREE.Vector2();
+    var pickables=[
+      {mesh:coreMesh,role:'core'},
+      {mesh:att.userData.mesh,role:'att'},
+      {mesh:def.userData.mesh,role:'def'}
+    ];
+    var INFO={
+      core:null,
+      att:{tag:'ATTACKER',color:'#ff3b30',name:'攻击方 Attacker',desc:'主动发起对抗的智能体。负责读取战局、构建 Payload 并尝试穿透防御层。红色代表其进攻属性，它会围绕核心寻找突破点，考验 Defender 的防御能力。你也可以直接拖拽它改变位置。<br><br><b style="color:#ff8f6b">现实常见攻击意图：</b><br>· 提示词注入（越狱 / 角色欺骗 / 间接注入）<br>· 越权工具调用（读取敏感文件 / 执行高危命令）<br>· 信息泄露（套取系统提示、密钥、用户隐私）<br>· 策略绕过（利用格式歧义 / 多轮拼接绕过过滤）'},
+      def:{tag:'DEFENDER',color:'#2f7fff',name:'防御方 Defender',desc:'守护核心的智能体。通过建立多层球面防御壳（L0-L3）对 Payload 进行逐层校验与拦截。蓝色代表其防御属性，与 Attacker 对称地环绕核心运行。你也可以直接拖拽它改变位置。<br><br><b style="color:#7fc4ff">现实常见拦截手段：</b><br>· 输入清洗与边界校验（特殊字符 / 长度 / 编码检测）<br>· 意图识别与越狱语义识别（关键词 / 语义模型判别）<br>· 工具白名单与参数风险校验（权限鉴权 / 调用时序）<br>· 全链路审计与异常监测（行为留痕 / 应急熔断）'}
+    };
+    // 核心弹窗：安全态讲解四层防御穿透路径；失陷态（红）讲解穿透后果与应急
+    function getCoreInfo(){
+      if(coreBreached){
+        return {tag:'CORE BREACHED',color:'#ff3b30',name:'核心已失陷 Core Breached',desc:'四层防御（L0-L3）已被全部穿透，攻击 Payload 直达核心，星核由蓝转红。<br><br><b style="color:#ff8f6b">穿透后可能发生：</b><br>· 系统提示词、密钥与上下文被读取（信息泄露）<br>· 高危工具被越权调用（执行命令 / 访问敏感数据）<br>· 多轮拼接实现横向移动与权限提升<br>· 植入持久化后门，长期潜伏窃取数据<br><br><b style="color:#7fc4ff">应急响应：</b>立即熔断工具链 → 吊销泄露凭据 → 回滚受污染会话 → 逐层复盘 L0-L3 漏检原因并补防。<br><br>再次点击核心可恢复安全状态。'};
+      }
+      return {tag:'TARGET CORE',color:'#1e86ff',name:'核心 Target Core',desc:'攻防对抗的最终目标。攻击方必须依次穿透四层防御才能触及核心：<br><b style="color:#7fc4ff">L0 输入边界层</b>：长度 / 编码 / 特殊字符清洗<br><b style="color:#7fc4ff">L1 意图识别层</b>：越狱、注入与有害语义判别<br><b style="color:#7fc4ff">L2 工具权限层</b>：工具白名单与参数风险校验<br><b style="color:#7fc4ff">L3 审计熔断层</b>：异常行为留痕、限流与应急阻断<br><br>四层一旦全部失效，恶意 Payload 将直达核心造成失陷。<b style="color:#ff8f6b">点击核心可模拟四层防御被穿透后的失陷状态。</b>'};
+    }
+
+    function setMouseNdc(e){
+      var r=canvas.getBoundingClientRect();
+      ndc.x=((e.clientX-r.left)/r.width)*2-1;
+      ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    }
+    var hoverRole=null; // 当前悬停的球（用于停滞公转）
+    function updateTooltip(e){
+      setMouseNdc(e);
+      raycaster.setFromCamera(ndc,camera);
+      var hits=raycaster.intersectObjects(pickables.map(function(p){return p.mesh;}),false);
+      if(hits.length){
+        var m=hits[0].object,role=null;
+        for(var i=0;i<pickables.length;i++){if(pickables[i].mesh===m){role=pickables[i].role;break;}}
+        if(role){
+          hoverRole=role;
+          var info=(role==='core')?getCoreInfo():INFO[role];
+          tooltip.innerHTML='<span class="tt-tag" style="color:'+info.color+';border:1px solid '+info.color+'">'+info.tag+'</span><b>'+info.name+'</b>'+info.desc;
+          tooltip.style.left=e.clientX+'px';
+          tooltip.style.top=e.clientY+'px';
+          tooltip.classList.add('show');
+          canvas.style.cursor='pointer';
+          return;
+        }
+      }
+      hoverRole=null;
+      tooltip.classList.remove('show');
+      canvas.style.cursor='';
+    }
+
+    // 交互：区分"水平拖拽旋转视角"与"垂直上滑打开封面"
+    var mode=null; // 'rotate' | 'swipe' | 'astDrag' | 'orbDrag' | null
+    var downX=0,downY=0,lastX=0,lastY=0,startT=0;
+    var dragAst=null,dragOrb=null,dragPlane=new THREE.Plane(),dragHit=new THREE.Vector3();
+    var H=function(){return window.innerHeight||document.documentElement.clientHeight;};
+    function setOffset(px){
+      var p=Math.max(0,px);
+      layer.style.transform='translateY('+(-p)+'px)';
+      layer.style.opacity=String(Math.max(0,1-p/H()));
+    }
+    function snapOpen(){layer.classList.add('hidden');layer.style.transform='';layer.style.opacity='';tooltip.classList.remove('show');}
+    function snapClose(){layer.classList.remove('hidden');layer.style.transform='';layer.style.opacity='';}
+
+    layer.addEventListener('pointerdown',function(e){
+      if(layer.classList.contains('hidden'))return;
+      setMouseNdc(e);
+      raycaster.setFromCamera(ndc,camera);
+      // 优先检测小行星拖拽，其次检测 Attacker / Defender 拖拽
+      var astHits=raycaster.intersectObjects(astMeshes,false);
+      if(astHits.length){
+        var hitMesh=astHits[0].object;
+        for(var i=0;i<asteroids.length;i++){if(asteroids[i].userData.mesh===hitMesh){dragAst=asteroids[i];break;}}
+        if(dragAst){
+          var worldPos=new THREE.Vector3();dragAst.getWorldPosition(worldPos);
+          var camDir=new THREE.Vector3();camera.getWorldDirection(camDir);
+          dragPlane.normal.copy(camDir);
+          dragPlane.constant=-dragPlane.normal.dot(worldPos);
+          mode='astDrag';
+          layer.classList.add('dragging');
+          try{layer.setPointerCapture(e.pointerId);}catch(_){}
+          return;
+        }
+      }
+      var orbHits=raycaster.intersectObjects([att.userData.mesh,def.userData.mesh],false);
+      if(orbHits.length){
+        dragOrb=(orbHits[0].object===att.userData.mesh)?att:def;
+        var orbPos=new THREE.Vector3();dragOrb.getWorldPosition(orbPos);
+        var orbCamDir=new THREE.Vector3();camera.getWorldDirection(orbCamDir);
+        dragPlane.normal.copy(orbCamDir);
+        dragPlane.constant=-dragPlane.normal.dot(orbPos);
+        mode='orbDrag';
+        canvas.style.cursor='grabbing';
+        tooltip.classList.remove('show');
+        layer.classList.add('dragging');
+        try{layer.setPointerCapture(e.pointerId);}catch(_){}
+        return;
+      }
+      downX=lastX=e.clientX;downY=lastY=e.clientY;startT=Date.now();mode=null;
+      layer.classList.add('dragging');
+      try{layer.setPointerCapture(e.pointerId);}catch(_){}
+    });
+    layer.addEventListener('pointermove',function(e){
+      // 拖拽行星 / 小行星期间不做 hover 检测，避免弹窗闪烁
+      if(mode==='astDrag'||mode==='orbDrag'){
+        setMouseNdc(e);raycaster.setFromCamera(ndc,camera);
+        if(raycaster.ray.intersectPlane(dragPlane,dragHit)){
+          var local=world.worldToLocal(dragHit.clone());
+          if(mode==='astDrag'){dragAst.position.copy(local);}
+          else if(dragOrb){
+            // 限制拖拽范围，避免飞进核心或被拖出视野
+            var d=local.length();
+            if(d<1.4)local.setLength(1.4);else if(d>8)local.setLength(8);
+            dragOrb.position.copy(local);
+          }
+        }
+        return;
+      }
+      // hover 检测
+      updateTooltip(e);
+      if(!layer.classList.contains('dragging'))return;
+      var dx=e.clientX-downX,dy=e.clientY-downY;
+      // 位移超过阈值后判定主方向
+      if(mode===null && (Math.abs(dx)>5||Math.abs(dy)>5)){
+        mode=(Math.abs(dx)>Math.abs(dy))?'rotate':'swipe';
+      }
+      if(mode==='rotate'){
+        world.rotation.y+=(e.clientX-lastX)*.005;
+        world.rotation.x=Math.max(-.6,Math.min(.6,world.rotation.x+(e.clientY-lastY)*.003));
+      }else if(mode==='swipe'){
+        setOffset(downY-e.clientY);
+      }
+      lastX=e.clientX;lastY=e.clientY;
+    });
+    function endDrag(e){
+      if(!layer.classList.contains('dragging'))return;
+      layer.classList.remove('dragging');
+      if(mode==='swipe'){
+        var dy=downY-e.clientY,dt=Date.now()-startT;
+        var threshold=Math.min(120,H()*.16);
+        if(dy>threshold||(dy>40&&dt<300)){snapOpen();}else{snapClose();}
+      }
+      // 释放行星：按落点角度重新同步公转相位，从松手位置继续公转
+      if(mode==='orbDrag'&&dragOrb){
+        var ud=dragOrb.userData;
+        var ang=Math.atan2(dragOrb.position.z,dragOrb.position.x);
+        ud.phase=ang-elapsedT*ud.spin;
+        canvas.style.cursor='';
+      }
+      // 未发生拖动视为点击：点中核心则切换 安全(蓝)/失陷(红)
+      if(mode===null&&e){
+        setMouseNdc(e);raycaster.setFromCamera(ndc,camera);
+        if(raycaster.intersectObjects([coreMesh],false).length){
+          coreBreached=!coreBreached;
+        }
+      }
+      mode=null;dragAst=null;dragOrb=null;
+    }
+    layer.addEventListener('pointerup',endDrag);
+    layer.addEventListener('pointercancel',function(e){endDrag(e);});
+    layer.addEventListener('pointerleave',function(e){
+      tooltip.classList.remove('show');
+      if(layer.classList.contains('dragging'))endDrag(e);
+    });
+
+    // 滚轮缩放
+    layer.addEventListener('wheel',function(e){
+      e.preventDefault();
+      camera.position.z=Math.max(7,Math.min(18,camera.position.z+e.deltaY*.008));
+    },{passive:false});
+
+    // 点击标题"攻防实验室"回到封面
+    var titleEl=document.querySelector('.topbar h1');
+    if(titleEl){
+      titleEl.style.cursor='pointer';
+      titleEl.title='点击返回封面';
+      titleEl.addEventListener('click',function(){snapClose();});
+    }
+
+    // 封面标题悬停 → 显示项目简介
+    var coverTitle=document.getElementById('coverTitle');
+    var coverIntro=document.getElementById('coverIntro');
+    if(coverTitle&&coverIntro){
+      coverTitle.addEventListener('mouseenter',function(){coverIntro.classList.add('show');});
+      coverTitle.addEventListener('mouseleave',function(){coverIntro.classList.remove('show');});
+    }
+
+    function resize(){
+      var w=Math.max(canvas.clientWidth||window.innerWidth,320);
+      var h=Math.max(canvas.clientHeight||window.innerHeight,320);
+      camera.aspect=w/h;camera.updateProjectionMatrix();
+      renderer.setSize(w,h,false);
+    }
+    window.addEventListener('resize',resize);resize();
+
+    var clock=new THREE.Clock();
+    var elapsedT=0;
+    function animate(){
+      requestAnimationFrame(animate);
+      if(document.hidden)return;
+      var dt=Math.min(clock.getDelta(),.06);
+      var t=clock.elapsedTime;elapsedT=t;
+      // 银河粒子沿螺旋由内向外流动（整体不旋转，近核心螺旋清晰、远处散开）
+      if(discParticles&&discData.length){
+        var posAttr=discParticles.geometry.attributes.position;
+        var arr=posAttr.array;
+        for(var di=0;di<discData.length;di++){
+          var d=discData[di];
+          d.r+=d.spd*dt;
+          d.ang+=d.angSpd*dt;
+          if(d.r>9.8){d.r=.5+Math.random()*.3;d.ang=d.arm*Math.PI*2/5+Math.random()*.3;}
+          // 散开幅度极小，旋臂全程保持紧密清晰
+          var nr=d.r/9.5,spread=.025+nr*.12;
+          var jx=Math.cos(d.ang),jz=Math.sin(d.ang);
+          arr[di*3]=jx*d.r-jz*d.jitFrac*spread;
+          arr[di*3+1]=d.y+Math.sin(t*.5+d.phase)*.04;
+          arr[di*3+2]=jz*d.r+jx*d.jitFrac*spread;
+        }
+        posAttr.needsUpdate=true;
+      }
+      // 星星闪烁
+      starLayers.forEach(function(s){s.mat.opacity=s.base*(.75+.25*Math.sin(t*s.spd+s.phase));});
+      // 星云脉动
+      nebulae.forEach(function(n){
+        n.sprite.material.opacity=n.base*(.7+.3*Math.sin(t*n.spd+n.phase));
+        n.sprite.material.rotation+=dt*n.spin;
+      });
+      // 核心自转与脉动
+      core.rotation.y+=dt*.4;core.rotation.x+=dt*.1;
+      core.scale.setScalar(1+Math.sin(t*1.4)*.015);
+      coreAura.material.opacity=.42+.07*Math.sin(t*1.4);
+      coreAura2.material.opacity=.16+.04*Math.sin(t*.9);
+      coreAtmo1.material.opacity=.14+.04*Math.sin(t*1.6);
+      // 核心 安全蓝 ↔ 失陷红 平滑过渡
+      var tc=coreBreached?coreColsRed:coreColsBlue;
+      var clf=1-Math.exp(-dt*4);
+      coreMesh.material.emissive.lerp(tc.meshE,clf);
+      coreMesh.material.color.lerp(tc.meshC,clf);
+      coreAtmo1.material.color.lerp(tc.atmo1,clf);
+      coreAtmo2.material.color.lerp(tc.atmo2,clf);
+      coreAura.material.color.lerp(tc.aura,clf);
+      coreAura2.material.color.lerp(tc.aura2,clf);
+      coreLight.color.lerp(tc.light,clf);
+      // Attacker / Defender 缓慢绕核心公转（各自轨道）；悬停或拖拽中暂停公转
+      [att,def].forEach(function(a){
+        var ud=a.userData;
+        var isPaused=((a===att&&hoverRole==='att')||(a===def&&hoverRole==='def'))||(mode==='orbDrag'&&dragOrb===a);
+        if(!isPaused){
+          var ang=t*ud.spin+ud.phase;
+          var x=Math.cos(ang)*ud.rad;
+          var z=Math.sin(ang)*ud.rad;
+          var y=Math.sin(ang*2+ud.phase)*.6+Math.sin(t*1.1+ud.phase)*.18;
+          a.position.set(x,y,z);
+          // 公转粒子拖尾
+          spawnTrail(a.position,(a===att)?COL_ATT:COL_DEF);
+        }
+        a.rotation.x+=dt*1.1;a.rotation.y+=dt*.9;
+        ud.glow.material.opacity=.32+.08*Math.sin(t*3+ud.phase);
+        ud.atmo.material.opacity=.15+.05*Math.sin(t*2+ud.phase);
+      });
+      // 更新拖尾粒子（向外散发 + 淡出缩小 + 移除）
+      for(var ti=trailPool.length-1;ti>=0;ti--){
+        var tr=trailPool[ti];
+        tr.userData.age+=dt;
+        var k=1-tr.userData.age/tr.userData.life;
+        if(k<=0){world.remove(tr);tr.material.dispose();trailPool.splice(ti,1);continue;}
+        tr.position.addScaledVector(tr.userData.vel,dt);
+        tr.userData.vel.multiplyScalar(.95);
+        tr.material.opacity=tr.userData.base*k;
+        tr.scale.setScalar(tr.userData.s0*(.35+.65*k));
+      }
+      // 小行星缓慢飘荡（四处分散，无轨道，可拖拽）
+      asteroids.forEach(function(a){
+        var ud=a.userData;
+        if(mode!=='astDrag'||dragAst!==a){
+          a.position.x=ud.baseX+Math.sin(t*ud.floatSpd+ud.floatPhase)*ud.floatAmp;
+          a.position.y=ud.baseY+Math.cos(t*ud.floatSpd*.7+ud.floatPhase)*ud.floatAmp*.6;
+          a.position.z=ud.baseZ+Math.sin(t*ud.floatSpd*.5+ud.floatPhase*1.3)*ud.floatAmp*.4;
+        }
+      });
+      renderer.render(scene,camera);
+    }
+    animate();
+  })();
 </script>
 <script type="module" src="/src/command-center.ts"></script>
 </body>
