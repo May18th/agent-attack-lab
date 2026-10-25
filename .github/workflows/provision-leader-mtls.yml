@@ -1,0 +1,197 @@
+name: 置备 leader-mtls mTLS 入口
+
+# 把 1.2.1 主调度的 serverAuth 证书落到 VPS，并追加 nginx server block。
+#
+# 安全约束：
+#   - 私钥只从 repository secret 读，不落日志、不进 Git、不写仓库目录。
+#   - 落盘权限 600 / 目录 700。
+#   - 写完立刻用 SHA-256 指纹比对，不一致直接失败并清理。
+#   - nginx 配置先备份，nginx -t 失败自动回滚且不 reload。
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "输入 provision 确认执行（会修改生产 nginx）"
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provision-leader-mtls
+  cancel-in-progress: false
+
+env:
+  # 1.2.1 serverAuth 证书指纹（SHA-256），用于落盘后校验传输完整性
+  EXPECTED_FINGERPRINT: "D7:A0:57:CD:03:88:52:8A:1B:EF:59:2D:40:29:3E:0F:D7:09:56:9C:85:11:E6:7E:72:A8:AE:24:0C:74:09:F8"
+  NGINX_CONF: /etc/nginx/sites-enabled/agent-attack-lab-mtls.conf
+  CERT_DIR: /home/deployer/.config/agent-attack-lab/partners/leader/workspace/acps
+
+jobs:
+  provision:
+    name: 落证书与 nginx 配置
+    runs-on: [self-hosted, production]
+    timeout-minutes: 15
+    steps:
+      - name: 前置检查
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.confirm }}" != "provision" ]]; then
+            echo "未确认，退出。需要 confirm=provision" >&2
+            exit 1
+          fi
+          runner_user=$(id -un)
+          echo "runner_user=$runner_user"
+          [[ "$runner_user" == deployer ]] || { echo 'Runner must run as deployer' >&2; exit 1; }
+          sudo -n true || { echo 'deployer 缺少免密 sudo' >&2; exit 1; }
+          [ -f "$NGINX_CONF" ] || { echo "缺少 $NGINX_CONF" >&2; exit 1; }
+
+      - name: 落 serverAuth 证书与私钥
+        shell: bash
+        env:
+          SERVER_CERT: ${{ secrets.LEADER_MTLS_SERVER_CERT }}
+          SERVER_KEY: ${{ secrets.LEADER_MTLS_SERVER_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SERVER_CERT:-}" ]] || { echo '缺少 secret LEADER_MTLS_SERVER_CERT' >&2; exit 1; }
+          [[ -n "${SERVER_KEY:-}"  ]] || { echo '缺少 secret LEADER_MTLS_SERVER_KEY' >&2; exit 1; }
+
+          install -d -m 700 "$CERT_DIR" "$CERT_DIR/server"
+          printf '%s\n' "$SERVER_CERT" > "$CERT_DIR/server/certificate.pem"
+          printf '%s\n' "$SERVER_KEY"  > "$CERT_DIR/server/private-key.pem"
+          chmod 600 "$CERT_DIR/server/certificate.pem" "$CERT_DIR/server/private-key.pem"
+
+          echo "已写入，校验指纹："
+          actual=$(openssl x509 -in "$CERT_DIR/server/certificate.pem" -noout -fingerprint -sha256 | sed 's/^.*=//')
+          echo "  expected=$EXPECTED_FINGERPRINT"
+          echo "  actual  =$actual"
+          if [[ "$actual" != "$EXPECTED_FINGERPRINT" ]]; then
+            echo "指纹不一致，清理已写入文件" >&2
+            rm -f "$CERT_DIR/server/certificate.pem" "$CERT_DIR/server/private-key.pem"
+            exit 1
+          fi
+          echo "指纹一致"
+
+          echo "证书主体与 SAN："
+          openssl x509 -in "$CERT_DIR/server/certificate.pem" -noout -subject -enddate -ext subjectAltName
+
+      - name: 校验私钥与证书配对
+        shell: bash
+        run: |
+          set -euo pipefail
+          cert_pub=$(openssl x509 -in "$CERT_DIR/server/certificate.pem" -noout -pubkey | openssl sha256)
+          key_pub=$(openssl pkey -in "$CERT_DIR/server/private-key.pem" -pubout | openssl sha256)
+          echo "cert_pub=$cert_pub"
+          echo "key_pub =$key_pub"
+          [[ "$cert_pub" == "$key_pub" ]] || { echo "私钥与证书不配对" >&2; exit 1; }
+          echo "私钥与证书配对正确"
+
+      - name: 复用 Agent CA 根证书（ca-verify.pem）
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 注册流程只签发 server/client 证书，不产出 ca-verify.pem。
+          # 服务端校验调用方客户端证书需要 Agent CA 根，直接复用 attack 那份，
+          # 与现网两个入口保持完全一致的信任锚。
+          src="/home/deployer/.config/agent-attack-lab/partners/attack/workspace/acps/ca-verify.pem"
+          [ -f "$src" ] || { echo "找不到 attack 的 ca-verify.pem：$src" >&2; exit 1; }
+          install -m 644 "$src" "$CERT_DIR/ca-verify.pem"
+          echo "已复用，主体如下："
+          openssl x509 -in "$CERT_DIR/ca-verify.pem" -noout -subject -enddate
+
+      - name: 下载源码以取得配置模板
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/lmtls-src"
+          rm -rf "$src"; mkdir -p "$src"
+          curl --fail --silent --show-error --location --retry 3 --connect-timeout 10 --max-time 120 \
+            "https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}" \
+            --output "$RUNNER_TEMP/lmtls.tar.gz"
+          tar -xzf "$RUNNER_TEMP/lmtls.tar.gz" --strip-components=1 --directory "$src"
+          tpl="$src/backend/deploy/nginx/leader-mtls.conf.template"
+          [ -f "$tpl" ] || { echo "模板缺失：$tpl" >&2; exit 1; }
+          echo "模板就绪"
+          echo "TEMPLATE=$tpl" >> "$GITHUB_ENV"
+
+      - name: 追加 server block（幂等，失败自动回滚）
+        shell: bash
+        run: |
+          set -euo pipefail
+          backup="$NGINX_CONF.bak-$(date +%Y%m%d-%H%M%S)"
+
+          if sudo -n grep -q "server_name leader-mtls.yuanyiagentzhandui.cn" "$NGINX_CONF"; then
+            echo "已存在 leader-mtls server block，跳过追加（幂等）"
+            echo "SKIPPED_APPEND=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          sudo -n cp -a "$NGINX_CONF" "$backup"
+          echo "已备份到 $backup"
+          echo "BACKUP=$backup" >> "$GITHUB_ENV"
+
+          # 渲染模板：替换证书目录占位符后追加
+          sed "s#__CERT_DIR__#${CERT_DIR}#g" "$TEMPLATE" > "$RUNNER_TEMP/leader-mtls.block"
+          echo "---- 待追加内容 ----"
+          cat "$RUNNER_TEMP/leader-mtls.block"
+          echo "--------------------"
+
+          printf '\n' | sudo -n tee -a "$NGINX_CONF" > /dev/null
+          sudo -n tee -a "$NGINX_CONF" < "$RUNNER_TEMP/leader-mtls.block" > /dev/null
+
+          if sudo -n nginx -t; then
+            echo "nginx -t 通过"
+          else
+            echo "nginx -t 失败，回滚配置" >&2
+            sudo -n cp -a "$backup" "$NGINX_CONF"
+            sudo -n nginx -t || true
+            exit 1
+          fi
+
+      - name: reload nginx
+        shell: bash
+        run: |
+          set -euo pipefail
+          if sudo -n systemctl reload nginx; then
+            echo "nginx reload 完成"
+          else
+            echo "reload 失败，回滚" >&2
+            if [[ -n "${BACKUP:-}" ]]; then
+              sudo -n cp -a "$BACKUP" "$NGINX_CONF"
+              sudo -n nginx -t || true
+              sudo -n systemctl reload nginx || true
+            fi
+            exit 1
+          fi
+          sleep 2
+          systemctl is-active nginx
+
+      - name: 验收
+        shell: bash
+        run: |
+          set -uo pipefail
+          probe() {
+            local label="$1" url="$2"
+            local code
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo "ERR")
+            printf '%-46s %s\n' "$label" "$code"
+          }
+          echo "== 新入口 =="
+          probe "leader-mtls /health（期望 200）"        "https://leader-mtls.yuanyiagentzhandui.cn/health"
+          probe "leader-mtls /rpc 无证书（期望 403）"    "https://leader-mtls.yuanyiagentzhandui.cn/rpc"
+          probe "leader-mtls /dashboard 应不暴露（404）" "https://leader-mtls.yuanyiagentzhandui.cn/dashboard"
+          echo "== 存量入口行为不变 =="
+          probe "attack /rpc 无证书（期望 403）"         "https://attack.yuanyiagentzhandui.cn/rpc"
+          probe "defense /rpc 无证书（期望 403）"        "https://defense.yuanyiagentzhandui.cn/rpc"
+          probe "api /health（期望 200）"                "https://api.yuanyiagentzhandui.cn/health"
+
+      - name: 摘要
+        shell: bash
+        run: |
+          echo "证书目录：$CERT_DIR"
+          echo "nginx 配置：$NGINX_CONF"
+          echo "备份：${BACKUP:-（未追加，无备份）}"
+          echo "回滚方式：sudo cp -a \$BACKUP $NGINX_CONF && sudo nginx -t && sudo systemctl reload nginx"
