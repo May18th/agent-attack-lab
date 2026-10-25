@@ -44,4 +44,13 @@ if [[ -f .env ]]; then
   done < .env
 fi
 
+# AMP 心跳角色必须按服务区分：三个 systemd 服务共用同一份 .env，
+# 单靠 .env 里的 AGENT_AMP_ROLE 会让三个进程都上报同一个 AIC，
+# 另外两只在梧桐平台上永远是 unknown。这里按启动模块覆盖。
+case "$1" in
+  *attacker*) export AGENT_AMP_ROLE=attacker ;;
+  *defender*) export AGENT_AMP_ROLE=defender ;;
+  *) export AGENT_AMP_ROLE=leader ;;
+esac
+
 exec "$python" -m uvicorn "$1" --host 127.0.0.1 --port "$2" --log-level warning

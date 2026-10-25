@@ -74,6 +74,47 @@ jobs:
         run: |
           printf 'Using deployment SHA: %s\n' "$DEPLOY_SHA"
 
+      - name: 注入模型与心跳配置
+        shell: bash
+        env:
+          LLM_API_KEY: ${{ secrets.AGENT_LLM_API_KEY }}
+        run: |
+          set -euo pipefail
+          env_file=/opt/agent-attack-lab/backend/.env
+          if [[ ! -f "$env_file" ]]; then
+            echo "missing $env_file" >&2
+            exit 1
+          fi
+          if [[ -z "${LLM_API_KEY:-}" ]]; then
+            echo "AGENT_LLM_API_KEY secret is empty; skip model injection"
+            exit 0
+          fi
+          upsert() {
+            local key=$1 value=$2 tmp found=0
+            tmp=$(mktemp)
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              if [[ "$line" =~ ^[[:space:]]*${key}= ]]; then
+                printf '%s=%s\n' "$key" "$value"
+                found=1
+              else
+                printf '%s\n' "$line"
+              fi
+            done < "$env_file" > "$tmp"
+            if (( found == 0 )); then
+              printf '%s=%s\n' "$key" "$value" >> "$tmp"
+            fi
+            cat "$tmp" > "$env_file"
+            rm -f "$tmp"
+          }
+          upsert AGENT_LLM_BASE_URL "https://api.deepseek.com/v1"
+          upsert AGENT_LLM_MODEL "deepseek-chat"
+          upsert AGENT_LLM_API_KEY "$LLM_API_KEY"
+          upsert AGENT_ARBITER_LLM_ENABLED "1"
+          upsert AGENT_REPORT_LLM_ENABLED "1"
+          upsert AGENT_RULE_DISCOVERY_LLM_ENABLED "1"
+          upsert AGENT_AMP_ENABLED "1"
+          printf 'injected model and AMP settings into %s\n' "$env_file"
+
       - name: 部署、迁移并验收
         shell: bash
         env:

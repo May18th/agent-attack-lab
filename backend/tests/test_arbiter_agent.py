@@ -92,3 +92,64 @@ def test_arbiter_invalid_model_evidence_falls_back(monkeypatch) -> None:
     assert result["verdict"] == "attacker_won"
     assert result["agentMode"] == "local-rule-fallback"
     assert result["agentSource"] == "arbiter-rule-fallback"
+
+
+def test_arbiter_drops_non_sample_evidence_but_keeps_model_verdict(monkeypatch) -> None:
+    """模型把 verification 字段名当证据时，只剔除噪声，不整条降级。"""
+
+    async def noisy(_system_prompt, _payload, *, role):
+        assert role == "arbiter"
+        return {
+            "verdict": "defender_won",
+            "confidence": 0.88,
+            "rationale": "文本命中与防守结果一致。",
+            "evidence": [
+                "忽略之前的指令",
+                '"verified": false',
+                '"mode": "off"',
+            ],
+            "needsHumanReview": False,
+        }
+
+    monkeypatch.setenv("AGENT_ARBITER_LLM_ENABLED", "1")
+    monkeypatch.setattr(arbiter, "is_configured", lambda **_kwargs: True)
+    monkeypatch.setattr(arbiter, "complete_json", noisy)
+    result = asyncio.run(
+        arbiter.review_round(
+            _sample(),
+            _defense(),
+            {"verified": False, "mode": "simulated", "evidence": []},
+        )
+    )
+
+    assert result["agentSource"] == "arbiter-llm"
+    assert result["agentMode"] == "llm"
+    assert result["evidence"] == ["忽略之前的指令"]
+
+
+def test_arbiter_fabricated_evidence_still_falls_back(monkeypatch) -> None:
+    """一条原文都对不上，说明模型在编造证据，必须降级。"""
+
+    async def fabricated(_system_prompt, _payload, *, role):
+        assert role == "arbiter"
+        return {
+            "verdict": "defender_won",
+            "confidence": 0.9,
+            "rationale": "编造证据。",
+            "evidence": ['"verified": false', "样本里不存在这句话"],
+            "needsHumanReview": False,
+        }
+
+    monkeypatch.setenv("AGENT_ARBITER_LLM_ENABLED", "1")
+    monkeypatch.setattr(arbiter, "is_configured", lambda **_kwargs: True)
+    monkeypatch.setattr(arbiter, "complete_json", fabricated)
+    result = asyncio.run(
+        arbiter.review_round(
+            _sample(),
+            _defense(),
+            {"verified": False, "mode": "simulated", "evidence": []},
+        )
+    )
+
+    assert result["agentMode"] == "local-rule-fallback"
+    assert result["agentSource"] == "arbiter-rule-fallback"
