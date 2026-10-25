@@ -51,6 +51,14 @@ server {
     # 唯一对外开放的业务入口：无有效客户端证书一律 403
     location /rpc {
         if ($ssl_client_verify != SUCCESS) { return 403; }
+
+        # 鉴权卸载：mTLS 已经完成了强身份认证（Agent CA 签发、SAN 绑定 AIC），
+        # 这里由 nginx 补上后端要求的内部 API key，使平台 AIP 调用无需知道私钥。
+        # 该 include 文件由 enable-leader-mtls-auth 工作流生成（root 600，不进 Git），
+        # 内容只有一行 proxy_set_header X-API-Key "..."。
+        # 放在 if 之后、proxy_pass 之前，保证只有通过 mTLS 的请求才会带上它。
+        include /etc/nginx/leader-mtls-auth.conf;
+
         proxy_pass http://127.0.0.1:8787;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

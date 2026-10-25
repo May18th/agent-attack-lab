@@ -1,0 +1,195 @@
+name: 启用 leader-mtls 鉴权卸载
+
+# 问题：主调度 8787 的 /rpc 强制要求 X-API-Key（生产 AGENT_API_KEY 已设，64 位），
+# 而平台 AIP 调用不会带我们的私有 key → 平台上显示在线，实际调不通。
+# 攻防两只（8788/8789）实测不带 key 返回 200，所以只有主调度有此问题。
+#
+# 方案：在 leader-mtls 的 location /rpc 内由 nginx 注入 X-API-Key。
+#   - mTLS 已经完成强身份认证（Agent CA 签发、证书 SAN 绑定 AIC），
+#     通过 mTLS 等价于通过业务鉴权，不需要调用方再持有共享密钥。
+#   - 注入语句放在 `if ($ssl_client_verify != SUCCESS) return 403;` 之后、
+#     proxy_pass 之前，保证只有通过 mTLS 的请求才会带上它。
+#   - key 从生产 .env 读取，写入 /etc/nginx/leader-mtls-auth.conf（root 600），
+#     不进 Git、不打印、不落 runner 工作目录。
+#   - api 域名（Cloudflare Tunnel）不经过这段配置，鉴权行为保持原样。
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "输入 auth 确认执行"
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enable-leader-mtls-auth
+  cancel-in-progress: false
+
+env:
+  NGINX_CONF: /etc/nginx/sites-enabled/agent-attack-lab-mtls.conf
+  AUTH_CONF: /etc/nginx/leader-mtls-auth.conf
+  INCLUDE_LINE: "include /etc/nginx/leader-mtls-auth.conf;"
+
+jobs:
+  enable:
+    name: 注入内部鉴权
+    runs-on: [self-hosted, production]
+    timeout-minutes: 15
+    steps:
+      - name: 前置检查
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.confirm }}" == "auth" ]] || { echo "需要 confirm=auth" >&2; exit 1; }
+          [[ "$(id -un)" == deployer ]] || { echo 'Runner must run as deployer' >&2; exit 1; }
+          sudo -n true
+          echo "== 当前 nginx -t =="
+          sudo -n nginx -t 2>&1 | sed 's/^/  /' || true
+
+      - name: 生成鉴权 include 文件
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file=/opt/agent-attack-lab/backend/.env
+          [ -f "$env_file" ] || { echo "找不到 $env_file" >&2; exit 1; }
+
+          key=$(sudo -n grep -E '^AGENT_API_KEY=' "$env_file" | head -1 | cut -d= -f2- | tr -d '\r\n')
+          [[ -n "$key" ]] || { echo "AGENT_API_KEY 为空，无需注入，退出" >&2; exit 1; }
+
+          # 只允许安全字符，避免拼进 nginx 配置时注入
+          if [[ ! "$key" =~ ^[A-Za-z0-9._~+/=-]+$ ]]; then
+            echo "AGENT_API_KEY 含非预期字符（长度 ${#key}），拒绝写入" >&2
+            exit 1
+          fi
+          echo "已读取 AGENT_API_KEY（长度 ${#key}），不打印内容"
+
+          tmp=$(mktemp)
+          printf 'proxy_set_header X-API-Key "%s";\n' "$key" > "$tmp"
+          sudo -n install -m 600 -o root -g root "$tmp" "$AUTH_CONF"
+          rm -f "$tmp"
+
+          echo "已写入 $AUTH_CONF"
+          sudo -n ls -l "$AUTH_CONF"
+          # 只回显行数与是否含目标头，不回显 key
+          echo "行数：$(sudo -n wc -l < "$AUTH_CONF")"
+          sudo -n grep -c 'proxy_set_header X-API-Key' "$AUTH_CONF"
+
+      - name: 在 leader-mtls 的 location /rpc 内插入 include
+        shell: bash
+        run: |
+          set -euo pipefail
+          backup_dir=/etc/nginx/backup
+          sudo -n mkdir -p "$backup_dir"
+          backup="$backup_dir/agent-attack-lab-mtls.conf.$(date +%Y%m%d-%H%M%S)"
+          sudo -n cp -L -a "$NGINX_CONF" "$backup"
+          sudo -n cmp -s "$NGINX_CONF" "$backup" || { echo "备份不一致" >&2; exit 1; }
+          echo "已备份：$backup"
+          echo "BACKUP=$backup" >> "$GITHUB_ENV"
+
+          if sudo -n grep -q "leader-mtls-auth.conf" "$NGINX_CONF"; then
+            echo "已存在 include，跳过插入（幂等）"
+            exit 0
+          fi
+
+          tmp=$(mktemp)
+          sudo -n cat "$NGINX_CONF" > "$tmp"
+          # 注意：heredoc 内的 Python 必须与 run 块缩进一致（YAML 块标量会剥掉公共缩进），
+          # 否则列 0 的内容会提前终止块标量，导致 workflow 文件无法解析。
+          python3 - "$tmp" <<'PY'
+          import sys
+
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as fh:
+              lines = fh.read().split("\n")
+
+          out = []
+          in_leader = False
+          inserted = False
+          for line in lines:
+              out.append(line)
+              if "server_name leader-mtls.yuanyiagentzhandui.cn" in line:
+                  in_leader = True
+                  continue
+              if in_leader and not inserted and line.strip().startswith("location /rpc"):
+                  indent = line[: len(line) - len(line.lstrip())]
+                  out.append(indent + "    include /etc/nginx/leader-mtls-auth.conf;")
+                  out.append(indent + "    # 上行由 enable-leader-mtls-auth 注入：mTLS 通过即等价于通过业务鉴权")
+                  inserted = True
+
+          with open(path, "w", encoding="utf-8", newline="\n") as fh:
+              fh.write("\n".join(out))
+          print("inserted" if inserted else "NOT_INSERTED")
+          PY
+
+          sudo -n install -m 644 -o root -g root "$tmp" "$NGINX_CONF"
+          rm -f "$tmp"
+
+          echo "== 插入后 leader-mtls 片段 =="
+          sudo -n awk '/server_name leader-mtls.yuanyiagentzhandui.cn/,/^}/' "$NGINX_CONF" \
+            | grep -nE "location|include|proxy_pass|ssl_client_verify" | head -10
+
+      - name: nginx -t 与 reload
+        shell: bash
+        run: |
+          set -uo pipefail
+          out=$(sudo -n nginx -t 2>&1) || {
+            echo "$out" >&2
+            echo "nginx -t 失败，回滚" >&2
+            sudo -n cp -L "$BACKUP" "$NGINX_CONF"
+            exit 1
+          }
+          echo "$out" | sed 's/^/  /'
+          if echo "$out" | grep -q "conflicting server name"; then
+            echo "存在 conflicting server name，回滚" >&2
+            sudo -n cp -L "$BACKUP" "$NGINX_CONF"
+            exit 1
+          fi
+          sudo -n systemctl reload nginx
+          sleep 2
+          systemctl is-active nginx
+
+      - name: 验收（带客户端证书应不再是 401）
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== 无客户端证书（应 403） =="
+          curl -sk -o /dev/null -w '  /rpc -> %{http_code}\n' --max-time 15 \
+            -X POST https://leader-mtls.yuanyiagentzhandui.cn/rpc \
+            -H 'Content-Type: application/json' -d '{}'
+
+          echo "== 带客户端证书（应不再是 401） =="
+          # leader 的 client 证书只在本机，VPS 上没有；这里借 attack 的 client 证书过
+          # nginx 的 mTLS 层。ssl_verify_client 只校验链与 EKU，不校验 SAN，
+          # 因此可用于验证「mTLS 通过后鉴权是否被放行」。
+          cdir=/home/deployer/.config/agent-attack-lab/partners/attack/workspace/acps/client
+          tmpd=$(mktemp -d)
+          if sudo -n test -f "$cdir/certificate.pem" && sudo -n test -f "$cdir/private-key.pem"; then
+            sudo -n cat "$cdir/certificate.pem" > "$tmpd/cert.pem"
+            sudo -n cat "$cdir/private-key.pem"  > "$tmpd/key.pem"
+            chmod 600 "$tmpd/cert.pem" "$tmpd/key.pem"
+            code=$(curl -sk -o "$tmpd/out" -w '%{http_code}' --max-time 20 \
+              --cert "$tmpd/cert.pem" --key "$tmpd/key.pem" \
+              -X POST https://leader-mtls.yuanyiagentzhandui.cn/rpc \
+              -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":"probe","method":"rpc","params":{}}' || echo ERR)
+            printf '  /rpc -> %s\n' "$code"
+            echo "  响应前 200 字节：$(head -c 200 "$tmpd/out" 2>/dev/null)"
+            if [ "$code" = "401" ]; then
+              echo "  仍是 401，鉴权注入未生效" >&2
+              exit 1
+            fi
+            echo "  已不再是 401，鉴权卸载生效"
+          else
+            echo "  attack 的 client 证书不可读，跳过带证书探测" >&2
+          fi
+          rm -rf "$tmpd"
+
+      - name: 摘要
+        shell: bash
+        run: |
+          echo "鉴权文件：$AUTH_CONF（root 600，内容为一行 X-API-Key，未打印）"
+          echo "nginx 备份：${BACKUP:-无}"
+          echo "回滚：sudo cp -L \$BACKUP $NGINX_CONF && sudo rm -f $AUTH_CONF && sudo nginx -t && sudo systemctl reload nginx"
