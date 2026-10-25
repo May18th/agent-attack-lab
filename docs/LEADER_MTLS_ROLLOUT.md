@@ -180,11 +180,26 @@ runner 内部探测：
 
 复现命令（在 `backend` 目录）：`.venv\Scripts\python.exe scripts\probe_leader_mtls.py`
 
-### 还差一件事（需要平台侧操作）
+### 平台侧收尾（已执行 2026-10-26 01:18）
 
-1.2.0 的旧记录仍留在平台 Registry 里（已离线，不参与发现页查询，属于"灰掉的历史条目"）。删除方式二选一：
-- 平台控制台里找到该主调度旧版本条目删除；
-- 或 `DELETE /api/v1/agent/client/{id}`，**需要管理员会话**，SDK 与脚本都不持这类凭据。
+1.2.0 的旧记录（`v1.2.0 / 0U7Q / registrationId 01a17360-ed84-7447-a1ac-09bd06591378`）已在平台侧删除。这是**软删除**：`DELETE /api/v1/agent/client/{id}` 返回 `{"message":"Agent deleted successfully"}`，记录仍留在列表里但 `is_deleted=true`，与历史轮次（1.0.0 / 1.0.1 / 1.1.0）一致。
+
+删除前的守卫（脚本里硬断言，不满足就中止）：
+
+- `version == 1.2.0`
+- `aic` 以 `0U7Q` 结尾
+- `is_deleted == False`
+
+删除后复验：
+
+| 项 | 结果 |
+|---|---|
+| Registry 未删除记录 | **3 条**：`v1.2.1 / 1A7Q`、`v1.2.0 / 0MVE`、`v1.2.0 / 0GFQ` |
+| Registry 已删除（历史） | 8 条（0U7Q、1AIR、0S0Q、09SG、08RN、09CQ、07QK、1A69） |
+| 发现页 `result.acsMap` | **3 条**，且不再含 `0U7Q` |
+
+> 登录取 token：`POST https://wt.ioa.pub/registry-server/api/v1/auth/login`，`grant_type=password` 表单。token 只在进程内存与临时文件里用，用完即删，不落仓库。
+
 
 **在报名表里的 `0U7Q` 需要改成 `1A7Q`**，否则按旧 AIC 查在线会查不到。
 
