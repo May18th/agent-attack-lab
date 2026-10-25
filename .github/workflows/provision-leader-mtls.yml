@@ -100,8 +100,9 @@ jobs:
           # 服务端校验调用方客户端证书需要 Agent CA 根，直接复用 attack 那份，
           # 与现网两个入口保持完全一致的信任锚。
           src="/home/deployer/.config/agent-attack-lab/partners/attack/workspace/acps/ca-verify.pem"
-          [ -f "$src" ] || { echo "找不到 attack 的 ca-verify.pem：$src" >&2; exit 1; }
-          cp -f "$src" "$CERT_DIR/ca-verify.pem"
+          # attack 的 acps 目录对 runner 不可读（nginx 以 root 读），必须借 sudo
+          sudo -n test -f "$src" || { echo "找不到 attack 的 ca-verify.pem：$src" >&2; exit 1; }
+          sudo -n cat "$src" > "$CERT_DIR/ca-verify.pem"
           chmod 644 "$CERT_DIR/ca-verify.pem"
           echo "已复用，主体如下："
           openssl x509 -in "$CERT_DIR/ca-verify.pem" -noout -subject -enddate
