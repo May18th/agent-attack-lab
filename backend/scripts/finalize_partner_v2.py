@@ -46,6 +46,10 @@ TARGETS = {
         "agent_id": "01a17338-37f3-71b5-9c08-bb59e9e5b5d9",
         "kind": "defender",
     },
+    "leader": {
+        "agent_id": "01a17360-ed84-7447-a1ac-09bd06591378",
+        "kind": "leader",
+    },
 }
 IDENTITIES = ROOT / "agent-identities.json"
 

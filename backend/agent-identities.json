@@ -1,9 +1,10 @@
 {
   "_comment": "梧桐平台已注册智能体的公开身份（AIC 公开可见，非凭据）。AMP 心跳按 role 取 AIC；可用 AGENT_AMP_AIC 覆盖。攻击/防守为 2026-10 重新注册后的新 AIC。",
   "leader": {
-    "aic": "1.2.156.3088.1.BUPT.RX2TMW.34O5X3.KXMH76.09CQ",
+    "aic": "1.2.156.3088.1.BUPT.RX2TMW.4IR05L.P3MRLO.0U7Q",
     "name": "智能体攻防实验室-主调度智能体",
-    "endpoint": "https://api.yuanyiagentzhandui.cn/rpc"
+    "endpoint": "https://api.yuanyiagentzhandui.cn/rpc",
+    "registrationId": "01a17360-ed84-7447-a1ac-09bd06591378"
   },
   "attacker": {
     "aic": "1.2.156.3088.1.BUPT.RX2TMW.IE3B57.C2049I.0MVE",

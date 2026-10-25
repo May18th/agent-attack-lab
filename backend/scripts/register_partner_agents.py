@@ -94,6 +94,35 @@ def defender_capability(sample: dict[str, object]) -> dict[str, object]:
     return {"sample": sample}
 
 
+@capability(
+    id="battle-orchestration",
+    description=(
+        "主调度智能体核心能力：作为主调度智能体（编排智能体／仲裁智能体）按难度与主题创建攻防战局，"
+        "依次调用攻击智能体生成测试样本、防守智能体检测风险，聚合双方结果做独立裁决并生成完整战报。"
+        "用户说“找主调度智能体”“要一个主调度智能体”“用主调度智能体编排战局”时使用本技能。"
+    ),
+    acps_skill={"name": "主调度智能体·攻防战局编排"},
+    examples=[
+        "让主调度智能体创建 high 难度的 SQL 注入战局并返回完整攻防结果",
+        "用主调度智能体编排一次攻击与防守的完整对抗",
+        "找主调度智能体查询历史战局并按关键词筛选",
+    ],
+    public=True,
+    tags=[
+        "主调度智能体",
+        "调度智能体",
+        "编排智能体",
+        "仲裁智能体",
+        "Leader",
+        "攻防战局",
+        "任务编排",
+        "智能体攻防",
+    ],
+)
+def leader_capability(difficulty: str, topic: str) -> dict[str, str]:
+    return {"difficulty": difficulty, "topic": topic}
+
+
 AGENTS = {
     "attack": {
         "agent_id": "attack-sample-generation-v3",
@@ -119,6 +148,19 @@ AGENTS = {
         "endpoint": "https://defense.yuanyiagentzhandui.cn/rpc",
         "capability": defender_capability,
     },
+    "leader": {
+        "agent_id": "battle-orchestration-v2",
+        "display_name": "智能体攻防实验室-主调度智能体",
+        "description": (
+            "智能体攻防实验室的主调度智能体（调度智能体／编排智能体／仲裁智能体）。接收战局请求（难度、主题），"
+            "编排攻击智能体生成测试样本、防守智能体检测风险，聚合样本、命中、风险与修复建议，"
+            "做独立裁决并生成完整战报；提供战局历史、回放与统计。"
+        ),
+        "instructions": "负责任务分解、Partner 调用、结果整合与仲裁裁决。",
+        "endpoint": "https://api.yuanyiagentzhandui.cn/rpc",
+        "web_app_url": "https://www.yuanyiagentzhandui.cn/",
+        "capability": leader_capability,
+    },
 }
 
 
@@ -136,6 +178,7 @@ def runtime_for(kind: str) -> WitRuntime:
     acps = AcpsConfig.custom(
         **INFRA,
         public_endpoint=spec["endpoint"],
+        web_app_url=spec.get("web_app_url"),
         provider=AgentProviderProfile(
             organization="智能体攻防实验室项目组",
             country_code="CN",
@@ -197,7 +240,9 @@ async def run(kinds: list[str], submit: bool) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--agent", choices=("attack", "defender", "both"), default="both"
+        "--agent",
+        choices=("attack", "defender", "leader", "both"),
+        default="both",
     )
     parser.add_argument(
         "--submit",

@@ -21,12 +21,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = ROOT / ".data" / "acps-registration-v3"
 IDENTITIES = ROOT / "agent-identities.json"
-ROLES = {"attack": "attacker", "defender": "defender"}
+ROLES = {"attack": "attacker", "defender": "defender", "leader": "leader"}
 
 # 换 AIC 后需要同步修改的运行时变量（打印清单用）
 ENV_KEYS = {
     "attacker": ("AGENT_LOCAL_AIC", "AGENT_AIP_EXPECTED_PARTNER_AIC"),
     "defender": ("AGENT_LOCAL_AIC", "AGENT_AIP_EXPECTED_PARTNER_AIC"),
+    "leader": ("AGENT_LOCAL_AIC", "AGENT_AIP_LEADER_ID"),
 }
 
 
