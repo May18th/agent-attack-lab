@@ -3619,12 +3619,12 @@ var battle3d=(function(){
     var asteroids=[];
     function makeAsteroid(){
       var g=new THREE.Group();world.add(g);
-      var r=.06+Math.random()*.22; // 大小不一
+      var r=.035+Math.random()*.135; // 缩小白色小行星
       // 白色发光核心
-      var m=new THREE.Mesh(new THREE.SphereGeometry(r*.5,12,10),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false}));
+      var m=new THREE.Mesh(new THREE.SphereGeometry(r*.45,12,10),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false}));
       // 白色辉光精灵
       var glow=new THREE.Sprite(new THREE.SpriteMaterial({map:DOT,color:0xffffff,transparent:true,opacity:.6,blending:THREE.AdditiveBlending,depthWrite:false}));
-      glow.scale.setScalar(r*5);
+      glow.scale.setScalar(r*3.2);
       g.add(m);g.add(glow);
       // 四处分散：在广阔的3D体积内随机分布（前后左右上下）
       var px=(Math.random()-.5)*18;
