@@ -328,7 +328,14 @@ function App() {
     if (validationError || busy) return
     setBusy(true); setMessage('')
     try {
-      const battle = await api<Battle>('/battles', { method: 'POST', body: JSON.stringify({ topic: topic.trim(), difficulty }) })
+      const created = await api<Battle>('/battles', { method: 'POST', body: JSON.stringify({ topic: topic.trim(), difficulty }) })
+      let battle: Battle
+      try {
+        battle = await getBattle(created.id)
+      } catch (error) {
+        setMessage('创建请求已提交，但暂时无法回读战局详情：' + apiErrorMessage(error))
+        return
+      }
       setSelected(battle)
       selectedIdRef.current = battle.id
       if (battle.status === 'completed' || battle.status === 'failed') void loadBattleScore(battle.id)

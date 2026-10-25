@@ -20,6 +20,7 @@ function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource =
     attackerOut: { ...battle.attackerOut, agentSource: source },
     defenderOut: [{ ...battle.defenderOut[0], agentSource: defenseSource }],
   }
+  let createdBattle: typeof sourceBattle | null = null
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     if (url.pathname.endsWith('/auth/session')) {
@@ -64,7 +65,8 @@ function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource =
       }), { status: 200 }))
     }
     if (url.pathname.endsWith('/battles') && init?.method === 'POST') {
-      return Promise.resolve(new Response(JSON.stringify({ ...sourceBattle, id: 'battle-new', topic: '新战局' }), { status: 201 }))
+      createdBattle = { ...sourceBattle, id: 'battle-new', topic: '新战局' }
+      return Promise.resolve(new Response(JSON.stringify(createdBattle), { status: 201 }))
     }
     if (url.pathname.endsWith('/battles') && init?.method !== 'POST') {
       const query = url.searchParams.get('q')?.toLowerCase() ?? ''
@@ -101,6 +103,9 @@ function installFetchMock(totalBattles = 21, source = 'acp-llm', defenseSource =
       }
       if (init?.method === 'DELETE') {
         return Promise.resolve(new Response(null, { status: 204 }))
+      }
+      if (createdBattle?.id === id) {
+        return Promise.resolve(new Response(JSON.stringify(createdBattle), { status: 200 }))
       }
       return Promise.resolve(new Response(JSON.stringify(id === battle.id ? sourceBattle : { ...sourceBattle, id, topic: '已恢复回放' }), { status: 200 }))
     }
@@ -274,6 +279,48 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('战局创建完成')).toBeInTheDocument())
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles'), expect.objectContaining({ method: 'POST' }))
     expect(screen.getByRole('heading', { name: '新战局' })).toBeInTheDocument()
+  })
+
+  it('re-reads the created battle by id before confirming persistence', async () => {
+    const fetchMock = installFetchMock()
+    const baseline = fetchMock.getMockImplementation()!
+    const persistedBattle = { ...battle, id: 'battle-new', topic: '已持久化回读', status: 'pending' }
+    fetchMock.mockImplementation((input, init) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/battles/battle-new') && !init?.method) {
+        return Promise.resolve(new Response(JSON.stringify(persistedBattle), { status: 200 }))
+      }
+      return baseline(input, init)
+    })
+    render(<App />)
+
+    await screen.findByRole('heading', { name: '已有战局', level: 2 })
+    fireEvent.change(screen.getByRole('textbox', { name: /^攻防主题/ }), { target: { value: '新战局' } })
+    fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/battles/battle-new'), expect.anything()))
+    expect(await screen.findByRole('heading', { name: '已持久化回读' })).toBeInTheDocument()
+    expect(screen.getByText('战局创建完成')).toBeInTheDocument()
+  })
+
+  it('does not report successful creation when the created battle cannot be read back', async () => {
+    const fetchMock = installFetchMock()
+    const baseline = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((input, init) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/battles/battle-new') && !init?.method) {
+        return Promise.resolve(new Response(JSON.stringify({ detail: 'not found' }), { status: 404 }))
+      }
+      return baseline(input, init)
+    })
+    render(<App />)
+
+    await screen.findByRole('heading', { name: '已有战局', level: 2 })
+    fireEvent.change(screen.getByRole('textbox', { name: /^攻防主题/ }), { target: { value: '新战局' } })
+    fireEvent.click(screen.getByRole('button', { name: /开始攻防/ }))
+
+    expect(await screen.findByText(/创建请求已提交，但暂时无法回读战局详情/)).toBeInTheDocument()
+    expect(screen.queryByText('战局创建完成')).not.toBeInTheDocument()
   })
 
   it('shows a retryable health state when the health check fails', async () => {

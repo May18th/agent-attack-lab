@@ -1,2 +1,5 @@
+html { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
 html, body, #root { margin: 0; min-height: 100%; }
-body { min-height: 100vh; }
+body { min-height: 100vh; min-height: 100dvh; }
+input, textarea, select { font-size: 16px; }
+button, a, [role="button"] { touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }

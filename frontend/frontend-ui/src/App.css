@@ -54,3 +54,30 @@
 .status{cursor:pointer}
 .admin-link{padding:8px 11px;border:1px solid var(--line);border-radius:9px;color:var(--muted);font-size:12px;text-decoration:none}
 .admin-link:hover{color:var(--text);border-color:#4da3ff99;background:#4da3ff14}
+
+.layout,.col-left,.detail{min-width:0}
+.card-head>div,.detail-head>div,.diff-grid>label,.round-card,.side{min-width:0}
+.detail-meta,.sub,.diff-item,.step,.round-head,.code-chip{overflow-wrap:anywhere}
+
+@media(max-width:420px){
+  .page{padding-inline:12px;padding-top:calc(18px + env(safe-area-inset-top, 0px));padding-bottom:calc(40px + env(safe-area-inset-bottom, 0px))}
+  .topbar h1{font-size:22px;overflow-wrap:anywhere}
+  .topbar .eyebrow{letter-spacing:.22em;overflow-wrap:anywhere}
+  .topbar-actions{min-width:0}
+  .status{width:100%;max-width:100%;min-width:0;white-space:normal;text-align:left}
+  .diff-grid{grid-template-columns:1fr}
+  .card{padding-inline:16px}
+  .pagination{flex-wrap:wrap}
+  .pagination>span{order:3;width:100%;text-align:center}
+}
+
+.toast{bottom:calc(26px + env(safe-area-inset-bottom, 0px))}
+
+@media(max-width:640px){
+  .page{padding-top:calc(18px + env(safe-area-inset-top, 0px));padding-bottom:calc(40px + env(safe-area-inset-bottom, 0px))}
+}
+
+@media (hover: none), (pointer: coarse){
+  .battle-item:hover:not(.active){background:transparent;border-color:transparent}
+  .admin-link:hover{color:var(--muted);border-color:var(--line);background:transparent}
+}

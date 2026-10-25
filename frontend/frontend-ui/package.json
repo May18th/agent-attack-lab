@@ -11,7 +11,7 @@
     "deploy": "npx wrangler deploy",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run --maxWorkers=1 && node --test scripts/build-environment.node-test.mjs scripts/public-entry.node-test.mjs",
+    "test": "vitest run --maxWorkers=1 && node --test scripts/build-environment.node-test.mjs scripts/public-entry.node-test.mjs scripts/mobile-layout.node-test.mjs",
     "build:preview": "node scripts/check-preview-env.mjs && npm run build"
   },
   "dependencies": {
