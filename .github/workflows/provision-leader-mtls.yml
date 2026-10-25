@@ -59,10 +59,13 @@ jobs:
           [[ -n "${SERVER_CERT:-}" ]] || { echo '缺少 secret LEADER_MTLS_SERVER_CERT' >&2; exit 1; }
           [[ -n "${SERVER_KEY:-}"  ]] || { echo '缺少 secret LEADER_MTLS_SERVER_KEY' >&2; exit 1; }
 
-          install -d -m 700 "$CERT_DIR" "$CERT_DIR/server"
+          # 目录由注册流程创建，可能不属于 runner，不要改其权限（install -d -m 会失败）。
+          # 只保证私钥文件本身 600。
+          mkdir -p "$CERT_DIR/server"
           printf '%s\n' "$SERVER_CERT" > "$CERT_DIR/server/certificate.pem"
           printf '%s\n' "$SERVER_KEY"  > "$CERT_DIR/server/private-key.pem"
           chmod 600 "$CERT_DIR/server/certificate.pem" "$CERT_DIR/server/private-key.pem"
+          echo "已写入：$(ls -l "$CERT_DIR/server" | tail -2)"
 
           echo "已写入，校验指纹："
           actual=$(openssl x509 -in "$CERT_DIR/server/certificate.pem" -noout -fingerprint -sha256 | sed 's/^.*=//')
@@ -98,7 +101,8 @@ jobs:
           # 与现网两个入口保持完全一致的信任锚。
           src="/home/deployer/.config/agent-attack-lab/partners/attack/workspace/acps/ca-verify.pem"
           [ -f "$src" ] || { echo "找不到 attack 的 ca-verify.pem：$src" >&2; exit 1; }
-          install -m 644 "$src" "$CERT_DIR/ca-verify.pem"
+          cp -f "$src" "$CERT_DIR/ca-verify.pem"
+          chmod 644 "$CERT_DIR/ca-verify.pem"
           echo "已复用，主体如下："
           openssl x509 -in "$CERT_DIR/ca-verify.pem" -noout -subject -enddate
 
