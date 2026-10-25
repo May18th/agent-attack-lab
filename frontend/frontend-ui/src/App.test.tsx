@@ -173,6 +173,90 @@ describe('App', () => {
     expect(primaryLayout.compareDocumentPosition(external) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('renders an API-backed command center stage without fabricated defense status', async () => {
+    const fetchMock = installFetchMock()
+    render(<App />)
+
+    const stage = await screen.findByRole('region', { name: '战场总控台' })
+    expect(within(stage).getByText('已有战局')).toBeInTheDocument()
+    expect(stage.querySelector('.hero-hud-meta')).toHaveTextContent('battle-test')
+    expect(within(stage).getByText('1 个样本')).toBeInTheDocument()
+    expect(stage.querySelector('.hero-hud-note')).toHaveTextContent(
+      '已记录防守结果 · 不补写后端未提供的数据',
+    )
+    expect(within(stage).queryByText('L0 - L3 ACTIVE')).not.toBeInTheDocument()
+    expect(screen.queryByText('拦截 / 逃逸分布')).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/events'))).toBe(false)
+  })
+
+  it('restores the video reference battlefield with an adjacent control and recorded-round panel', async () => {
+    installFetchMock()
+    render(<App />)
+
+    const battlefield = await screen.findByRole('region', { name: '三维战场' })
+    const controls = screen.getByRole('complementary', { name: '战局控制面板' })
+
+    expect(battlefield.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(controls).getByRole('heading', { name: '开始新战局（New battle）' })).toBeInTheDocument()
+    expect(within(controls).getByRole('heading', { name: '已记录对抗轮次' })).toBeInTheDocument()
+    expect(controls).toHaveTextContent('battle-test')
+    expect(document.querySelector('.hero-stage')).not.toBeInTheDocument()
+    expect(screen.queryByText(/拦截率|逃逸率|响应时长/)).not.toBeInTheDocument()
+  })
+
+  it('uses neutral labels instead of local or simulation wording for API-provided sources', async () => {
+    installFetchMock(1, 'local-rule', 'local-rule')
+    render(<App />)
+
+    expect(await screen.findByText('攻击来源：规则引擎')).toBeInTheDocument()
+    expect(screen.getByText('防守来源：规则引擎')).toBeInTheDocument()
+    expect(screen.queryByText(/本地规则引擎|模拟样本|本机未加载/)).not.toBeInTheDocument()
+  })
+
+  it('keeps the public workflow available when the battle scene falls back', async () => {
+    installFetchMock()
+    render(<App />)
+
+    expect(await screen.findByText('3D 场景不可用，仍可查看战局数据。')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '历史战局（Battle history）' })).toBeInTheDocument()
+    const topic = screen.getByRole('textbox', { name: /^攻防主题/ })
+    fireEvent.change(topic, { target: { value: 'WebGL 回退仍可创建' } })
+    expect(topic).toHaveValue('WebGL 回退仍可创建')
+    expect(screen.getByRole('button', { name: /开始攻防/ })).toBeEnabled()
+  })
+
+  it('keeps the command center usable for partial running battle data', async () => {
+    const fetchMock = installFetchMock()
+    const baseline = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((input, init) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/battles/battle-2') && !init?.method) {
+        return Promise.resolve(new Response(JSON.stringify({
+          ...battle,
+          id: 'battle-2',
+          topic: '部分回读战局',
+          status: 'running',
+          attackerOut: { agentSource: 'future-agent', samples: [
+            { type: 'defect', severity: 'mid', content: 'first sample' },
+            { type: 'vuln', severity: 'high', content: 'second sample' },
+          ] },
+          defenderOut: [{}],
+        }), { status: 200 }))
+      }
+      return baseline(input, init)
+    })
+    render(<App />)
+
+    await screen.findByRole('heading', { name: '已有战局', level: 2 })
+    fireEvent.click(screen.getByRole('button', { name: /历史战局 2/ }))
+    expect(await screen.findByRole('heading', { name: '部分回读战局', level: 2 })).toBeInTheDocument()
+    expect(screen.getByText('第 2 轮（Round 2）')).toBeInTheDocument()
+    expect(screen.getAllByText('未发现问题（No findings）').length).toBeGreaterThan(0)
+    expect(screen.getByText('攻击来源：来源未知（future-agent）')).toBeInTheDocument()
+    expect(document.querySelector('.hero-hud-metrics')).toHaveTextContent('0 项发现')
+    expect(document.querySelector('.hero-hud-metrics')).toHaveTextContent('0 项动作')
+  })
+
   it('omits pagination controls when the saved-battle history is empty', async () => {
     installFetchMock(0)
     render(<App />)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import {
@@ -15,6 +15,7 @@ import {
 import type { AgentSource, Battle, BattleScore, DashboardSummary, Difficulty, ExternalCase } from './api'
 const PAGE_SIZE = 10
 const DEFAULT_TOPIC = '提示注入与输入校验'
+const BattleScene = lazy(() => import('./BattleScene'))
 const difficultyLabel: Record<Difficulty, string> = { low: '低（Low）', mid: '中（Medium）', high: '高（High）' }
 const sampleTypeLabel: Record<string, string> = { defect: '缺陷（Defect）', violation: '违规（Violation）', vuln: '漏洞（Vulnerability）' }
 const statusLabel: Record<string, string> = { pending: '等待中（Pending）', running: '进行中（Running）', completed: '已完成（Completed）', failed: '失败（Failed）', recommended: '建议（Recommended）' }
@@ -50,7 +51,7 @@ function appBasePath(): string {
 const agentSourceLabel: Record<string, string> = {
   'acp-llm': '独立 Agent（模型生成）',
   'acp-rule-fallback': '独立 Agent（规则兜底）',
-  'local-rule': '本地规则引擎',
+  'local-rule': '规则引擎',
 }
 
 function sourceLabel(source?: AgentSource): string {
@@ -166,7 +167,7 @@ function App() {
         setExternalCases([])
         setExternalCaseTotal(0)
         setExternalCaseSources(0)
-        setExternalCaseMessage('本机未加载外部案例库')
+        setExternalCaseMessage('外部案例暂不可用')
         return
       }
       setExternalCases(result.items)
@@ -363,24 +364,130 @@ function App() {
     link.download = selected.topic + '.md'; link.click(); URL.revokeObjectURL(link.href)
   }
 
-  return <div className="page">
-    <header className="topbar"><div><div className="eyebrow">智能体攻防实验室（AGENT ATTACK LAB）</div><h1>智能体<em>攻防实验室</em></h1><p className="sub">公开攻防体验（Public security lab） · 后端执行并持久化战局 · 风险分析（Risk review）</p></div><div className="topbar-actions"><a className="admin-link" href="/admin">管理员后台</a><button className={'status ' + status} type="button" onClick={() => void checkHealth()} disabled={status === 'loading'}><span className="dot" />{status === 'loading' ? '正在检查服务（Checking service）' : status === 'ok' ? '服务运行正常（Service healthy）· 点击刷新检查' : '服务连接失败（Connection failed）· 点击重试（Retry）'}</button></div></header>
-    <main className="layout"><div className="col-left">
-      <section className="glass card"><div className="card-head"><div><div className="en">开始新战局（NEW BATTLE）</div><h2>开始新战局（New battle）</h2></div></div><form onSubmit={createBattle} noValidate><label htmlFor="topic">攻防主题（Battle topic）<input id="topic" className="input" value={topic} maxLength={200} aria-invalid={Boolean(topicError)} aria-describedby={topicError ? 'topic-error' : 'topic-count'} onChange={(event) => { const value = event.target.value; setTopic(value); if (topicError) setTopicError(validateTopic(value)) }} />{topicError ? <span className="field-error" id="topic-error" role="alert">{topicError}</span> : <span className="field-hint" id="topic-count">{topic.length}/200</span>}</label><label>对抗难度（Difficulty）<div className="diff-grid">{(['low', 'mid', 'high'] as Difficulty[]).map((item) => <label key={item}><input type="radio" name="difficulty" checked={difficulty === item} onChange={() => setDifficulty(item)} /><span className="diff-item"><b>{difficultyLabel[item]}</b><small>{item === 'low' ? '基础缺陷（Basic defect）' : item === 'mid' ? '规则违规（Rule violation）' : '复合漏洞（Compound vulnerability）'}</small></span></label>)}</div></label><p className="operation-notice"><span>战局会真实写入后端并同步到后台；当前分析对象为合成安全样本，不会向外部目标发起请求。</span><span className="operation-notice-detail">合成安全样本 · 未向外部目标发起请求</span></p><button className="btn-primary" type="submit" disabled={busy}>{busy ? '攻防执行中（Battle running）...' : '开始攻防（Start battle）'}</button></form></section>
-    <section className="glass card history"><div className="card-head"><div><div className="en">历史战局（BATTLE LOG）</div><h2>历史战局（Battle history）</h2></div><span className="en">{historyTotal} 场</span></div><input className="input" placeholder="搜索主题或编号（Search topic or ID）" value={search} onChange={(event) => { const value = event.target.value; setSearch(value); void loadHistory(0, false, value) }} />{historyLoading ? <div className="empty" role="status">正在加载历史战局（Loading battle history）...</div> : <div className="battle-list">{battles.length ? battles.map((battle) => <button className={'battle-item ' + (selected?.id === battle.id ? 'active' : '')} key={battle.id} onClick={() => openReplay(battle.id)}><span className={'battle-badge ' + battle.difficulty}>{difficultyLabel[battle.difficulty]}</span><span className="bi-main"><b>{battle.topic}</b><small>{new Date(battle.createdAt).toLocaleString('zh-CN')} · {displayLabel(battle.status)}</small></span><span className="arrow">›</span></button>) : <div className="empty">暂无匹配记录（No matching battles）</div>}</div>}<div className="pagination"><button type="button" className="btn-ghost" disabled={historyLoading || historyTotal === 0 || historyPage === 0} onClick={() => void loadHistory(historyPage - 1, false, search)}>上一页</button>{historyTotal > 0 && <span>第 {historyPage + 1} / {totalPages} 页 · 每页 {PAGE_SIZE} 场</span>}<button type="button" className="btn-ghost" disabled={historyLoading || historyTotal === 0 || historyPage + 1 >= totalPages} onClick={() => void loadHistory(historyPage + 1, false, search)}>下一页</button></div></section>
-    </div>
-    <section className="glass card detail">{selected ? <><div className="detail-head"><div><h2>{selected.topic}</h2><div className="detail-meta">{selected.id} · {difficultyLabel[selected.difficulty]}难度（Difficulty） · {displayLabel(selected.status)} · {new Date(selected.createdAt).toLocaleString('zh-CN')}</div><div className="source-meta"><span>攻击来源：{sourceLabel(selected.attackerOut.agentSource)}</span><span>防守来源：{sourceLabel(selected.defenderOut[0]?.agentSource)}</span></div></div><div className="detail-actions"><button className="btn-ghost" type="button" onClick={exportMarkdown}>导出 Markdown</button>{selected.status === 'failed' && <button className="btn-ghost" type="button" disabled={actionBusy} onClick={() => void handleRetryBattle()}>重试失败战局</button>}{(selected.status === 'completed' || selected.status === 'failed') && <button className="btn-danger" type="button" disabled={actionBusy} onClick={() => void handleDeleteBattle()}>删除战局</button>}</div></div><div className="steps">{[['战局创建（Create battle）', displayLabel(selected.status)], ['攻击生成（Generate attacks）', selected.attackerOut.samples.length + ' 个样本（samples）'], ['防守检测（Detect）', count(selected, 'caught') + ' 项发现（findings）'], ['修复建议（Remediate）', count(selected, 'fixed') + ' 项动作（actions）']].map(([title, sub], index) => <div className="step" key={title}><div className="n">{index + 1}</div><b>{title}</b><small>{sub}</small></div>)}</div><section className="score-panel" aria-label="内部运行质量评分">{scoreLoading ? <div className="empty" role="status">正在计算攻击与防守评分…</div> : battleScore ? <><div className="score-head"><h3>内部运行质量评分</h3><span className="en">{battleScore.version}</span></div><p className="score-note">{battleScore.message || '分别衡量攻击/防守输出完整度与可审计性；不代表漏洞检出准确率或真实目标修复效果。'}</p><div className="score-grid"><ScoreRole title="攻击方" role={battleScore.attacker} /><ScoreRole title="防守方" role={battleScore.defender} /></div></> : scoreMessage ? <div className="empty">{scoreMessage}</div> : null}</section><div className="rounds-head"><h3>逐轮对抗（Rounds） <small>ROUNDS</small></h3><span className="total">{selected.attackerOut.samples.length} rounds</span></div><div className="rounds-scroll">{selected.attackerOut.samples.length ? selected.attackerOut.samples.map((sample, index) => { const defense = selected.defenderOut[index] ?? {}; return <article className="round-card" key={selected.id + '-' + index}><div className="round-head"><b>第 {index + 1} 轮（Round {index + 1}）</b><span className="pill">{sampleTypeLabel[sample.type] ?? sample.type} · {difficultyLabel[sample.severity as Difficulty] ?? sample.severity}</span><span className="state">{displayLabel(selected.status)}</span></div><div className="round-body"><div className="side atk"><h4>攻击方 · 样本生成（Attacker · Sample generation）</h4><span className="code-chip">来源（Source）：{sourceLabel(selected.attackerOut.agentSource)}</span><span className="code-chip">主题（Topic）：{sample.topic ?? selected.topic}</span><div className="sample"><span className="sample-label">原始样本（Raw sample）</span>{sample.content}</div></div><div className="side def"><h4>防守方 · 检测与修复（Defender · Detection & remediation）</h4><span className="code-chip">来源（Source）：{sourceLabel(defense.agentSource)}</span><Finding label="发现问题（Findings）" items={defense.caught?.map((item) => displayLabel(item.reason ?? item.type)) ?? []} empty="未发现问题（No findings）" /><Finding label="风险评估（Risk assessment）" items={defense.risks?.map((item) => displayLabel(item.reason ?? item.level)) ?? []} empty="无额外风险（No additional risks）" /><Finding label="修复动作（Remediation）" items={defense.fixed?.map((item) => displayLabel(item.action ?? item.status)) ?? []} empty="无需修复（No remediation needed）" />{defense.scopeNotice && <div className="finding"><span className="k">范围说明（Scope）</span><span className="v">{defense.scopeNotice}</span></div>}</div></div></article> }) : <div className="empty">{selected.status === 'pending' || selected.status === 'running' ? '攻防进行中，正在等待样本与检测结果…' : '本场暂无对抗轮次'}</div>}</div></> : <div className="empty detail-empty">提交主题后开始一轮攻防（Submit a topic to start），或选择历史战局查看详情（Select a battle to view details）。</div>}</section></main>
-    {selected?.attackerOut.samples.some((sample) => sample.simulation === true) && <p className="sample-scope-note">本场处理的是合成安全样本；没有向真实目标发起请求。</p>}
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  const openExternalCases = () => {
+    const cases = document.getElementById('external-cases') as HTMLDetailsElement | null
+    if (cases) cases.open = true
+    scrollToSection('external-cases')
+  }
+
+  return <div className="console-shell">
+    <header className="console-topbar">
+      <div className="brand">
+        <span className="brand-mark" aria-hidden="true">✦</span>
+        <div><strong>智能体攻防实验室</strong><small>AGENT ATTACK LAB · COMMAND CENTER</small></div>
+      </div>
+      <nav aria-label="快捷功能">
+        <button type="button" onClick={() => scrollToSection('score-data-row')} disabled={!selected}><span aria-hidden="true">◉</span>本局评分</button>
+        <button type="button" onClick={openExternalCases}><span aria-hidden="true">▣</span>安全案例</button>
+      </nav>
+      <div className="console-topbar-actions">
+        <a className="admin-link" href="/admin">管理员后台</a>
+        <button className={'health ' + status} type="button" onClick={() => void checkHealth()} disabled={status === 'loading'}>
+          <i aria-hidden="true" />{status === 'loading' ? '正在连接' : status === 'ok' ? '服务正常' : '连接失败 · 重试'}
+        </button>
+      </div>
+    </header>
+
+    <main className="layout console-main">
+      <section className="video-layout" aria-label="攻防控制台">
+        <section className="battle-visual-panel" aria-label="三维战场">
+          <Suspense fallback={<div className="scene-loading" role="status">正在加载战场场景</div>}>
+            <BattleScene battle={selected} />
+          </Suspense>
+          <div className="battle-session-bar" aria-label="当前战局信息">
+            <div className="battle-session-info">
+              <span className="session-item theme"><span>本局主题</span><b>{selected?.topic ?? '未选择战局'}</b></span>
+              <span className="session-item"><span>编号 ID</span><b>{selected?.id ?? '—'}</b></span>
+              <span className="session-item"><span>样本数</span><b>{selected?.attackerOut.samples.length ?? 0}</b></span>
+              <span className="session-item"><span>难度</span><b>{selected ? difficultyLabel[selected.difficulty] : '未选择'}</b></span>
+            </div>
+          </div>
+          <div className="battle-overlay" role="status">
+            <span className={'stage ' + (selected?.status === 'running' ? 'running' : '')}>{selected ? displayLabel(selected.status) : '等待选择战局'}</span>
+          </div>
+          <div className="battle-hint">战场场景 · 数据以已保存战局为准</div>
+        </section>
+
+        <aside className="side-right" aria-label="战局控制面板">
+          <section className="live-card" aria-label="当前战局">
+            <div className="live-row"><span>编号</span><b>{selected?.id ?? '—'}</b></div>
+            <div className="live-row"><span>难度</span><b>{selected ? difficultyLabel[selected.difficulty] : '未选择'}</b></div>
+            <div className="live-theme">{selected ? selected.topic : '选择历史战局或创建新战局'}</div>
+            <div className="live-row"><span>状态</span><b>{selected ? displayLabel(selected.status) : '等待战局'}</b></div>
+            <div className="round-num">{selected?.attackerOut.samples.length ?? 0}<small> 已记录样本</small></div>
+          </section>
+
+          <section className="panel create-panel">
+            <div className="panel-title"><span>新建战局</span><small>NEW BATTLE</small></div>
+            <form onSubmit={createBattle} noValidate>
+              <label htmlFor="topic">攻防主题</label>
+              <input id="topic" className="input" value={topic} maxLength={200} aria-invalid={Boolean(topicError)} aria-describedby={topicError ? 'topic-error' : 'topic-count'} onChange={(event) => { const value = event.target.value; setTopic(value); if (topicError) setTopicError(validateTopic(value)) }} />
+              <div className="field-line">{topicError ? <b id="topic-error" role="alert">{topicError}</b> : <span id="topic-count">输入本次测试主题</span>}<span>{topic.length}/200</span></div>
+              <label>对抗难度</label>
+              <div className="difficulty-control">{(['low', 'mid', 'high'] as Difficulty[]).map((item) => <label key={item}><input type="radio" name="difficulty" checked={difficulty === item} onChange={() => setDifficulty(item)} /><span><b>{difficultyLabel[item]}</b><small>{item === 'low' ? '基础缺陷' : item === 'mid' ? '规则违规' : '复合漏洞'}</small></span></label>)}</div>
+              <p className="operation-notice">战局由后端执行并保存；结果仅反映本次安全评估数据，不访问外部目标。</p>
+              <button className="primary" type="submit" disabled={busy}>{busy ? '战局处理中…' : '开始攻防'}</button>
+            </form>
+          </section>
+
+          <section className="timeline" aria-label="已记录对抗轮次">
+            <header className="tl-head"><div><h2>已记录对抗轮次</h2><small>{selected ? selected.attackerOut.samples.length + ' 个样本 · 读取自战局详情' : '选择战局后显示服务端返回内容'}</small></div><span className="live">{selected ? displayLabel(selected.status) : '等待选择'}</span></header>
+            <div className="tl-body">
+              {selected && selected.attackerOut.samples.length ? selected.attackerOut.samples.map((sample, index) => {
+                const defense = selected.defenderOut[index] ?? {}
+                const findingCount = (defense.caught?.length ?? 0) + (defense.risks?.length ?? 0) + (defense.fixed?.length ?? 0)
+                return <article className="tl-round" key={selected.id + '-timeline-' + index}>
+                  <div className="tl-round-head"><b>第 {index + 1} 轮</b><span>{sampleTypeLabel[sample.type] ?? sample.type} · {difficultyLabel[sample.severity as Difficulty] ?? sample.severity}</span></div>
+                  <p>{sample.content}</p>
+                  <div className="tl-round-foot"><span>防守记录 {findingCount} 项</span><span>{sourceLabel(defense.agentSource)}</span></div>
+                </article>
+              }) : <div className="tl-empty">{selected?.status === 'pending' || selected?.status === 'running' ? '战局处理中，等待后端返回样本与检测结果。' : '暂无已记录轮次。选择历史战局，或创建新战局后查看。'}</div>}
+            </div>
+          </section>
+        </aside>
+      </section>
+
+      <section className="score-data-row" id="score-data-row" aria-label="内部运行质量评分">
+        <div className="scoreboard-head"><div><span className="section-kicker">BATTLE SCORE</span><h2>内部运行质量评分</h2><p>仅展示后端评分接口返回的结果。</p></div><span className="score-status">{selected ? displayLabel(selected.status) : '暂无选中战局'}</span></div>
+        {scoreLoading ? <div className="panel-empty" role="status">正在读取评分数据…</div>
+          : battleScore ? <><p className="score-note">{battleScore.message || '分别衡量输出完整度与可审计性。'}</p><div className="score-grid"><ScoreRole title="攻击方" role={battleScore.attacker} /><ScoreRole title="防守方" role={battleScore.defender} /></div></>
+            : scoreMessage ? <div className="panel-empty">{scoreMessage}</div>
+              : <div className="panel-empty">{selected ? '当前战局暂无可展示的评分数据。' : '选择已完成战局查看评分。'}</div>}
+      </section>
+
+      <section className="history-split" aria-label="历史战局与详情">
+        <section className="panel history">
+          <div className="panel-title"><span>历史战局</span><small>BATTLE HISTORY · {historyTotal} 场</small></div>
+          <label className="history-search"><span className="sr-only">搜索历史战局</span><input className="input" aria-label="搜索历史战局" placeholder="搜索主题或战局编号" value={search} onChange={(event) => { const value = event.target.value; setSearch(value); void loadHistory(0, false, value) }} /></label>
+          {historyLoading ? <div className="panel-empty" role="status">正在加载历史战局…</div> : <div className="battle-list">{battles.length ? battles.map((battle) => <button className={'battle-item ' + (selected?.id === battle.id ? 'active' : '')} key={battle.id} onClick={() => openReplay(battle.id)}><span className={'battle-badge ' + battle.difficulty}>{difficultyLabel[battle.difficulty]}</span><span className="bi-main"><b>{battle.topic}</b><small>{new Date(battle.createdAt).toLocaleString('zh-CN')} · {displayLabel(battle.status)}</small></span><span className="arrow">›</span></button>) : <div className="panel-empty">暂无匹配记录</div>}</div>}
+          <div className="pagination"><button type="button" className="btn-ghost" disabled={historyLoading || historyTotal === 0 || historyPage === 0} onClick={() => void loadHistory(historyPage - 1, false, search)}>上一页</button>{historyTotal > 0 && <span>第 {historyPage + 1} / {totalPages} 页 · 每页 {PAGE_SIZE} 场</span>}<button type="button" className="btn-ghost" disabled={historyLoading || historyTotal === 0 || historyPage + 1 >= totalPages} onClick={() => void loadHistory(historyPage + 1, false, search)}>下一页</button></div>
+        </section>
+
+        <section className="panel detail" id="battle-detail">
+          {selected ? <>
+            <div className="detail-head"><div><h2>{selected.topic}</h2><div className="detail-meta">{selected.id} · {difficultyLabel[selected.difficulty]}难度 · {displayLabel(selected.status)} · {new Date(selected.createdAt).toLocaleString('zh-CN')}</div><div className="source-meta"><span>攻击来源：{sourceLabel(selected.attackerOut.agentSource)}</span><span>防守来源：{sourceLabel(selected.defenderOut[0]?.agentSource)}</span></div></div><div className="detail-actions"><button className="btn-ghost" type="button" onClick={exportMarkdown}>导出 Markdown</button>{selected.status === 'failed' && <button className="btn-ghost" type="button" disabled={actionBusy} onClick={() => void handleRetryBattle()}>重试失败战局</button>}{(selected.status === 'completed' || selected.status === 'failed') && <button className="btn-danger" type="button" disabled={actionBusy} onClick={() => void handleDeleteBattle()}>删除战局</button>}</div></div>
+            <div className="steps">{[['战局创建', displayLabel(selected.status)], ['攻击生成', selected.attackerOut.samples.length + ' 个样本'], ['防守检测', count(selected, 'caught') + ' 项发现'], ['修复建议', count(selected, 'fixed') + ' 项动作']].map(([title, sub], index) => <div className="step" key={title}><div className="n">{index + 1}</div><b>{title}</b><small>{sub}</small></div>)}</div>
+            <div className="rounds-head"><h3>逐轮对抗记录</h3><span className="total">{selected.attackerOut.samples.length} 轮</span></div>
+            <div className="rounds-scroll">{selected.attackerOut.samples.length ? selected.attackerOut.samples.map((sample, index) => { const defense = selected.defenderOut[index] ?? {}; return <article className="round-card" key={selected.id + '-' + index}><div className="round-head"><b>第 {index + 1} 轮</b><span className="pill">{sampleTypeLabel[sample.type] ?? sample.type} · {difficultyLabel[sample.severity as Difficulty] ?? sample.severity}</span><span className="state">{displayLabel(selected.status)}</span></div><div className="round-body"><div className="side atk"><h4>攻击方 · 样本</h4><span className="code-chip">来源：{sourceLabel(selected.attackerOut.agentSource)}</span><span className="code-chip">主题：{sample.topic ?? selected.topic}</span><div className="sample"><span className="sample-label">样本内容</span>{sample.content}</div></div><div className="side def"><h4>防守方 · 已记录结果</h4><span className="code-chip">来源：{sourceLabel(defense.agentSource)}</span><Finding label="发现问题" items={defense.caught?.map((item) => displayLabel(item.reason ?? item.type)) ?? []} empty="暂无记录" /><Finding label="风险评估" items={defense.risks?.map((item) => displayLabel(item.reason ?? item.level)) ?? []} empty="暂无记录" /><Finding label="修复动作" items={defense.fixed?.map((item) => displayLabel(item.action ?? item.status)) ?? []} empty="暂无记录" />{defense.scopeNotice && <div className="finding"><span className="k">范围说明</span><span className="v">{defense.scopeNotice}</span></div>}</div></div></article> }) : <div className="panel-empty">{selected.status === 'pending' || selected.status === 'running' ? '攻防进行中，等待样本与结果…' : '本场暂无对抗轮次'}</div>}</div>
+          </> : <div className="detail-empty"><span>选择战局查看详情</span><p>从左侧历史列表选择，或创建一场新战局。</p></div>}
+        </section>
+      </section>
+    </main>
+
+    {selected?.attackerOut.samples.some((sample) => sample.simulation === true) && <p className="sample-scope-note">安全评估样本 · 未访问真实外部目标。</p>}
     <section className="stats" aria-label="真实统计口径（Persisted statistics）">{[
-      ['已保存战局（Saved battles）', summary?.totalBattles ?? '—', '全部已保存战局数量', '#4da3ff'],
-      ['内置规则项（Built-in rules）', summary?.ruleLibraryCaseCount ?? '—', '内置规则库中唯一编号的条目数', '#ffb54d'],
-      ['已保存样本（Saved samples）', summary?.sampleCount ?? '—', '历史战局实际生成并保存的样本总数', '#3ddc97'],
-      ['规则命中（Rule hits）', summary?.ruleHitCount ?? '—', '防守结果 caught 条目累计数', '#38c9ff'],
-      ['风险记录（Risk records）', summary?.riskCount ?? '—', '防守结果 risks 条目累计数', '#ff5d6c'],
+      ['已保存战局', summary?.totalBattles ?? '—', '全部已保存战局数量', '#4da3ff'],
+      ['规则库条目', summary?.ruleLibraryCaseCount ?? '—', '规则库中唯一编号的条目数', '#ffb54d'],
+      ['已保存样本', summary?.sampleCount ?? '—', '历史战局实际生成并保存的样本总数', '#3ddc97'],
+      ['规则命中', summary?.ruleHitCount ?? '—', '防守结果 caught 条目累计数', '#38c9ff'],
+      ['风险记录', summary?.riskCount ?? '—', '防守结果 risks 条目累计数', '#ff5d6c'],
     ].map(([label, value, note, color]) => <div className="glass stat-card" style={{ '--ac': color } as React.CSSProperties} key={String(label)}><h3>{label}</h3><div className="stat-num">{value}</div><div className="stat-note">{note}</div></div>)}</section>
-    <p className="stats-note">统计来自后端已保存战局。ACP 调用场次：{summary?.acpCallBattles ?? '—'}，表示至少一次成功调用了独立 ACP Agent；不代表真实目标已验证。规则库用例数是模板库规模，已保存样本数是历史战局产出，两者口径不同。{summary && summary.sampleCount === summary.ruleHitCount && summary.sampleCount === summary.riskCount ? '当前历史数据中三项恰好相同；它们分别汇总样本、caught 命中条目和 risks 风险条目，新增未命中样本后会按实际记录分开变化。' : ''}</p>
-    <details className="glass card external-cases" aria-label="外部安全案例库（External case references）"><summary className="external-cases-summary"><div className="card-head"><div><div className="en">外部安全案例（EXTERNAL CASES）</div><h2>外部安全案例库（External references）</h2></div><span className="en">{externalCaseTotal} 条 · {externalCaseSources} 个来源</span></div></summary><div className="external-cases-content"><div className="external-toolbar"><input className="input" aria-label="搜索外部案例" placeholder="搜索 CVE、标题、厂商或产品" value={externalCaseSearch} onChange={(event) => setExternalCaseSearch(event.target.value)} /><button className="btn-ghost" type="button" onClick={() => void loadExternalCases(externalCaseSearch)} disabled={externalCaseLoading}>查询</button></div>{externalCaseLoading ? <div className="empty" role="status">正在加载外部案例</div> : externalCaseMessage ? <div className="empty">{externalCaseMessage}</div> : externalCases.length ? <div className="external-case-list">{externalCases.map((item) => <article className="external-case" key={item.externalId}><div className="external-case-head"><strong>{item.externalId}</strong><span>{item.provenanceStatus} · {item.recordKind}</span></div><h3>{item.title}</h3><p className="external-case-meta">{item.vendorProject} · {item.product} · 加入目录 {item.dateAdded}</p><p>{item.description}</p><div className="external-case-source">来源：{item.source.publisher} · 目录 {item.source.catalogVersion} · <a href={item.sourceUrl} target="_blank" rel="noreferrer">查看原始来源</a><span title={item.source.contentSha256}> · SHA-256 {item.source.contentSha256.slice(0, 12)}…</span></div></article>)}</div> : <div className="empty">暂无匹配的外部案例</div>}</div></details>
-{message && <div className="toast show">{message}</div>}
+    <p className="stats-note">统计来自后端已保存战局。ACP 调用场次：{summary?.acpCallBattles ?? '—'}，表示至少一次成功调用独立 ACP Agent；不代表真实目标已验证。规则库用例与已保存样本采用不同统计口径。</p>
+    <details className="glass card external-cases" id="external-cases" aria-label="外部安全案例库（External case references）"><summary className="external-cases-summary"><div className="card-head"><div><div className="en">EXTERNAL CASES</div><h2>外部安全案例库</h2></div><span className="en">{externalCaseTotal} 条 · {externalCaseSources} 个来源</span></div></summary><div className="external-cases-content"><div className="external-toolbar"><input className="input" aria-label="搜索外部案例" placeholder="搜索 CVE、标题、厂商或产品" value={externalCaseSearch} onChange={(event) => setExternalCaseSearch(event.target.value)} /><button className="btn-ghost" type="button" onClick={() => void loadExternalCases(externalCaseSearch)} disabled={externalCaseLoading}>查询</button></div>{externalCaseLoading ? <div className="panel-empty" role="status">正在加载外部案例…</div> : externalCaseMessage ? <div className="panel-empty">{externalCaseMessage}</div> : externalCases.length ? <div className="external-case-list">{externalCases.map((item) => <article className="external-case" key={item.externalId}><div className="external-case-head"><strong>{item.externalId}</strong><span>{item.provenanceStatus} · {item.recordKind}</span></div><h3>{item.title}</h3><p className="external-case-meta">{item.vendorProject} · {item.product} · 加入目录 {item.dateAdded}</p><p>{item.description}</p><div className="external-case-source">来源：{item.source.publisher} · 目录 {item.source.catalogVersion} · <a href={item.sourceUrl} target="_blank" rel="noreferrer">查看原始来源</a><span title={item.source.contentSha256}> · SHA-256 {item.source.contentSha256.slice(0, 12)}…</span></div></article>)}</div> : <div className="panel-empty">暂无匹配案例</div>}</div></details>
+    {message && <div className="toast show" role="status">{message}</div>}
   </div>
 }
 
