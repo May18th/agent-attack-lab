@@ -1,0 +1,91 @@
+name: 恢复 SSH 诊断
+
+# 当 VPS 的 22 端口从外部不可达时，用它从机器内部取真实状态。
+# runner 是主动出站连 GitHub 的，所以不依赖任何入站端口。
+# 纯只读，不改任何配置。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: SSH 可达性诊断
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    steps:
+      - name: 身份与 sudo 能力
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== whoami =="; id
+          echo "== sudo 能力 =="
+          if sudo -n true 2>/dev/null; then echo "SUDO_NOPASSWD_OK"; else echo "NO_SUDO"; fi
+          echo "== 主机名/系统 =="; hostname; cat /etc/os-release 2>/dev/null | head -2
+
+      - name: sshd 状态与监听
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== 监听端口（含 22/80/443/8787） =="
+          ss -lntp 2>/dev/null | head -40 || netstat -lntp 2>/dev/null | head -40
+          echo "== ssh 服务状态 =="
+          systemctl is-active ssh 2>/dev/null || echo "ssh: unknown"
+          systemctl is-active sshd 2>/dev/null || echo "sshd: unknown"
+          systemctl is-enabled ssh 2>/dev/null || echo "enabled: unknown"
+          systemctl show -p ActiveEnterTimestamp ssh 2>/dev/null || true
+          echo "== sshd 生效配置（脱敏） =="
+          sudo -n sshd -T 2>/dev/null \
+            | grep -Ei '^(port|listenaddress|permitrootlogin|passwordauthentication|pubkeyauthentication|allowusers|denyusers)' \
+            || grep -Ei '^(Port|ListenAddress|PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|AllowUsers|DenyUsers)' /etc/ssh/sshd_config 2>/dev/null \
+            || echo "NO_SSHD_CONFIG_READ"
+          echo "== sshd 最近日志 =="
+          sudo -n journalctl -u ssh --no-pager -n 25 2>/dev/null || journalctl -u ssh --no-pager -n 25 2>/dev/null || echo "NO_JOURNAL_READ"
+
+      - name: 机内防火墙
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== ufw =="
+          sudo -n ufw status verbose 2>/dev/null || echo "ufw: no sudo / not installed"
+          echo "== iptables INPUT =="
+          sudo -n iptables -S 2>/dev/null | head -60 || echo "iptables: no sudo"
+          echo "== nftables =="
+          sudo -n nft list ruleset 2>/dev/null | head -50 || echo "nft: no sudo / not installed"
+          echo "== fail2ban =="
+          sudo -n fail2ban-client status sshd 2>/dev/null || echo "fail2ban: absent / no sudo"
+
+      - name: 分层连通性自测
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== 回环 22 =="
+          if timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/22 && head -c 40 <&3' 2>/dev/null; then
+            echo "LOCAL_22_OK"
+          else
+            echo "LOCAL_22_FAIL"
+          fi
+          echo "== 本机公网 IP + 公网路径 22 =="
+          PUBIP=$(curl -s -m 10 https://api.ipify.org || echo "")
+          echo "PUBIP=$PUBIP"
+          if [ -n "$PUBIP" ]; then
+            if timeout 8 bash -c "exec 3<>/dev/tcp/$PUBIP/22" 2>/dev/null; then echo "PUBLIC_22_OK"; else echo "PUBLIC_22_FAIL"; fi
+          fi
+          echo "== 443 对照 =="
+          if timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/443' 2>/dev/null; then echo "LOCAL_443_OK"; else echo "LOCAL_443_FAIL"; fi
+          echo "== cloudflared 状态（若有） =="
+          systemctl is-active cloudflared 2>/dev/null || echo "cloudflared: system unit absent"
+          pgrep -af cloudflared | head -5 || true
+
+      - name: 结论提示
+        shell: bash
+        run: |
+          echo "判读口径："
+          echo "  1) LOCAL_22_OK + iptables/ufw 无 DROP + PUBLIC_22_FAIL"
+          echo "     => 机器内部正常，22 被【云侧安全组 / 云防火墙】挡，去控制台放入站 22，必须指定源 IP 而非 0.0.0.0/0。"
+          echo "  2) ss 里没有 :22 LISTEN，或 ssh 服务 inactive"
+          echo "     => sshd 自己没跑，机器内起服务即可（需 sudo）。"
+          echo "  3) iptables/ufw 有 DROP 或 REJECT 覆盖 22"
+          echo "     => 机内防火墙误配，放行 22 即可（需 sudo）。"
