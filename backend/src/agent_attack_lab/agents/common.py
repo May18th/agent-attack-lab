@@ -8,6 +8,7 @@ import logging
 import os
 import uuid
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -31,6 +32,7 @@ from acps_sdk.aip.aip_rpc_server import (
     handle_rpc_request,
 )
 
+from agent_attack_lab import amp
 from agent_attack_lab.agents.llm_runtime import is_configured as llm_configured
 from agent_attack_lab.aip_compat import server_identity_options
 
@@ -103,10 +105,21 @@ def create_agent_app(
         )
 
     handlers = CommandHandlers(on_start=on_start)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # AMP 心跳：独立 Agent 进程存活期间持续上报，平台才判为 alive=online。
+        await amp.start_from_env()
+        try:
+            yield
+        finally:
+            await amp.stop_active()
+
     app = FastAPI(
         title=f"{name.title()} ACP Agent",
         description=f"Standalone AIP v2 RPC service for the {name} role.",
         version="1.0.0",
+        lifespan=lifespan,
     )
 
     @app.get("/health")

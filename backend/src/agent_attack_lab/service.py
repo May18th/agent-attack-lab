@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from agent_attack_lab import (
+    amp,
     battle_runner,
     config,
     routers,
@@ -160,9 +161,12 @@ async def _lifespan(_app: FastAPI):
     score_backfill = asyncio.create_task(scoring_glue.run_score_backfill())
     state.recovery_tasks.add(score_backfill)
     score_backfill.add_done_callback(state.recovery_tasks.discard)
+    # AMP 心跳：让本服务在梧桐平台保持 alive=online（未开启时为空操作）。
+    await amp.start_from_env()
     try:
         yield
     finally:
+        await amp.stop_active()
         pending = list(state.recovery_tasks)
         for task in pending:
             task.cancel()

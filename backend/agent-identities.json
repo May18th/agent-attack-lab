@@ -1,20 +1,20 @@
 {
-  "_comment": "梧桐平台已注册智能体的公开身份（AIC 公开可见，非凭据）。AMP 心跳按 role 取 AIC；可用 AGENT_AMP_AIC 覆盖。",
+  "_comment": "梧桐平台已注册智能体的公开身份（AIC 公开可见，非凭据）。AMP 心跳按 role 取 AIC；可用 AGENT_AMP_AIC 覆盖。攻击/防守为 2026-10 重新注册后的新 AIC。",
   "leader": {
     "aic": "1.2.156.3088.1.BUPT.RX2TMW.34O5X3.KXMH76.09CQ",
     "name": "智能体攻防实验室-主调度智能体",
     "endpoint": "https://api.yuanyiagentzhandui.cn/rpc"
   },
   "attacker": {
-    "aic": "1.2.156.3088.1.BUPT.RX2TMW.S5AJC0.A8O5XB.0S0Q",
+    "aic": "1.2.156.3088.1.BUPT.RX2TMW.LMB4VK.NJ99P0.08RN",
     "name": "智能体攻防实验室-攻击智能体",
     "endpoint": "https://attack.yuanyiagentzhandui.cn/rpc",
-    "registrationId": "01a17310-c8b1-72f8-bc26-ac00d2703b8d"
+    "registrationId": "01a12993-ce5a-7608-841f-c7e8a8c9cbcb"
   },
   "defender": {
-    "aic": "1.2.156.3088.1.BUPT.RX2TMW.QY650M.GD00U5.1AIR",
+    "aic": "1.2.156.3088.1.BUPT.RX2TMW.KYUDTI.BI8UKQ.09SG",
     "name": "智能体攻防实验室-防守智能体",
     "endpoint": "https://defense.yuanyiagentzhandui.cn/rpc",
-    "registrationId": "01a17310-cf08-707c-ba9c-09c99339c5a1"
+    "registrationId": "01a12993-d55c-73f6-b285-620895566bf3"
   }
 }
