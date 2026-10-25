@@ -1,6 +1,6 @@
 # AIC 大赛 5 天冲刺排期（10/25 晚 — 10/30 提交）
 
-更新时间：2026-10-25 20:30
+更新时间：2026-10-25 23:59
 
 ## 一、总原则
 
@@ -41,15 +41,16 @@
 - [x] 公网验证：战局 `A-009` → `attacker=acp-llm`、`defender=acp-llm`、`arbiter=arbiter-llm`
 - [x] 生产 `AGENT_AMP_ENABLED=1`；`start-service.sh` 按模块注入 role，解除本机依赖
 - [x] 平台缺省查询（不带 `extFilter`）命中 **3 条**在线
-- [ ] **待补**：模型超时/密钥失效的降级实证（进程内构造不可达 base_url 即可，不重启服务）
+- [x] 降级实证：端点不可达、密钥 401 两种场景，三路 Agent 均退回规则兜底且**不抛异常**（见 `TECH_EVIDENCE_PACK.md` 第四节）
+- [x] 平台可见性补强：`type=recent` 现在可搜到（三只分列最近 10 条第 3、5、6 位），此前"排不上"的结论作废
 - [ ] **待补**：清理生产探测战局 `A-008`/`A-009`（`DELETE` 返回 401，需生产管理员会话）
 
 验收（已达）：公网战局 `agentSource=acp-llm`；平台三只 online 且由 VPS 心跳维持。
 
 ### D2 10/27
 
-- [ ] 写演示脚本（固定主题、固定难度、固定轮数，保证可复现）
-- [ ] 架构图：三个 Agent + AIP JSON-RPC + mTLS + 事件流 + correlationId
+- [x] 写演示脚本（固定主题、固定难度、固定轮数，保证可复现）——10/25 完成，见 [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md)
+- [x] 架构图：三个 Agent + AIP JSON-RPC + mTLS + 事件流 + correlationId——10/25 完成，见 [`ARCHITECTURE.svg`](ARCHITECTURE.svg)
 - [ ] 录演示视频第一版（发现 → 互联 → 战局 → verdict → 追溯）
 - [ ] 回看录像，找画面上"讲不清"的点并补 UI 或补文案
 
