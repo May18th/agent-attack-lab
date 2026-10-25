@@ -1,0 +1,90 @@
+name: RPC 鉴权配置诊断
+
+# 平台（梧桐 AIP）调用 /rpc 时不会带我们私有的 X-API-Key。
+# 若生产设了 AGENT_API_KEY 或 AGENT_BROWSER_PASSWORD，check_api_key 会返回 401，
+# 意味着三只智能体虽然在线、但平台根本调不通 —— 直接影响「应用成效」评分。
+# 本工作流只打印"是否为空"与长度，不打印任何值。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: 鉴权变量与实测
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    steps:
+      - name: 读取 .env 中鉴权项（只报空/非空与长度）
+        shell: bash
+        run: |
+          set -uo pipefail
+          env_file=/opt/agent-attack-lab/backend/.env
+          [ -f "$env_file" ] || env_file=/opt/agent-attack-lab/.env
+          echo "env 文件：$env_file"
+          [ -f "$env_file" ] || { echo "找不到 .env" >&2; exit 1; }
+          while IFS= read -r line; do
+            case "$line" in
+              AGENT_API_KEY=*|AGENT_BROWSER_PASSWORD=*|AGENT_PROTECT_READ_ROUTES=*|AGENT_RPC_API_KEY=*|AGENT_CLOUDFLARE_ACCESS_*)
+                key="${line%%=*}"
+                val="${line#*=}"
+                val="${val%$'\r'}"
+                if [ -z "$val" ]; then
+                  printf '%-34s EMPTY\n' "$key"
+                else
+                  printf '%-34s SET (len=%s)\n' "$key" "${#val}"
+                fi
+                ;;
+            esac
+          done < "$env_file"
+
+      - name: 运行中进程实际看到的配置
+        shell: bash
+        run: |
+          set -uo pipefail
+          for port in 8787 8788 8789; do
+            echo "== 127.0.0.1:$port =="
+            pid=$(ss -lntp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | head -1)
+            echo "  pid=$pid"
+            if [ -n "${pid:-}" ]; then
+              tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+                | grep -E '^AGENT_(API_KEY|BROWSER_PASSWORD|PROTECT_READ_ROUTES|RPC_API_KEY)=' \
+                | awk -F= '{ if (length($2)==0) printf "  %-30s EMPTY\n",$1; else printf "  %-30s SET (len=%d)\n",$1,length($2) }' \
+                || echo "  读不到环境（权限）"
+            fi
+          done
+
+      - name: 本机回环实测 /rpc（不带 key）
+        shell: bash
+        run: |
+          set -uo pipefail
+          for port in 8787 8788 8789; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+              -X POST "http://127.0.0.1:$port/rpc" \
+              -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":"probe","method":"rpc","params":{}}' || echo ERR)
+            printf '  127.0.0.1:%-5s 不带 X-API-Key -> %s\n' "$port" "$code"
+          done
+          echo "判读：401 说明该服务要求 API key，平台调用也会 401；200/4xx（非401）说明放行。"
+
+      - name: 经 ngrok 入口实测（attack/defense/leader-mtls）
+        shell: bash
+        run: |
+          set -uo pipefail
+          for host in attack defense; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 12 \
+              -X POST "https://$host.yuanyiagentzhandui.cn/rpc" \
+              -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":"probe","method":"rpc","params":{}}' || echo ERR)
+            printf '  %-10s /rpc（无客户端证书、无 key）-> %s\n' "$host" "$code"
+          done
+
+      - name: 判读口径
+        shell: bash
+        run: |
+          echo "若 AGENT_API_KEY SET 且其中一路 /rpc 返回 401："
+          echo "  平台 AIP 调用必然 401，三只「在线但调不通」，应用成效分数站不住。"
+          echo "  修法：在 mTLS 入口的 nginx location /rpc 内注入 X-API-Key（key 存独立 600 文件，"
+          echo "        不进 Git），使 mTLS 通过即等价于通过鉴权；api 域名保持原样不注入。"
