@@ -15,9 +15,11 @@
 
 | 角色 | 端口 | 平台身份 | 端点 |
 |---|---|---|---|
-| Leader 主调度 | 8787 | AIC 尾号 `09CQ` | `https://api.yuanyiagentzhandui.cn/rpc` |
-| 攻击智能体 | 8788 | AIC 尾号 `08RN` | `https://attack.yuanyiagentzhandui.cn/rpc` |
-| 防守智能体 | 8789 | AIC 尾号 `09SG` | `https://defense.yuanyiagentzhandui.cn/rpc` |
+| Leader 主调度 | 8787 | AIC 尾号 `0U7Q` | `https://api.yuanyiagentzhandui.cn/rpc` |
+| 攻击智能体 | 8788 | AIC 尾号 `0MVE` | `https://attack.yuanyiagentzhandui.cn/rpc` |
+| 防守智能体 | 8789 | AIC 尾号 `0GFQ` | `https://defense.yuanyiagentzhandui.cn/rpc` |
+
+> AIC 口径（2026-10-25 23:58 复核）：以上为 ACPs **1.2.0 重新注册后**当前生效的 AIC，与平台 Discovery 返回值、`backend/agent-identities.json`、心跳上报值三者一致。此前材料中出现的 `09CQ` / `08RN` / `09SG`（以及更早的 `S5AJC0` / `QY650M`）均为历史轮次注册值，**已失效，不要写进材料**。
 
 数据流：
 
@@ -92,6 +94,7 @@ curl.exe -s --noproxy "*" -X POST https://wt.ioa.pub/discovery/acps-adp-v2/disco
 | 13:06–13:08 | 全部停止 | 0 条（生产当时缺心跳代码/依赖） |
 | **13:12:36** | **全部停止** | **3 条** |
 | 13:13:41（复查） | 全部停止 | 3 条，AIC 尾号 `09CQ` / `08RN` / `09SG` |
+| 15:57:43（后台服务自然结束 2h33m 后） | 零进程、三端口全 DOWN | **3 条**，AIC 尾号 `0U7Q` / `0MVE` / `0GFQ` |
 
 结论可以这样讲：**关掉本机全部服务，平台仍显示三只在线**，心跳由 VPS 常驻服务独立上报。
 
@@ -104,7 +107,7 @@ cd backend
 
 输出逐只打印 `[OK]` 与平台侧 `lastSeen` 时间，判定口径与平台首页"AIC 查询在线状态"一致。
 
-**演示注意（实测踩到过）**：某只 AIC 停止上报心跳后，平台需要 **约 2–3 分钟**才把它从 `online` 摘掉。若刚重启过服务、或同时有旧心跳进程在跑，按名称搜会短暂返回 **5 条**（含上一轮注册的旧 AIC `S5AJC0` / `QY650M`）。等 3 分钟再查即恢复 3 条；录屏前先跑一次上面的验收脚本确认是 3 条再开始录。
+**演示注意（实测踩到过）**：某只 AIC 停止上报心跳后，平台需要 **约 2–3 分钟**才把它从 `online` 摘掉。若刚重启过服务、或同时有旧心跳进程在跑，按名称搜会短暂返回 **5 条以上**（含历史轮次注册的旧 AIC，如 `09CQ` / `08RN` / `09SG`、`S5AJC0` / `QY650M`）。等 3 分钟再查即恢复 3 条；录屏前先跑一次上面的验收脚本确认是 3 条再开始录。
 
 ### 这条链路上修掉的三个真问题（可作为"工程严谨性"素材）
 
