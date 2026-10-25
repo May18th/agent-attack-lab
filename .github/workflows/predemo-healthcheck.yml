@@ -1,0 +1,254 @@
+name: 录屏前验收
+
+# 只读检查，不修改任何生产状态。
+#
+# 用途：录屏/答辩前 5 分钟跑一次，一条命令得到「能不能开录」的结论。
+# 之所以放在 self-hosted runner 上跑，是因为战报接口 /reports/{id} 需要
+# AGENT_API_KEY（或看板会话），而 key 只存在于 VPS 的 .env 里；
+# 本机既拿不到 key、也不会把 key 复制出来。
+#
+# 判定：出现任何 [CRIT] 失败即整轮失败（用于卡住"带病开录"）。
+#       [WARN] 只提示，不影响结论；[INFO] 仅供记录。
+
+on:
+  workflow_dispatch:
+    inputs:
+      battle:
+        description: 要核对四路来源的战局 id 或编号（留空=取最新一局）
+        required: false
+        default: ""
+      strict_sources:
+        description: 四路必须全部是 LLM（输入 yes；留空则只报告不拦截）
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: predemo-healthcheck
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: [self-hosted, production]
+    env:
+      APP_DIR: /opt/agent-attack-lab/backend
+      ENV_FILE: /opt/agent-attack-lab/backend/.env
+      CERT_DIR: /home/deployer/.config/agent-attack-lab/partners/leader/workspace/acps
+      PUBLIC_BASE: https://api.yuanyiagentzhandui.cn
+      LEADER_MTLS: leader-mtls.yuanyiagentzhandui.cn
+      BATTLE: ${{ inputs.battle }}
+      STRICT: ${{ inputs.strict_sources }}
+    steps:
+      - name: 汇总检查
+        run: |
+          set -uo pipefail
+
+          # systemctl --user 需要运行时目录；runner 是 deployer，和三个服务同用户
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          fails=0
+          warns=0
+
+          ok()   { printf '  [ OK ] %s\n' "$1"; }
+          bad()  { printf '  [CRIT] %s\n' "$1"; fails=$((fails + 1)); }
+          warn() { printf '  [WARN] %s\n' "$1"; warns=$((warns + 1)); }
+          info() { printf '  [INFO] %s\n' "$1"; }
+          head2() { printf '\n== %s ==\n' "$1"; }
+
+          echo "检查时间：$(date -u '+%Y-%m-%dT%H:%M:%SZ')（UTC） / $(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')（北京时间）"
+
+          # ---------- 1. 三个服务 ----------
+          head2 "1. 后端服务（user 单元）"
+          services=(
+            agent-attack-lab-api.service
+            agent-attack-lab-attacker.service
+            agent-attack-lab-defender.service
+          )
+          for svc in "${services[@]}"; do
+            state=$(systemctl --user is-active "$svc" 2>/dev/null || true)
+            enabled=$(systemctl --user is-enabled "$svc" 2>/dev/null || true)
+            if [[ "$state" == "active" ]]; then
+              ok "$svc active（enabled=$enabled）"
+            else
+              bad "$svc 状态=$state（enabled=$enabled）"
+            fi
+          done
+
+          linger=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null || echo unknown)
+          if [[ "$linger" == "yes" ]]; then
+            ok "用户 linger=yes（重启后服务能自己起来）"
+          else
+            warn "用户 linger=$linger —— 若 VPS 重启，三个 user 服务不会自动启动"
+          fi
+
+          # ---------- 2. nginx ----------
+          head2 "2. nginx"
+          if sudo -n nginx -t >"$work/ngx.log" 2>&1; then
+            ok "nginx -t 通过"
+          else
+            bad "nginx -t 失败：$(tail -3 "$work/ngx.log" | tr '\n' ' ')"
+          fi
+          nstate=$(systemctl is-active nginx 2>/dev/null || true)
+          [[ "$nstate" == "active" ]] && ok "nginx active" || bad "nginx 状态=$nstate"
+          dup=$(sudo -n nginx -t 2>&1 | grep -c "conflicting server name" || true)
+          [[ "$dup" == "0" ]] && ok "无 conflicting server name" || warn "有 $dup 条 server_name 冲突"
+
+          # ---------- 3. 本机三端口 ----------
+          head2 "3. 本机端口探活"
+          for port in 8787 8788 8789; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1:${port}/health" || echo 000)
+            [[ "$code" == "200" ]] && ok "127.0.0.1:${port}/health -> 200" || bad "127.0.0.1:${port}/health -> $code"
+          done
+
+          # ---------- 4. 公网入口 ----------
+          head2 "4. 公网入口"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${PUBLIC_BASE}/health" || echo 000)
+          [[ "$code" == "200" ]] && ok "api /health -> 200" || bad "api /health -> $code"
+
+          mtls_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve "${LEADER_MTLS}:443:127.0.0.1" "https://${LEADER_MTLS}/health" -k || echo 000)
+          [[ "$mtls_code" == "200" ]] && ok "leader-mtls /health -> 200（无客户端证书应放行）" || bad "leader-mtls /health -> $mtls_code"
+
+          rpc_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve "${LEADER_MTLS}:443:127.0.0.1" -X POST -H 'Content-Type: application/json' -d '{}' "https://${LEADER_MTLS}/rpc" -k || echo 000)
+          [[ "$rpc_code" == "403" ]] && ok "leader-mtls /rpc 无证书 -> 403（mTLS 强制生效）" || bad "leader-mtls /rpc 无证书 -> $rpc_code（期望 403）"
+
+          # ---------- 5. .env 关键开关 ----------
+          head2 "5. 运行时开关（只报有无，不打印值）"
+          if [[ -r "$ENV_FILE" ]]; then
+            ok ".env 可读"
+            for flag in AGENT_AMP_ENABLED AGENT_ARBITER_LLM_ENABLED AGENT_REPORT_LLM_ENABLED AGENT_RULE_DISCOVERY_LLM_ENABLED; do
+              val=$(grep -m1 "^${flag}=" "$ENV_FILE" | cut -d= -f2- | tr -d "\"'" || true)
+              [[ "$val" == "1" ]] && ok "${flag}=1" || bad "${flag}=${val:-<未设置>}（期望 1）"
+            done
+            if grep -q '^AGENT_AMP_AIC=' "$ENV_FILE"; then
+              warn "AGENT_AMP_AIC 被全局设置 —— 三只会报成同一个 AIC，应删除"
+            else
+              ok "未全局设置 AGENT_AMP_AIC（各服务按角色取 AIC）"
+            fi
+            keylen=$(grep -m1 '^AGENT_API_KEY=' "$ENV_FILE" | cut -d= -f2- | tr -d "\"'" | wc -c)
+            [[ "$keylen" -gt 32 ]] && info "AGENT_API_KEY 已设置（长度 $((keylen - 1))，不打印）" || bad "AGENT_API_KEY 缺失或过短"
+          else
+            bad ".env 不可读：$ENV_FILE"
+          fi
+
+          # ---------- 6. 证书有效期 ----------
+          head2 "6. leader-mtls 证书"
+          srv_cert="$CERT_DIR/server/certificate.pem"
+          if [[ -r "$srv_cert" ]]; then
+            enddate=$(openssl x509 -in "$srv_cert" -noout -enddate | cut -d= -f2)
+            end_epoch=$(date -d "$enddate" +%s 2>/dev/null || echo 0)
+            days=$(( (end_epoch - $(date +%s)) / 86400 ))
+            subj=$(openssl x509 -in "$srv_cert" -noout -subject | sed 's/^subject=//')
+            if [[ "$days" -gt 30 ]]; then
+              ok "服务端证书剩余 ${days} 天（到期 $(date -d "@$end_epoch" '+%Y-%m-%d')）"
+            else
+              bad "服务端证书剩余 ${days} 天，需要续期"
+            fi
+            info "subject=${subj}"
+          else
+            bad "读不到服务端证书：$srv_cert"
+          fi
+          if [[ -r "$CERT_DIR/ca-verify.pem" ]]; then
+            ca_end=$(openssl x509 -in "$CERT_DIR/ca-verify.pem" -noout -enddate | cut -d= -f2)
+            ok "Agent CA 验签证书到期 $(date -d "$ca_end" '+%Y-%m-%d')"
+          else
+            warn "读不到 ca-verify.pem：$CERT_DIR/ca-verify.pem"
+          fi
+
+          # ---------- 7. 最近一局 + 四路来源 ----------
+          head2 "7. 最近一局的四路来源"
+          key=$(grep -m1 '^AGENT_API_KEY=' "$ENV_FILE" | cut -d= -f2- | tr -d "\"'" || true)
+          if [[ -z "$key" ]]; then
+            bad "拿不到 AGENT_API_KEY，跳过四路核对"
+          else
+            # key 走 stdin 的 curl 配置，不进 argv、不进日志
+            printf 'header = "X-API-Key: %s"\n' "$key" > "$work/curlrc"
+            chmod 600 "$work/curlrc"
+            curl -sS --config "$work/curlrc" --max-time 20 \
+              "http://127.0.0.1:8787/battles?limit=20" -o "$work/battles.json" || bad "拉取战局列表失败"
+
+            target="$BATTLE"
+            if [[ -z "$target" ]]; then
+              target=$(BATTLE_JSON="$work/battles.json" python3 -c 'import json,os;d=json.load(open(os.environ["BATTLE_JSON"],encoding="utf-8"));print(d[0]["id"] if d else "")' 2>/dev/null || true)
+            else
+              resolved=$(BATTLE_JSON="$work/battles.json" BATTLE="$target" python3 -c 'import json,os;d=json.load(open(os.environ["BATTLE_JSON"],encoding="utf-8"));m=[b for b in d if b.get("code")==os.environ["BATTLE"] or b.get("id")==os.environ["BATTLE"]];print(m[0]["id"] if m else "")' 2>/dev/null || true)
+              target="$resolved"
+            fi
+
+            if [[ -z "$target" ]]; then
+              bad "没找到要核对的目标战局（输入：${BATTLE:-<最新>}）"
+            else
+              info "目标战局 id=$target"
+              curl -sS --config "$work/curlrc" --max-time 60 \
+                "http://127.0.0.1:8787/reports/$target" -o "$work/report.json" || bad "拉取战报失败"
+              RPT="$work/report.json" STRICT="$STRICT" python3 - "$target" <<'PY'
+          import json, os, sys
+
+          path = os.environ["RPT"]
+          strict = (os.environ.get("STRICT") or "").strip().lower() == "yes"
+          try:
+              doc = json.load(open(path, encoding="utf-8"))
+          except Exception as exc:  # noqa: BLE001
+              print(f"  [CRIT] 战报不是合法 JSON：{exc}")
+              sys.exit(1)
+
+          battle = doc.get("battle") or {}
+          summary = doc.get("summary") or {}
+          attackers = battle.get("attackerOut") or {}
+          defenders = battle.get("defenderOut") or []
+          first_def = defenders[0] if defenders and isinstance(defenders[0], dict) else {}
+          arbiter = (first_def.get("arbiterReview") or {})
+
+          rows = [
+              ("攻击", attackers.get("agentSource")),
+              ("防守", first_def.get("agentSource")),
+              ("仲裁", arbiter.get("agentSource")),
+              ("战报", summary.get("agentSource")),
+          ]
+
+          print(f"  战局 {battle.get('code')} / 状态 {battle.get('status')} / 主题 {battle.get('topic')}")
+          bad = 0
+          for role, src in rows:
+              if not src:
+                  print(f"  [CRIT] {role}：没有 agentSource 字段")
+                  bad += 1
+              elif src.endswith("-llm"):
+                  print(f"  [ OK ] {role}：{src}")
+              elif strict:
+                  print(f"  [CRIT] {role}：{src}（要求全部走模型）")
+                  bad += 1
+              else:
+                  print(f"  [WARN] {role}：{src}（兜底，未走模型）")
+
+          if battle.get("status") != "completed":
+              print(f"  [CRIT] 战局状态不是 completed：{battle.get('status')}")
+              bad += 1
+
+          sys.exit(1 if bad else 0)
+          PY
+              pyrc=$?
+              [[ "$pyrc" -eq 0 ]] || fails=$((fails + 1))
+            fi
+          fi
+
+          # ---------- 8. 磁盘 ----------
+          head2 "8. 磁盘"
+          used=$(df -h /opt 2>/dev/null | awk 'NR==2 {print $5" 已用，剩余 "$4}')
+          avail=$(df --output=avail -BG /opt 2>/dev/null | awk 'NR==2 {gsub("G",""); print $1}')
+          if [[ "${avail:-0}" -ge 5 ]]; then
+            ok "/opt $used"
+          else
+            warn "/opt 剩余空间偏少：$used"
+          fi
+
+          # ---------- 结论 ----------
+          head2 "结论"
+          if [[ "$fails" -eq 0 ]]; then
+            echo "  可以开录：CRIT 失败 0 项，WARN $warns 项。"
+            exit 0
+          fi
+          echo "  暂不要开录：CRIT 失败 $fails 项，WARN $warns 项。按上面 [CRIT] 逐条处理。"
+          exit 1
