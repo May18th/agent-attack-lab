@@ -6,15 +6,15 @@
     "endpoint": "https://api.yuanyiagentzhandui.cn/rpc"
   },
   "attacker": {
-    "aic": "1.2.156.3088.1.BUPT.RX2TMW.LMB4VK.NJ99P0.08RN",
+    "aic": "1.2.156.3088.1.BUPT.RX2TMW.IE3B57.C2049I.0MVE",
     "name": "智能体攻防实验室-攻击智能体",
     "endpoint": "https://attack.yuanyiagentzhandui.cn/rpc",
-    "registrationId": "01a12993-ce5a-7608-841f-c7e8a8c9cbcb"
+    "registrationId": "01a17338-2f73-7206-b3de-7c9f56169857"
   },
   "defender": {
-    "aic": "1.2.156.3088.1.BUPT.RX2TMW.KYUDTI.BI8UKQ.09SG",
+    "aic": "1.2.156.3088.1.BUPT.RX2TMW.CWQD9X.JN4O8Y.0GFQ",
     "name": "智能体攻防实验室-防守智能体",
     "endpoint": "https://defense.yuanyiagentzhandui.cn/rpc",
-    "registrationId": "01a12993-d55c-73f6-b285-620895566bf3"
+    "registrationId": "01a17338-37f3-71b5-9c08-bb59e9e5b5d9"
   }
 }

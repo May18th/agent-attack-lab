@@ -24,9 +24,11 @@ from wit import (
     capability,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = ROOT / ".data" / "acps-registration-renewal"
+# v2：旧 1.0.0 已审核通过且 ACS 冻结（PUT 被平台禁止），只能用新版本号 + 新 workspace
+# 重新注册，由 Registry 分配新 AIC。历史 workspace 为 .data/acps-registration-renewal。
+WORKSPACE_ROOT = ROOT / ".data" / "acps-registration-v3"
+AGENT_VERSION = "1.2.0"
 INFRA = {
     "registry_url": "https://wt.ioa.pub/registry-server",
     "ca_url": "https://wt.ioa.pub/ca-server",
@@ -36,10 +38,28 @@ INFRA = {
 
 @capability(
     id="attack-sample-generation",
-    description="按难度生成隔离环境中的攻防测试样本。",
-    acps_skill=True,
+    description=(
+        "攻击智能体核心能力：作为攻击智能体（红队攻击智能体）按 low/mid/high 难度生成隔离环境中的"
+        "攻防安全测试样本，覆盖提示词注入、越狱、指令劫持、数据泄露、工具滥用等攻击手法。"
+        "用户说“找攻击智能体”“要一个攻击智能体”“用攻击智能体生成样本”时使用本技能。"
+    ),
+    acps_skill={"name": "攻击智能体·攻防安全测试样本生成"},
+    examples=[
+        "让攻击智能体生成 high 难度的提示词注入攻击样本",
+        "用攻击智能体为 SQL 注入主题生成 5 条安全测试样本",
+        "找攻击智能体构造一批红队测试用的越狱样本",
+    ],
     public=True,
-    tags=["攻防", "安全测试"],
+    tags=[
+        "攻击智能体",
+        "红队攻击智能体",
+        "红队",
+        "攻防",
+        "安全测试",
+        "攻击样本生成",
+        "提示词注入",
+        "越狱",
+    ],
 )
 def attack_capability(difficulty: str, topic: str) -> dict[str, str]:
     return {"difficulty": difficulty, "topic": topic}
@@ -47,10 +67,28 @@ def attack_capability(difficulty: str, topic: str) -> dict[str, str]:
 
 @capability(
     id="attack-sample-detection",
-    description="识别隔离环境中的攻防测试样本并返回风险判断。",
-    acps_skill=True,
+    description=(
+        "防守智能体核心能力：作为防守智能体（蓝队防守智能体）识别并分析攻击测试样本，"
+        "输出风险等级、命中判定、拦截结果与修复建议。用户说“找防守智能体”“要一个防守智能体”"
+        "“让防守智能体检测风险”时使用本技能。"
+    ),
+    acps_skill={"name": "防守智能体·攻击样本风险检测"},
+    examples=[
+        "让防守智能体检测这批样本是否存在风险并给出风险等级",
+        "用防守智能体分析提示词注入样本并输出拦截结果和修复建议",
+        "找防守智能体判断这些内容是不是攻击样本",
+    ],
     public=True,
-    tags=["攻防", "风险检测"],
+    tags=[
+        "防守智能体",
+        "蓝队防守智能体",
+        "蓝队",
+        "风险检测",
+        "攻击样本检测",
+        "拦截",
+        "安全审计",
+        "攻防",
+    ],
 )
 def defender_capability(sample: dict[str, object]) -> dict[str, object]:
     return {"sample": sample}
@@ -58,17 +96,25 @@ def defender_capability(sample: dict[str, object]) -> dict[str, object]:
 
 AGENTS = {
     "attack": {
-        "agent_id": "attack-sample-generation-renewal",
+        "agent_id": "attack-sample-generation-v3",
         "display_name": "智能体攻防实验室-攻击智能体",
-        "description": "生成隔离环境中的攻防安全测试样本。",
+        "description": (
+            "智能体攻防实验室的攻击方智能体（红队）。按难度生成提示词注入、越狱、指令劫持、"
+            "数据泄露、工具滥用等 AI 安全测试样本，用于隔离环境中的漏洞验证与安全评估。"
+            "适用于攻击样本生成、红队测试、AI 渗透测试、对抗样本构造与智能体安全评估等请求。"
+        ),
         "instructions": "仅生成隔离环境中的安全测试样本，不访问真实目标。",
         "endpoint": "https://attack.yuanyiagentzhandui.cn/rpc",
         "capability": attack_capability,
     },
     "defender": {
-        "agent_id": "attack-sample-detection-renewal",
+        "agent_id": "attack-sample-detection-v3",
         "display_name": "智能体攻防实验室-防守智能体",
-        "description": "识别隔离环境中的攻防测试样本并输出风险判断。",
+        "description": (
+            "智能体攻防实验室的防守方智能体（蓝队）。识别并分析攻击测试样本，输出风险等级、"
+            "命中判定、拦截结果与修复建议，用于提示词注入检测、越狱识别、敏感数据泄露检测、"
+            "AI 安全防护与合规审计等请求。"
+        ),
         "instructions": "仅分析提交的隔离测试样本，不访问真实目标。",
         "endpoint": "https://defense.yuanyiagentzhandui.cn/rpc",
         "capability": defender_capability,
@@ -82,7 +128,7 @@ def runtime_for(kind: str) -> WitRuntime:
         id=spec["agent_id"],
         display_name=spec["display_name"],
         description=spec["description"],
-        version="1.0.0",
+        version=AGENT_VERSION,
         instructions=spec["instructions"],
         capabilities=[spec["capability"]],
         protocols=[AcpsDirect()],
@@ -111,15 +157,27 @@ async def run(kinds: list[str], submit: bool) -> int:
         runtime = runtime_for(kind)
         draft_path = runtime.save_acs()
         validation = await runtime.validate()
+        acs = runtime.acs_draft()
         result = {
             "agent": kind,
             "workspace": str(runtime.workspace),
             "draft": str(draft_path),
-            "aic": runtime.acs_draft().get("aic", ""),
+            "aic": acs.get("aic", ""),
+            "version": acs.get("version", ""),
+            "descriptionLength": len(acs.get("description") or ""),
+            "skills": [
+                {
+                    "name": (skill or {}).get("name"),
+                    "examples": len((skill or {}).get("examples") or []),
+                }
+                for skill in (acs.get("skills") or [])
+            ],
             "valid": validation.get("valid", False),
         }
         if submit:
-            enrollment = await runtime.up_until_ready(credentials=credentials, max_steps=8)
+            enrollment = await runtime.up_until_ready(
+                credentials=credentials, max_steps=8
+            )
             result.update(
                 {
                     "status": enrollment.status,
@@ -128,13 +186,19 @@ async def run(kinds: list[str], submit: bool) -> int:
                 }
             )
         results.append(result)
-    print(json.dumps({"submitted": submit, "agents": results}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {"submitted": submit, "agents": results}, ensure_ascii=False, indent=2
+        )
+    )
     return 0 if all(item["valid"] for item in results) else 2
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", choices=("attack", "defender", "both"), default="both")
+    parser.add_argument(
+        "--agent", choices=("attack", "defender", "both"), default="both"
+    )
     parser.add_argument(
         "--submit",
         action="store_true",
