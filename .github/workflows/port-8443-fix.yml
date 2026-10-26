@@ -1,0 +1,88 @@
+name: 8443 入口修复
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fix:
+    runs-on: [self-hosted, production]
+    timeout-minutes: 8
+    steps:
+      - name: 定位实际生效的配置文件
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "===== sites-enabled 结构 ====="
+          sudo -n ls -la /etc/nginx/sites-enabled/
+
+          echo
+          echo "===== 谁包含我们的 server_name（实际加载的文件） ====="
+          sudo -n grep -rln "server_name attack.yuanyiagentzhandui.cn" /etc/nginx/ 2>/dev/null || true
+
+          echo
+          echo "===== nginx -T 里相关片段 ====="
+          sudo -n nginx -T 2>/dev/null | grep -nE "configuration file|server_name attack|listen 443|listen 8443" | head -20
+
+      - name: 改实际生效文件并 reload
+        shell: bash
+        run: |
+          set -uo pipefail
+          CONF=$(sudo -n grep -rln "server_name attack.yuanyiagentzhandui.cn" /etc/nginx/sites-enabled/ 2>/dev/null | head -1)
+          if [ -z "$CONF" ]; then
+            echo "sites-enabled 里找不到，退回全量搜索"
+            CONF=$(sudo -n grep -rln "server_name attack.yuanyiagentzhandui.cn" /etc/nginx/ 2>/dev/null | head -1)
+          fi
+          echo "目标文件: $CONF"
+          BAK="/tmp/mtls-fix-$(date +%s).bak"
+          sudo -n cp "$CONF" "$BAK"
+          echo "备份: $BAK"
+
+          if sudo -n grep -q "listen 8443" "$CONF"; then
+            echo "该文件已有 8443，无需修改"
+          else
+            sudo -n sed -i 's/^\([[:space:]]*\)listen 443 ssl;/\1listen 443 ssl;\n\1listen 8443 ssl;/' "$CONF"
+            echo "注入 $(sudo -n grep -c 'listen 8443' "$CONF") 处"
+          fi
+
+          echo
+          echo "===== 检查 sites-enabled 里是否有会被误加载的备份文件 ====="
+          sudo -n find /etc/nginx/sites-enabled/ -maxdepth 1 -type f ! -name "*.conf" -print 2>/dev/null || echo "  (无异常文件)"
+
+          echo
+          echo "===== nginx -t ====="
+          if sudo -n nginx -t 2>&1 | tail -3; then
+            sudo -n systemctl reload nginx
+            sleep 2
+            echo "reload 完成"
+          else
+            echo "配置错误，回滚"
+            sudo -n cp "$BAK" "$CONF"
+            sudo -n nginx -t 2>&1 | tail -2
+            exit 1
+          fi
+
+      - name: 验证
+        shell: bash
+        run: |
+          set -uo pipefail
+          sleep 2
+          echo "===== 监听端口 ====="
+          ss -lntp 2>/dev/null | grep -E ":(443|8443) " || true
+
+          echo
+          echo "===== 本机回环 8443 ====="
+          for h in attack defense leader-mtls; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 \
+              --resolve "$h.yuanyiagentzhandui.cn:8443:127.0.0.1" \
+              "https://$h.yuanyiagentzhandui.cn:8443/health" || echo ERR)
+            echo "  $h:8443/health -> $code"
+          done
+
+          echo
+          echo "===== 8443 证书 ====="
+          echo | timeout 8 openssl s_client -connect 127.0.0.1:8443 \
+            -servername attack.yuanyiagentzhandui.cn 2>/dev/null \
+            | openssl x509 -noout -subject 2>/dev/null || echo "  (取证书失败)"
