@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from agent_attack_lab import service
@@ -108,13 +110,18 @@ def test_sync_battle_defense_completed_event_contains_derived_layer_interception
 def test_background_battle_defense_completed_event_contains_derived_layer_interceptions() -> (
     None
 ):
-    response = client.post(
-        "/battles?background=true", json={"difficulty": "mid", "topic": "SQL 注入"}
-    )
-    assert response.status_code == 201
-    battle_id = response.json()["id"]
-    detail = client.get(f"/battles/{battle_id}").json()
-    events = client.get(f"/battles/{battle_id}/events").json()
+    with TestClient(service.app) as live_client:
+        response = live_client.post(
+            "/battles?background=true", json={"difficulty": "mid", "topic": "SQL 注入"}
+        )
+        assert response.status_code == 201
+        battle_id = response.json()["id"]
+        for _ in range(120):
+            detail = live_client.get(f"/battles/{battle_id}").json()
+            if detail["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.05)
+        events = live_client.get(f"/battles/{battle_id}/events").json()
     completed = next(event for event in events if event["type"] == "defense.completed")
 
     stats = completed["data"]["layerInterceptions"]

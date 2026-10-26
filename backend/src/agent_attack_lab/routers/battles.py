@@ -169,7 +169,7 @@ async def create_battle(
                 },
             )
         )
-        battle_runner.schedule_battle_task(background_tasks, battle_id, payload)
+        battle_runner.schedule_battle_task(battle_id, payload)
         return record
 
     events: list[dict[str, Any]] = []
@@ -384,10 +384,9 @@ async def create_battle(
     description="将失败战局重置为等待中并重新执行；需要配置 API Key 时沿用创建战局的密钥。",
     tags=["战局接口"],
 )
-def retry_battle(
+async def retry_battle(
     battle_id: str,
     request: Request,
-    background_tasks: BackgroundTasks,
 ) -> BattleRecord:
     security.check_browser_or_api_auth(request)
     record = state.battle_store.get(battle_id)
@@ -416,7 +415,7 @@ def retry_battle(
         topic=record["topic"],
         rounds=record.get("rounds", 3),
     )
-    battle_runner.schedule_battle_task(background_tasks, battle_id, payload)
+    battle_runner.schedule_battle_task(battle_id, payload)
     return BattleRecord.model_validate(record)
 
 

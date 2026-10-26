@@ -685,15 +685,22 @@ def test_sync_acp_failure_is_persisted_and_returns_battle_id(monkeypatch) -> Non
 
 
 def test_background_battle_persists_staged_events() -> None:
-    response = client.post(
-        "/battles?background=true",
-        json={"difficulty": "mid", "topic": "异步战局"},
-    )
-    assert response.status_code == 201
-    battle_id = response.json()["id"]
-    detail = client.get(f"/battles/{battle_id}").json()
-    assert detail["status"] == "completed"
-    events = client.get(f"/battles/{battle_id}/events").json()
+    completed_score = None
+    with TestClient(service.app) as live_client:
+        response = live_client.post(
+            "/battles?background=true",
+            json={"difficulty": "mid", "topic": "异步战局"},
+        )
+        assert response.status_code == 201
+        battle_id = response.json()["id"]
+        for _ in range(120):
+            detail = live_client.get(f"/battles/{battle_id}").json()
+            if detail["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.05)
+        assert detail["status"] == "completed"
+        events = live_client.get(f"/battles/{battle_id}/events").json()
+        completed_score = state.battle_store.get_score(battle_id)
     expected_types = ["battle.created", "attack.started"]
     expected_types.extend(["agent.call.started", "agent.call.completed"])
     expected_types.extend(
@@ -732,7 +739,6 @@ def test_background_battle_persists_staged_events() -> None:
     assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     assert all(event["battleId"] == battle_id for event in events)
     assert all(event["status"] for event in events)
-    completed_score = state.battle_store.get_score(battle_id)
     assert completed_score is not None
     assert completed_score["version"]
 
@@ -1828,14 +1834,25 @@ def test_retry_failed_battle() -> None:
         "defenderOut": [],
     }
     state.battle_store.save(record)
-    response = client.post("/battles/battle-retry-test/retry")
-    assert response.status_code == 202
-    assert response.json()["status"] == "pending"
-    assert client.get("/battles/battle-retry-test").json()["status"] == "completed"
-    assert (
-        client.get("/battles/battle-retry-test/events").json()[-1]["type"]
-        == "battle.completed"
-    )
+    with TestClient(service.app) as live_client:
+        response = live_client.post("/battles/battle-retry-test/retry")
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        for _ in range(120):
+            if (
+                live_client.get("/battles/battle-retry-test").json()["status"]
+                == "completed"
+            ):
+                break
+            time.sleep(0.05)
+        assert (
+            live_client.get("/battles/battle-retry-test").json()["status"]
+            == "completed"
+        )
+        assert (
+            live_client.get("/battles/battle-retry-test/events").json()[-1]["type"]
+            == "battle.completed"
+        )
 
 
 def test_read_routes_can_be_protected_together(monkeypatch) -> None:

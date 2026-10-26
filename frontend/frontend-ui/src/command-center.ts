@@ -29,6 +29,33 @@ type Defense = {
   scopeNotice?: string
 }
 
+type RoundScoreCategory = {
+  id?: string
+  label?: string
+  score?: number | null
+  maxScore?: number
+  group?: string
+}
+
+type RoundScoreRole = {
+  score?: number | null
+  maxScore?: number
+  categories?: RoundScoreCategory[]
+  summary?: {
+    processScore?: number
+    effectScore?: number
+    responseScore?: number
+    baseScore?: number
+    finalScore?: number
+  }
+}
+
+type BattleRoundScore = {
+  round: number
+  attacker?: RoundScoreRole
+  defender?: RoundScoreRole
+}
+
 type Battle = {
   id: string
   difficulty: Difficulty
@@ -397,8 +424,9 @@ function publishBattleVisualizations(rounds: readonly BattleVisualizationRound[]
 async function refreshBattleVisualizations(battleId: string) {
   const requestGeneration = ++visualizationRequestGeneration
   try {
-    const result = await json<{ rounds?: BattleVisualizationRound[] }>(`/battles/${encodeURIComponent(battleId)}/rounds`)
+    const result = await json<{ rounds?: (BattleVisualizationRound & BattleRoundScore)[] }>(`/battles/${encodeURIComponent(battleId)}/rounds`)
     if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
+    renderRoundScoreDetails(result.rounds || [])
     publishBattleVisualizations(Array.isArray(result.rounds) ? result.rounds : [], 'ready')
   } catch {
     if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
@@ -409,6 +437,7 @@ async function refreshBattleVisualizations(battleId: string) {
 function roundCard(sample: Sample, defense: Defense | undefined, round: number, battle: Battle) {
   const card = document.createElement('div')
   card.className = 'round-card'
+  card.dataset.round = String(round)
   card.innerHTML = `<div class="round-head"><b>第 ${round} 轮（Round ${round}）</b><span class="pill"></span><span class="state">${battle.status === 'completed' ? '已完成' : '处理中'}</span></div><div class="round-body"><div class="side atk"><h4>攻击方 · 样本生成</h4><div class="round-tags"></div><div class="sample"><span class="sample-label">原始样本</span><span class="sample-copy"></span></div></div><div class="side def"><h4>防守方 · 检测与修复</h4><div class="def-tags"></div><div class="def-findings"></div></div></div>`
   const pill = card.querySelector('.pill')!
   pill.textContent = `${sample.type || 'sample'} · ${sample.severity || battle.difficulty}`
@@ -424,6 +453,97 @@ function roundCard(sample: Sample, defense: Defense | undefined, round: number, 
   findings.append(finding('修复建议', defense?.fixed, 'action', '暂无建议'))
   if (defense?.scopeNotice) findings.append(findingText('验证范围', defense.scopeNotice))
   return card
+}
+
+function scoreNumber(value: unknown, fallback = 0) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function scoreText(value: unknown, max: unknown) {
+  const score = typeof value === 'number' && Number.isFinite(value) ? value : null
+  const limit = scoreNumber(max)
+  return score === null ? '证据不足' : `${score} / ${limit}`
+}
+
+function scoreRow(label: string, value: unknown, max: unknown, className = '') {
+  const row = document.createElement('div')
+  row.className = `score-row${className ? ` ${className}` : ''}`
+  const name = document.createElement('span')
+  name.textContent = label
+  const result = document.createElement('b')
+  result.textContent = scoreText(value, max)
+  row.append(name, result)
+  return row
+}
+
+function scoreCategories(role: RoundScoreRole | undefined) {
+  const panel = document.createElement('div')
+  panel.className = 'score-detail-panel'
+  const categories = Array.isArray(role?.categories) ? role.categories : []
+  const groups: Array<[string, string]> = [['process', '流程规范 / 40'], ['effect', '实际效果 / 60'], ['response', '响应 / 100']]
+  for (const [group, title] of groups) {
+    const items = categories.filter((category) => category.group === group)
+    if (!items.length) continue
+    const heading = document.createElement('div')
+    heading.className = 'score-subhead'
+    heading.textContent = title
+    panel.appendChild(heading)
+    for (const category of items) {
+      panel.appendChild(scoreRow(`${category.id ? `${category.id} · ` : ''}${category.label || '未命名分项'}`, category.score, category.maxScore))
+    }
+  }
+  return panel
+}
+
+function renderRoundScoreDetails(rounds: readonly BattleRoundScore[]) {
+  const cards = document.querySelectorAll<HTMLElement>('.round-card[data-round]')
+  cards.forEach((card) => {
+    if (card.querySelector('.score-details')) return
+    const round = Number(card.dataset.round)
+    const scored = rounds.find((item) => item.round === round)
+    if (!scored?.attacker && !scored?.defender) return
+    const attacker = scored.attacker
+    const defender = scored.defender
+    const attackerSummary = attacker?.summary || {}
+    const defenderSummary = defender?.summary || {}
+    const details = document.createElement('details')
+    details.className = 'score-details'
+    const summary = document.createElement('summary')
+    summary.textContent = '评分细则（基础 95% + 响应 5%）'
+    details.appendChild(summary)
+    const columns = document.createElement('div')
+    columns.className = 'score-cols'
+    const roleColumn = (title: string, role: RoundScoreRole | undefined, values: NonNullable<RoundScoreRole['summary']>, tone: string) => {
+      const column = document.createElement('div')
+      column.className = `score-col ${tone}`
+      const heading = document.createElement('h5')
+      heading.textContent = title
+      column.appendChild(heading)
+      column.appendChild(scoreRow('流程规范', values.processScore, 40))
+      column.appendChild(scoreRow(tone === 'def' ? '实际防御效果' : '分层穿透效果', values.effectScore, 60))
+      column.appendChild(scoreRow('基础攻防分', values.baseScore, 100, 'total'))
+      column.appendChild(scoreRow('响应分', values.responseScore, 100))
+      column.appendChild(scoreRow('综合分', values.finalScore ?? role?.score, 100, 'weighted'))
+      const toggleLabel = document.createElement('label')
+      toggleLabel.className = 'score-detail-check compact'
+      const toggle = document.createElement('input')
+      toggle.type = 'checkbox'
+      const toggleText = document.createElement('span')
+      toggleText.textContent = '各环节的详细评分（勾选后显示并导入导出文件）'
+      const detail = scoreCategories(role)
+      detail.hidden = true
+      toggle.addEventListener('change', () => { detail.hidden = !toggle.checked })
+      toggleLabel.append(toggle, toggleText)
+      column.append(toggleLabel, detail)
+      return column
+    }
+    columns.append(
+      roleColumn('Attacker 攻击方', attacker, attackerSummary, 'atk'),
+      roleColumn('Defender 防守方', defender, defenderSummary, 'def'),
+    )
+    details.appendChild(columns)
+    card.appendChild(details)
+  })
 }
 
 function chip(value: string) {

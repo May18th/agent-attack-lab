@@ -19,8 +19,6 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import BackgroundTasks
-
 from agent_attack_lab import config, scoring_glue, state
 from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import (
@@ -97,10 +95,15 @@ async def run_battle_with_tracking(battle_id: str, payload: BattleRequest) -> No
         state.battle_tasks.pop(battle_id, None)
 
 
-def schedule_battle_task(
-    background_tasks: BackgroundTasks, battle_id: str, payload: BattleRequest
-) -> None:
-    background_tasks.add_task(run_battle_with_tracking, battle_id, payload)
+def schedule_battle_task(battle_id: str, payload: BattleRequest) -> asyncio.Task[Any]:
+    """Start a battle independently of the HTTP response lifecycle.
+
+    FastAPI ``BackgroundTasks`` run after the response handler but remain tied to
+    the request ASGI task. Proxies can buffer that response until the work ends,
+    making the UI appear stuck before the first timeline event arrives.
+    """
+    task = asyncio.create_task(run_battle_with_tracking(battle_id, payload))
+    return task
 
 
 async def battle_attack(

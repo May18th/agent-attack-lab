@@ -33,6 +33,27 @@ def test_background_battle_idempotency_reuses_existing_battle(monkeypatch) -> No
     assert len(created) == 1
 
 
+def test_background_scheduler_detaches_battle_from_http_background_tasks(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    async def fake_run(battle_id, payload):
+        calls.append((battle_id, payload.topic))
+
+    monkeypatch.setattr(battle_runner, "run_battle_with_tracking", fake_run)
+
+    async def exercise() -> None:
+        task = battle_runner.schedule_battle_task(
+            "battle-detached", models.BattleRequest(topic="fast", difficulty="low")
+        )
+        assert isinstance(task, asyncio.Task)
+        await task
+
+    asyncio.run(exercise())
+    assert calls == [("battle-detached", "fast")]
+
+
 def test_background_battle_idempotency_conflict_returns_409(monkeypatch) -> None:
     monkeypatch.setattr(battle_runner, "schedule_battle_task", lambda *args: None)
     client = TestClient(service.app)
