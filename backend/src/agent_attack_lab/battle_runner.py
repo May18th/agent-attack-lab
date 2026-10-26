@@ -313,27 +313,33 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 ),
                 add_event=add_event,
             )
+            verification = verify_round(sample, defense, mode=verification_mode)
+            if isinstance(verification.get("attackSuccess"), bool):
+                defense["attackSuccess"] = verification["attackSuccess"]
+            if isinstance(verification.get("defenseSuccess"), bool):
+                defense["defenseSuccess"] = verification["defenseSuccess"]
             defender_results.append(defense)
+            verifications.append(verification)
             record["defenderOut"] = defender_results
             state.battle_store.save(record)
-            add_event(
-                "round.completed",
-                "completed",
-                {
-                    "round": index,
-                    "sample": sample,
-                    "caught": defense["caught"],
-                    "risks": defense["risks"],
-                    "fixed": defense["fixed"],
-                    "defenderSource": defender_source,
-                    "analysisMode": defense.get("analysisMode"),
-                    "verificationStatus": defense.get("verificationStatus"),
-                    "scopeNotice": defense.get("scopeNotice"),
-                    "correlationId": defense_call_id,
-                },
-            )
-            verification = verify_round(sample, defense, mode=verification_mode)
-            verifications.append(verification)
+            round_data = {
+                "round": index,
+                "sample": sample,
+                "caught": defense["caught"],
+                "risks": defense["risks"],
+                "fixed": defense["fixed"],
+                "defenderSource": defender_source,
+                "analysisMode": defense.get("analysisMode"),
+                "verificationStatus": defense.get("verificationStatus"),
+                "scopeNotice": defense.get("scopeNotice"),
+                "correlationId": defense_call_id,
+            }
+            for key in ("attackSuccess", "defenseSuccess"):
+                if isinstance(defense.get(key), bool):
+                    round_data[key] = defense[key]
+            if isinstance(defense.get("safeControl"), dict):
+                round_data["safeControl"] = defense["safeControl"]
+            add_event("round.completed", "completed", round_data)
             if verification["verified"]:
                 add_event(
                     "attack.compromised",
@@ -344,6 +350,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                         "targetVerified": True,
                         "verificationMode": verification["mode"],
                         "simulated": verification["simulated"],
+                        "attackSuccess": verification.get("attackSuccess"),
                         "evidence": verification["evidence"],
                         "correlationId": defense_call_id,
                     },
@@ -371,10 +378,13 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 "status": record["status"],
                 "verdict": record["verdict"],
                 "compromisedRounds": sum(
-                    1 for item in verifications if item["verified"]
+                    1 for item in verifications if item.get("attackSuccess") is True
                 ),
                 "interceptedRounds": sum(
-                    1 for item in defender_results if item.get("caught")
+                    1
+                    for item in defender_results
+                    if item.get("attackSuccess") is False
+                    and item.get("defenseSuccess") is True
                 ),
                 "verificationMode": verification_mode,
             },

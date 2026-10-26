@@ -78,6 +78,22 @@ describe('live battle visualizations', () => {
     })
   })
 
+  it('classifies interception and escape from explicit v2.0 Arbiter truth fields', () => {
+    const result = buildBattleVisualizations([
+      { round: 1, status: 'completed', attackSuccess: false, defenseSuccess: true },
+      { round: 2, status: 'completed', attackSuccess: true, defenseSuccess: false },
+      { round: 3, status: 'completed', safeControl: { status: 'passed', evidence: ['safe-3'] } },
+    ])
+
+    expect(result).toMatchObject({
+      classificationAvailable: true,
+      interceptedRounds: 1,
+      escapedRounds: 1,
+      classifiedRounds: 2,
+      effectiveInterceptionRate: 50,
+    })
+  })
+
   it('hides low-level agent-call lifecycle entries from the primary round timeline', () => {
     expect(shouldRenderBattleTimelineEvent('agent.call.started')).toBe(false)
     expect(shouldRenderBattleTimelineEvent('agent.call.completed')).toBe(false)

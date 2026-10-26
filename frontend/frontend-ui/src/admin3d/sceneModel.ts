@@ -220,12 +220,17 @@ export function replayEventSummary(event: AdminBattleEvent, events: AdminBattleE
     const risks = countItems(data.risks)
     const fixed = countItems(data.fixed)
     const result = caught ? `命中 ${caught} 条样本规则` : '未命中当前规则'
+    const truth = data.attackSuccess === true && data.defenseSuccess === false
+      ? 'Arbiter 判定攻击成功。'
+      : data.attackSuccess === false && data.defenseSuccess === true
+        ? 'Arbiter 判定攻击被正确阻止。'
+        : ''
     const verification = data.targetVerified === true && data.simulated !== true
       ? '已记录真实目标验证证据。'
       : data.targetVerified === true && data.simulated === true
         ? '规则推定穿透，但真实目标未验证。'
       : '真实目标未验证，不能据此判定沦陷。'
-    return `防守方完成第 ${typeof data.round === 'number' ? data.round : '—'} 轮检测：${result}，记录 ${risks} 项风险和 ${fixed} 条验证建议。${verification}`
+    return `防守方完成第 ${typeof data.round === 'number' ? data.round : '—'} 轮检测：${result}，记录 ${risks} 项风险和 ${fixed} 条验证建议。${truth}${verification}`
   }
   if (type === 'defense.completed') {
     const rounds = events.filter((item) => eventType(item) === 'round.completed').length

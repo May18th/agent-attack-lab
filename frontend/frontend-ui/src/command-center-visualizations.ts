@@ -11,6 +11,12 @@ export type BattleVisualizationRoleScore = {
 export type BattleVisualizationRound = {
   round: number
   status: string
+  attackSuccess?: boolean
+  defenseSuccess?: boolean
+  safeControl?: {
+    status?: string
+    evidence?: unknown[]
+  } | null
   caught?: unknown[]
   durationMs?: number | null
   compromised?: {
@@ -76,16 +82,17 @@ export function buildBattleVisualizations(rounds: readonly BattleVisualizationRo
     .slice()
     .sort((left, right) => left.round - right.round)
 
-  const classificationAvailable = completed.length > 0 && completed.every((round) => {
-    const blocked = round.defender?.blocked
-    const penetrated = round.attacker?.penetrated
-    return typeof blocked === 'boolean' && typeof penetrated === 'boolean' && blocked !== penetrated
-  })
+  const classified = completed.filter((round) => (
+    typeof round.attackSuccess === 'boolean'
+    && typeof round.defenseSuccess === 'boolean'
+    && round.attackSuccess !== round.defenseSuccess
+  ))
+  const classificationAvailable = classified.length > 0
   const interceptedRounds = classificationAvailable
-    ? completed.filter((round) => round.defender?.blocked === true).length
+    ? classified.filter((round) => round.attackSuccess === false && round.defenseSuccess === true).length
     : null
   const escapedRounds = classificationAvailable
-    ? completed.filter((round) => round.attacker?.penetrated === true).length
+    ? classified.filter((round) => round.attackSuccess === true && round.defenseSuccess === false).length
     : null
   const classifiedRounds = interceptedRounds === null || escapedRounds === null
     ? null

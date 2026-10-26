@@ -127,7 +127,9 @@ function Admin3DReplay({ battles, selectedBattle, events, eventsTotal = events.l
       : '战局已完成，但记录中缺少终局事件，无法汇总逐轮证据。真实目标验证状态无法确认。'
   const interceptedRounds = typeof finalEventData.interceptedRounds === 'number'
     ? finalEventData.interceptedRounds
-    : orderedEvents.filter((event) => ['round.completed', 'defense.completed'].includes(String(event.eventType ?? event.type ?? '')) && Array.isArray(event.data?.caught) && event.data.caught.length > 0).length
+    : orderedEvents.filter((event) => String(event.eventType ?? event.type ?? '') === 'round.completed'
+      && event.data?.attackSuccess === false
+      && event.data?.defenseSuccess === true).length
   const compromisedRounds = typeof finalEventData.compromisedRounds === 'number' ? finalEventData.compromisedRounds : compromiseEvents.length
   const verificationMode = finalEventData.verificationMode ?? compromiseEvents[0]?.data?.verificationMode
   const verdictSummary = finalVerdict === 'attacker_won'

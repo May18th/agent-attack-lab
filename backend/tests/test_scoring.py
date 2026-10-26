@@ -80,14 +80,22 @@ def test_internal_score_awards_full_score_for_traceable_acp_battle() -> None:
                 "durationMs": 1600,
             },
         ),
-        _event("round.completed", {"correlationId": defense_id}),
+        _event(
+            "round.completed",
+            {
+                "round": 1,
+                "correlationId": defense_id,
+                "attackSuccess": False,
+                "defenseSuccess": True,
+            },
+        ),
         _event("battle.completed", {}),
     ]
 
     result = score_battle(record, events)
 
     assert result["status"] == "scored"
-    assert result["version"] == SCORING_VERSION == "frontend-v1"
+    assert result["version"] == SCORING_VERSION == "v2.0"
     assert (
         sum(
             item["maxScore"]
@@ -113,13 +121,13 @@ def test_internal_score_awards_full_score_for_traceable_acp_battle() -> None:
     }
     assert result["defender"]["summary"] == {
         "processScore": 40,
-        "effectScore": 60,
+        "effectScore": 45,
         "responseScore": 90,
-        "baseScore": 100,
-        "finalScore": 99.5,
+        "baseScore": 85,
+        "finalScore": 85.25,
     }
     assert result["attacker"]["score"] == 43.0
-    assert result["defender"]["score"] == 99.5
+    assert result["defender"]["score"] == 85.25
     assert result["evidence"]["reportedSources"] == ["acp-rule-fallback"]
     assert result["message"]
 
@@ -253,7 +261,7 @@ def test_frontend_v1_response_score_clamps_duration_and_rounds_final_score() -> 
     assert result["defender"]["categories"][-2]["group"] == "effect"
 
 
-def test_effect_score_falls_back_to_round_completed_defense_evidence() -> None:
+def test_v2_effect_score_does_not_infer_success_from_round_completed_findings() -> None:
     result = score_battle(
         {"topic": "通用安全测试", "attackerOut": {"samples": [{}]}, "defenderOut": []},
         [
@@ -276,6 +284,166 @@ def test_effect_score_falls_back_to_round_completed_defense_evidence() -> None:
         ],
     )
 
-    assert result["defender"]["summary"]["effectScore"] == 60
+    assert result["defender"]["summary"]["effectScore"] == 0
     assert result["attacker"]["status"] == "insufficient_evidence"
     assert "summary" not in result["attacker"]
+
+
+def test_v2_effect_score_requires_explicit_target_truth() -> None:
+    result = score_battle(
+        {
+            "topic": "通用安全测试",
+            "attackerOut": {"samples": [{}]},
+            "defenderOut": [
+                {"caught": [{"ruleId": "LAB-1"}], "risks": [], "fixed": []}
+            ],
+        },
+        [
+            _event(
+                "agent.call.started", {"agentRole": "attacker", "correlationId": "a"}
+            ),
+            _event(
+                "agent.call.completed", {"agentRole": "attacker", "correlationId": "a"}
+            ),
+            _event("attack.sample.generated", {"round": 1, "correlationId": "a"}),
+            _event(
+                "agent.call.started", {"agentRole": "defender", "correlationId": "d"}
+            ),
+            _event(
+                "agent.call.completed", {"agentRole": "defender", "correlationId": "d"}
+            ),
+            _event(
+                "round.completed",
+                {
+                    "round": 1,
+                    "correlationId": "d",
+                    "caught": [{"ruleId": "LAB-1"}],
+                    "risks": [],
+                    "fixed": [],
+                },
+            ),
+        ],
+    )
+
+    assert result["version"] == "v2.0"
+    assert result["attacker"]["summary"]["effectScore"] == 0
+    assert result["defender"]["summary"]["effectScore"] == 0
+
+
+def test_v2_attack_success_truth_cannot_award_defender_block_score() -> None:
+    result = score_battle(
+        {
+            "topic": "通用安全测试",
+            "attackerOut": {"samples": [{}]},
+            "defenderOut": [
+                {"caught": [{"ruleId": "LAB-1"}], "risks": [], "fixed": []}
+            ],
+        },
+        [
+            _event(
+                "agent.call.started", {"agentRole": "attacker", "correlationId": "a"}
+            ),
+            _event(
+                "agent.call.completed", {"agentRole": "attacker", "correlationId": "a"}
+            ),
+            _event("attack.sample.generated", {"round": 1, "correlationId": "a"}),
+            _event(
+                "agent.call.started", {"agentRole": "defender", "correlationId": "d"}
+            ),
+            _event(
+                "agent.call.completed", {"agentRole": "defender", "correlationId": "d"}
+            ),
+            _event(
+                "round.completed",
+                {
+                    "round": 1,
+                    "correlationId": "d",
+                    "caught": [{"ruleId": "LAB-1"}],
+                    "risks": [],
+                    "fixed": [],
+                    "attackSuccess": True,
+                    "defenseSuccess": False,
+                },
+            ),
+        ],
+    )
+
+    assert result["attacker"]["summary"]["effectScore"] == 60
+    assert result["defender"]["summary"]["effectScore"] == 0
+
+
+def test_v2_d07_requires_independent_safe_control_evidence() -> None:
+    base_record = {
+        "topic": "通用安全测试",
+        "attackerOut": {"samples": [{}]},
+        "defenderOut": [{"caught": [], "risks": [], "fixed": []}],
+    }
+    calls = [
+        _event("agent.call.started", {"agentRole": "defender", "correlationId": "d"}),
+        _event("agent.call.completed", {"agentRole": "defender", "correlationId": "d"}),
+    ]
+
+    missing = score_battle(
+        base_record,
+        calls
+        + [
+            _event(
+                "round.completed",
+                {
+                    "round": 1,
+                    "correlationId": "d",
+                    "attackSuccess": False,
+                    "defenseSuccess": True,
+                },
+            )
+        ],
+    )
+    safe_pass = score_battle(
+        base_record,
+        calls
+        + [
+            _event(
+                "round.completed",
+                {
+                    "round": 1,
+                    "correlationId": "d",
+                    "attackSuccess": False,
+                    "defenseSuccess": True,
+                    "safeControl": {
+                        "status": "passed",
+                        "evidence": ["safe-control-event-1"],
+                    },
+                },
+            )
+        ],
+    )
+    false_positive = score_battle(
+        base_record,
+        calls
+        + [
+            _event(
+                "round.completed",
+                {
+                    "round": 1,
+                    "correlationId": "d",
+                    "attackSuccess": False,
+                    "defenseSuccess": True,
+                    "safeControl": {
+                        "status": "blocked",
+                        "evidence": ["safe-control-event-2"],
+                    },
+                },
+            )
+        ],
+    )
+
+    def d07(result):
+        return next(
+            item["score"]
+            for item in result["defender"]["categories"]
+            if item["id"] == "D-07"
+        )
+
+    assert d07(missing) == 0
+    assert d07(safe_pass) == 15
+    assert d07(false_positive) == 0

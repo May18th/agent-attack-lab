@@ -182,7 +182,7 @@ def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_ve
     store.close()
 
 
-def test_simulated_compromise_is_persisted_and_explicitly_labeled(
+def test_simulated_detection_without_target_adapter_stays_unresolved(
     tmp_path, monkeypatch
 ) -> None:
     store = BattleStore(str(tmp_path / "simulated-verdict.sqlite3"))
@@ -194,13 +194,52 @@ def test_simulated_compromise_is_persisted_and_explicitly_labeled(
     battle = response.json()
     events = store.list_events(battle["id"])
     compromised = [event for event in events if event["type"] == "attack.compromised"]
-    assert battle["verdict"] == "attacker_won"
-    assert compromised
-    assert all(event["data"]["simulated"] is True for event in compromised)
-    round_results = client.get(f"/battles/{battle['id']}/rounds").json()["rounds"]
-    assert any(
-        item.get("compromised", {}).get("simulated") is True for item in round_results
+    assert battle["verdict"] == "undetermined"
+    assert not compromised
+    store.close()
+
+
+def test_round_timeline_carries_explicit_truth_and_only_counts_true_interceptions(
+    tmp_path, monkeypatch
+) -> None:
+    store = BattleStore(str(tmp_path / "round-explicit-truth.sqlite3"))
+    monkeypatch.setattr(state, "battle_store", store)
+    monkeypatch.setattr(battle_routes, "configured_verify_mode", lambda: "simulated")
+
+    async def attack_with_one_sample(_payload, *, correlation_id):
+        return {"samples": [{"testCaseId": "case-1", "content": "payload"}]}
+
+    async def defend_with_explicit_truth(_payload, *, correlation_id):
+        return {
+            "caught": [{"ruleId": "LAB-1"}],
+            "risks": [],
+            "fixed": [],
+            "targetVerification": {
+                "attackSuccess": True,
+                "defenseSuccess": False,
+                "evidence": ["target-effect-1"],
+            },
+            "safeControl": {"status": "passed", "evidence": ["safe-1"]},
+        }
+
+    monkeypatch.setattr(battle_runner, "call_attacker", attack_with_one_sample)
+    monkeypatch.setattr(battle_runner, "call_defender", defend_with_explicit_truth)
+
+    response = client.post(
+        "/battles", json={"topic": "explicit truth", "difficulty": "low", "rounds": 1}
     )
+
+    battle_id = response.json()["id"]
+    assert response.json()["defenderOut"][0].get("targetVerification")
+    events = store.list_events(battle_id)
+    round_event = next(event for event in events if event["type"] == "round.completed")
+    completed_event = next(
+        event for event in events if event["type"] == "battle.completed"
+    )
+    assert round_event["data"]["attackSuccess"] is True
+    assert round_event["data"]["defenseSuccess"] is False
+    assert round_event["data"]["safeControl"]["status"] == "passed"
+    assert completed_event["data"]["interceptedRounds"] == 0
     store.close()
 
 
@@ -2248,6 +2287,56 @@ def test_rounds_endpoint_aggregates_events_and_stats(tmp_path, monkeypatch) -> N
         "fixesSuggested": 1,
         "strategyChecks": 1,
     }
+
+
+def test_rounds_endpoint_preserves_v2_truth_fields_without_deriving_them(
+    tmp_path, monkeypatch
+) -> None:
+    store = BattleStore(str(tmp_path / "round-v2-truth.sqlite3"))
+    store.save(
+        {
+            "id": "battle-v2-truth",
+            "code": "A-V2",
+            "difficulty": "low",
+            "topic": "通用安全测试",
+            "status": "completed",
+            "rounds": 1,
+            "createdAt": "2026-10-24T00:00:00+00:00",
+            "attackerOut": {"samples": [{"type": "x", "content": "c"}]},
+            "defenderOut": [
+                {"caught": [{"ruleId": "LAB-1"}], "risks": [], "fixed": []}
+            ],
+        }
+    )
+    store.save_event(
+        {
+            "id": "v2-round-event",
+            "battleId": "battle-v2-truth",
+            "sequence": 1,
+            "type": "round.completed",
+            "status": "completed",
+            "createdAt": "2026-10-24T00:00:01+00:00",
+            "data": {
+                "round": 1,
+                "caught": [{"ruleId": "LAB-1"}],
+                "risks": [],
+                "fixed": [],
+                "attackSuccess": False,
+                "defenseSuccess": True,
+                "safeControl": {"status": "passed", "evidence": ["safe-1"]},
+            },
+        }
+    )
+    monkeypatch.setattr(state, "battle_store", store)
+
+    response = client.get("/battles/battle-v2-truth/rounds")
+
+    assert response.status_code == 200
+    round_item = response.json()["rounds"][0]
+    assert round_item["attackSuccess"] is False
+    assert round_item["defenseSuccess"] is True
+    assert round_item["safeControl"]["status"] == "passed"
+    store.close()
 
 
 def test_admin_resource_crud_and_audit_filters() -> None:

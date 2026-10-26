@@ -283,24 +283,33 @@ async def create_battle(
     ):
         verification = verify_round(sample, defense, mode=verification_mode)
         verifications.append(verification)
+        for key in ("attackSuccess", "defenseSuccess"):
+            if isinstance(verification.get(key), bool):
+                defense[key] = verification[key]
         arbiter_review = await review_round(sample, defense, verification)
         defense["arbiterReview"] = arbiter_review
+        round_data = {
+            "round": index,
+            "sample": sample,
+            "caught": defense["caught"],
+            "risks": defense["risks"],
+            "fixed": defense["fixed"],
+            "defenderSource": defense["agentSource"],
+            "analysisMode": defense.get("analysisMode"),
+            "verificationStatus": defense.get("verificationStatus"),
+            "scopeNotice": defense.get("scopeNotice"),
+            "arbiterReview": arbiter_review,
+            "correlationId": correlation_id,
+        }
+        for key in ("attackSuccess", "defenseSuccess"):
+            if isinstance(defense.get(key), bool):
+                round_data[key] = defense[key]
+        if isinstance(defense.get("safeControl"), dict):
+            round_data["safeControl"] = defense["safeControl"]
         add_event(
             "round.completed",
             "completed",
-            {
-                "round": index,
-                "sample": sample,
-                "caught": defense["caught"],
-                "risks": defense["risks"],
-                "fixed": defense["fixed"],
-                "defenderSource": defense["agentSource"],
-                "analysisMode": defense.get("analysisMode"),
-                "verificationStatus": defense.get("verificationStatus"),
-                "scopeNotice": defense.get("scopeNotice"),
-                "arbiterReview": arbiter_review,
-                "correlationId": correlation_id,
-            },
+            round_data,
         )
         if verification["verified"]:
             add_event(
@@ -312,6 +321,7 @@ async def create_battle(
                     "targetVerified": True,
                     "verificationMode": verification["mode"],
                     "simulated": verification["simulated"],
+                    "attackSuccess": verification.get("attackSuccess"),
                     "evidence": verification["evidence"],
                     "correlationId": correlation_id,
                 },
@@ -348,9 +358,14 @@ async def create_battle(
         {
             "status": record.status,
             "verdict": record.verdict,
-            "compromisedRounds": sum(1 for item in verifications if item["verified"]),
+            "compromisedRounds": sum(
+                1 for item in verifications if item.get("attackSuccess") is True
+            ),
             "interceptedRounds": sum(
-                1 for item in defense_results if item.get("caught")
+                1
+                for item in defense_results
+                if item.get("attackSuccess") is False
+                and item.get("defenseSuccess") is True
             ),
             "verificationMode": verification_mode,
         },
@@ -642,12 +657,19 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
                     item[key] = data[key]
             if isinstance(data.get("arbiterReview"), dict):
                 item["arbiterReview"] = data["arbiterReview"]
+            for key in ("attackSuccess", "defenseSuccess"):
+                if isinstance(data.get(key), bool):
+                    item[key] = data[key]
+            if isinstance(data.get("safeControl"), dict):
+                item["safeControl"] = data["safeControl"]
             if isinstance(data.get("durationMs"), (int, float)):
                 item["durationMs"] = round(data["durationMs"])
             elif isinstance(
                 call_durations.get(data.get("correlationId")), (int, float)
             ):
                 item["durationMs"] = round(call_durations[data["correlationId"]])
+        if event_type == "safe_control" and isinstance(data.get("status"), str):
+            item["safeControl"] = data
 
     samples = record.get("attackerOut", {}).get("samples", [])
     defenses = record.get("defenderOut", [])
@@ -676,6 +698,13 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
                 defense.get("arbiterReview"), dict
             ):
                 item["arbiterReview"] = defense["arbiterReview"]
+            for key in ("attackSuccess", "defenseSuccess"):
+                if key not in item and isinstance(defense.get(key), bool):
+                    item[key] = defense[key]
+            if "safeControl" not in item and isinstance(
+                defense.get("safeControl"), dict
+            ):
+                item["safeControl"] = defense["safeControl"]
 
     def duration_from_timestamps(item: dict[str, Any]) -> None:
         if (

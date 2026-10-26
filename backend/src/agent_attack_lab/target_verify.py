@@ -37,10 +37,11 @@ def verify_round(
     mode: VerifyMode | None = None,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    del config  # Reserved for the future real target adapter.
     selected_mode = mode or configured_verify_mode()
     base = {
         "verified": False,
+        "attackSuccess": None,
+        "defenseSuccess": None,
         "mode": selected_mode,
         "simulated": selected_mode == "simulated",
         "targetAssetId": None,
@@ -51,30 +52,30 @@ def verify_round(
     if selected_mode == "live":
         return {**base, "reason": "no_live_adapter"}
 
-    caught = defense.get("caught") if isinstance(defense, dict) else None
-    matched = sorted(
-        {
-            str(item.get("ruleId"))
-            for item in (caught if isinstance(caught, list) else [])
-            if isinstance(item, dict) and _is_simulatable(str(item.get("ruleId")))
-        }
-    )
-    if not matched:
-        return {**base, "reason": "no_simulated_exploit_evidence"}
-    evidence = [
-        {
-            "kind": "simulated_detection",
-            "ruleId": rule_id,
-            "testCaseId": sample.get("testCaseId"),
-            "note": "本地规则命中，仅为模拟验证，不代表真实目标已沦陷",
-        }
-        for rule_id in matched
-    ]
+    explicit = {}
+    if isinstance(config, dict):
+        explicit = config
+    elif isinstance(defense, dict) and isinstance(
+        defense.get("targetVerification"), dict
+    ):
+        explicit = defense["targetVerification"]
+    attack_success = explicit.get("attackSuccess")
+    defense_success = explicit.get("defenseSuccess")
+    if isinstance(attack_success, bool):
+        base["attackSuccess"] = attack_success
+    if isinstance(defense_success, bool):
+        base["defenseSuccess"] = defense_success
+    if attack_success is not True:
+        return {**base, "reason": "no_simulated_target_adapter"}
+    evidence = explicit.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return {**base, "reason": "missing_target_success_evidence"}
     return {
         **base,
         "verified": True,
+        "attackSuccess": True,
         "evidence": evidence,
-        "reason": "simulated_rule_match",
+        "reason": "simulated_target_success",
     }
 
 
@@ -84,12 +85,16 @@ def aggregate_verdict(
     defenses: list[dict[str, Any]],
 ) -> str:
     if any(
-        item.get("verified") is True and item.get("mode") in {"simulated", "live"}
+        item.get("attackSuccess") is True
+        and item.get("verified") is True
+        and item.get("mode") in {"simulated", "live"}
         for item in verifications
     ):
         return "attacker_won"
     if mode != "off" and any(
-        isinstance(defense, dict) and bool(defense.get("caught"))
+        isinstance(defense, dict)
+        and defense.get("attackSuccess") is False
+        and defense.get("defenseSuccess") is True
         for defense in defenses
     ):
         return "defender_won"
