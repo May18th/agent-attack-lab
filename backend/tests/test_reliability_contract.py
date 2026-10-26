@@ -48,7 +48,9 @@ def test_background_scheduler_detaches_battle_from_http_background_tasks(
             "battle-detached", models.BattleRequest(topic="fast", difficulty="low")
         )
         assert isinstance(task, asyncio.Task)
+        assert state.battle_tasks["battle-detached"] is task
         await task
+        assert "battle-detached" not in state.battle_tasks
 
     asyncio.run(exercise())
     assert calls == [("battle-detached", "fast")]

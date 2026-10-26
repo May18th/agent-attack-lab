@@ -103,6 +103,16 @@ def schedule_battle_task(battle_id: str, payload: BattleRequest) -> asyncio.Task
     making the UI appear stuck before the first timeline event arrives.
     """
     task = asyncio.create_task(run_battle_with_tracking(battle_id, payload))
+
+    # Register before yielding to the event loop so an immediate cancel request
+    # can always find the task, even if the coroutine has not started yet.
+    state.battle_tasks[battle_id] = task
+
+    def clear_task(completed: asyncio.Task[Any]) -> None:
+        if state.battle_tasks.get(battle_id) is completed:
+            state.battle_tasks.pop(battle_id, None)
+
+    task.add_done_callback(clear_task)
     return task
 
 
