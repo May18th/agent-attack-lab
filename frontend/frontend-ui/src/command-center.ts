@@ -1,4 +1,10 @@
 import { parseSseData, reconnectDelay } from './command-center-stream'
+import {
+  buildBattleVisualizations,
+  LiveBattleLifecycleProjector,
+  LiveBattleTimelineProjector,
+  type BattleVisualizationRound,
+} from './command-center-visualizations'
 
 type Difficulty = 'low' | 'mid' | 'high'
 
@@ -28,6 +34,7 @@ type Battle = {
   difficulty: Difficulty
   topic: string
   status: 'pending' | 'running' | 'completed' | 'failed'
+  rounds?: number
   createdAt: string
   attackerOut: { agentSource?: string; samples?: Sample[] }
   defenderOut: Defense[]
@@ -88,6 +95,10 @@ const state = {
   starting: false,
   searchTimer: 0,
 }
+
+let visualizationRequestGeneration = 0
+let liveTimelineProjector = new LiveBattleTimelineProjector()
+let liveLifecycleProjector = new LiveBattleLifecycleProjector()
 
 function element<T extends HTMLElement>(id: string): T {
   const value = document.getElementById(id)
@@ -351,6 +362,7 @@ async function selectBattle(id: string) {
 }
 
 function renderBattleDetail(battle: Battle) {
+  publishBattleVisualizations([], 'loading')
   element('detailTopic').textContent = `${battle.topic}  ${battle.id}`
   element('detailMeta').textContent = `${difficultyText[battle.difficulty]}难度 · ${statusLabel(battle.status)} · ${formatTime(battle.createdAt)}`
   const samples = battle.attackerOut?.samples || []
@@ -373,6 +385,25 @@ function renderBattleDetail(battle: Battle) {
   element('stageChecks').textContent = String(caught)
   element('stageFixes').textContent = String(fixed)
   configureActions(battle)
+  void refreshBattleVisualizations(battle.id)
+}
+
+function publishBattleVisualizations(rounds: readonly BattleVisualizationRound[], status: 'loading' | 'ready' | 'unavailable') {
+  window.dispatchEvent(new CustomEvent('battle-visualizations:update', {
+    detail: { ...buildBattleVisualizations(rounds), status },
+  }))
+}
+
+async function refreshBattleVisualizations(battleId: string) {
+  const requestGeneration = ++visualizationRequestGeneration
+  try {
+    const result = await json<{ rounds?: BattleVisualizationRound[] }>(`/battles/${encodeURIComponent(battleId)}/rounds`)
+    if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
+    publishBattleVisualizations(Array.isArray(result.rounds) ? result.rounds : [], 'ready')
+  } catch {
+    if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
+    publishBattleVisualizations([], 'unavailable')
+  }
 }
 
 function roundCard(sample: Sample, defense: Defense | undefined, round: number, battle: Battle) {
@@ -488,14 +519,18 @@ async function startBattle() {
 function beginLiveBattle(battle: Battle) {
   state.streamSeen.clear()
   state.selected = battle
+  liveTimelineProjector = new LiveBattleTimelineProjector()
+  liveLifecycleProjector = new LiveBattleLifecycleProjector()
+  publishBattleVisualizations([], 'loading')
+  const roundLimit = Number(battle.rounds) || 3
   element('liveId').textContent = battle.id
   element('liveLevel').textContent = `${difficultyText[battle.difficulty]}（${battle.difficulty}）`
   element('liveTheme').textContent = `对抗主题：${battle.topic}`
-  element('liveRounds').textContent = '0/—'
+  element('liveRounds').textContent = `0/${roundLimit}`
   element('stageId').textContent = battle.id
   element('stageLevel').textContent = difficultyText[battle.difficulty]
   element('stageTheme').textContent = battle.topic
-  element('stageRounds').textContent = '—'
+  element('stageRounds').textContent = String(roundLimit)
   element('detailTopic').textContent = `实时战局 · ${battle.topic}`
   element('detailMeta').textContent = `${battle.id} · ${difficultyText[battle.difficulty]} · 进行中`
   element('tlContent').innerHTML = '<div class="axis"></div>'
@@ -507,7 +542,7 @@ function beginLiveBattle(battle: Battle) {
   if (empty) empty.style.display = 'none'
   window.BattleEventBus?.reset(battle.id)
   window.BattleEventBus?.setMode('live')
-  window.BattleEventBus?.emit({ type: 'battle_started', battleId: battle.id, source: 'live', mock: false, payload: { theme: battle.topic, difficulty: battle.difficulty } })
+  window.BattleEventBus?.emit({ type: 'battle_started', battleId: battle.id, source: 'live', mock: false, payload: { theme: battle.topic, difficulty: battle.difficulty, roundLimit } })
 }
 
 async function followEvents(battleId: string) {
@@ -582,13 +617,24 @@ function waitForReconnect(delay: number, signal: AbortSignal) {
 }
 
 function renderLiveEvent(event: BattleEvent) {
-  const side = event.type.startsWith('attack.') ? 'att' : event.type.startsWith('round.') || event.type.startsWith('defense.') ? 'def' : 'judge'
   const round = Number(event.data.round || 0)
-  if (event.type === 'round.started' || event.type === 'attack.sample.generated') ensureRound(round)
-  appendTimeline(side, eventTitle(event), eventDescription(event), event.createdAt)
-  element('liveStatus').textContent = eventTitle(event)
-  if (round) element('liveRounds').textContent = `${round}/—`
+  const entries = liveTimelineProjector.push(event)
+  if (event.type.startsWith('agent.call.')) {
+    const role = event.data.agentRole === 'defender' ? '防守方' : '攻击方'
+    const state = event.type.endsWith('.started') ? '处理中' : event.type.endsWith('.failed') ? '调用失败' : '已完成'
+    element('liveStatus').textContent = `${role}智能体${state}`
+  }
+  for (const entry of entries) {
+    if (entry.kind === 'round') {
+      ensureRound(entry.round)
+      element('liveRounds').textContent = `${entry.round}/—`
+      continue
+    }
+    appendTimeline(entry.side, eventTitle(entry.event), eventDescription(entry.event), entry.event.createdAt)
+    element('liveStatus').textContent = eventTitle(entry.event)
+  }
   bridge3dEvent(event, round)
+  if (event.type === 'round.completed') void refreshBattleVisualizations(event.battleId)
 }
 
 function ensureRound(round: number) {
@@ -632,7 +678,7 @@ function appendTimeline(side: 'att' | 'def' | 'judge', title: string, descriptio
 function eventTitle(event: BattleEvent) {
   return ({
     'battle.created': '战局已创建', 'battle.retry': '战局已重新提交', 'attack.started': '攻击阶段开始',
-    'attack.sample.generated': '攻击方提交样本', 'attack.completed': '攻击样本生成完成',
+    'attack.sample.generated': '攻击方提交样本', 'attack.completed': '攻击样本生成完成', 'attack.compromised': '目标验证结果',
     'round.started': '防守方开始检测', 'round.completed': '本轮检测完成',
     'defense.completed': '防守分析完成', 'battle.completed': '战局完成', 'battle.failed': '战局失败',
   } as Record<string, string>)[event.type] || event.type
@@ -643,6 +689,11 @@ function eventDescription(event: BattleEvent) {
   if (event.type === 'attack.sample.generated') return `第 ${text(data.round)} 轮样本已生成 · ${sourceLabel(String(data.attackerSource || ''))}`
   if (event.type === 'round.started') return `正在检测第 ${text(data.round)} 轮 · ${sourceLabel(String(data.defenderSource || ''))}`
   if (event.type === 'round.completed') return `命中 ${Array.isArray(data.caught) ? data.caught.length : 0} 条规则，记录 ${Array.isArray(data.risks) ? data.risks.length : 0} 条风险，提出 ${Array.isArray(data.fixed) ? data.fixed.length : 0} 条建议`
+  if (event.type === 'attack.compromised') {
+    return data.simulated === true
+      ? '模拟验证证据；不代表真实目标沦陷'
+      : data.targetVerified === true ? '已记录目标验证证据' : '未取得目标验证证据'
+  }
   if (event.type === 'battle.failed') return String(data.error || '后端执行失败')
   return `状态：${event.status}`
 }
@@ -650,10 +701,18 @@ function eventDescription(event: BattleEvent) {
 function bridge3dEvent(event: BattleEvent, round: number) {
   const bus = window.BattleEventBus
   if (!bus) return
-  const base = { battleId: event.battleId, round, source: 'live', mock: false, eventId: `backend-${event.id}`, occurredAt: event.createdAt }
-  if (event.type === 'round.started') bus.emit({ ...base, type: 'round_started', payload: event.data })
-  else if (event.type === 'round.completed') bus.emit({ ...base, type: 'round_settled', payload: event.data })
-  else if (event.type === 'battle.completed' || event.type === 'battle.failed') bus.emit({ ...base, type: 'battle_ended', status: event.status, payload: event.data })
+  const projected = liveLifecycleProjector.push(event)
+  projected.forEach((item, index) => {
+    bus.emit({
+      ...item,
+      round: item.round || round,
+      source: 'live',
+      mock: false,
+      status: item.status || event.status,
+      eventId: `backend-${event.id}-${index}`,
+      occurredAt: event.createdAt,
+    })
+  })
 }
 
 async function finishLiveBattle(event: BattleEvent) {
