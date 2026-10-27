@@ -98,6 +98,7 @@ def test_mysql_store_uses_mysql_pool_schema_and_queries(monkeypatch) -> None:
         }
     )
     assert store.list(limit=10, offset=20) == []
+    assert store.list_outputs(limit=10) == []
     assert store.get("battle-1") is None
     assert store.count(query="登录") == 0
     store.delete("battle-1")
@@ -109,6 +110,11 @@ def test_mysql_store_uses_mysql_pool_schema_and_queries(monkeypatch) -> None:
         for statement in statements
     )
     assert any("WHERE id = %s" in statement for statement in statements)
+    assert any(
+        "SELECT attacker_out, defender_out FROM battles "
+        "ORDER BY created_at DESC LIMIT %s OFFSET 0" == statement
+        for statement in statements
+    )
     assert any(
         "DELETE FROM battle_events WHERE battle_id = %s" in statement
         for statement in statements

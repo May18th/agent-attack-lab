@@ -91,14 +91,15 @@ def battle_stats(
 ) -> dict[str, int]:
     samples = record.get("attackerOut", {}).get("samples", [])
     defenses = record.get("defenderOut", [])
+    detected = fixes = 0
+    for item in defenses:
+        if isinstance(item, dict):
+            detected += len(item.get("caught", []))
+            fixes += len(item.get("fixed", []))
     return {
         "attackGenerated": len(samples),
-        "defenderDetected": sum(
-            len(item.get("caught", [])) for item in defenses if isinstance(item, dict)
-        ),
-        "fixesSuggested": sum(
-            len(item.get("fixed", [])) for item in defenses if isinstance(item, dict)
-        ),
+        "defenderDetected": detected,
+        "fixesSuggested": fixes,
         # TODO 战略检测口径：当前以 round.completed 事件计数。
         "strategyChecks": sum(
             1 for event in (events or []) if event.get("type") == "round.completed"

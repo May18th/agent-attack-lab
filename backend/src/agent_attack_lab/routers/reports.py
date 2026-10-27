@@ -81,15 +81,18 @@ async def battle_report(
         raise HTTPException(status_code=404, detail="战局不存在")
     events = state.battle_store.list_events(battle_id)
     report_summary = await _report_summary_for(battle_id, record, events)
+    stored_internal_score = state.battle_store.get_score(battle_id)
+    internal_score = (
+        stored_internal_score
+        if stored_internal_score is not None
+        else scoring_glue.insufficient_internal_score()
+    )
     if format == "markdown":
-        stored_internal_score = state.battle_store.get_score(battle_id)
         return PlainTextResponse(
             build_markdown_report(
                 record,
                 events,
-                stored_internal_score
-                if stored_internal_score is not None
-                else scoring_glue.insufficient_internal_score(),
+                internal_score,
                 scoring_glue.role_scores(record),
                 report_summary,
             ),
@@ -97,13 +100,10 @@ async def battle_report(
             headers={"Content-Disposition": f'attachment; filename="{battle_id}.md"'},
         )
     attacker_score, defender_score = scoring_glue.role_scores(record)
-    stored_internal_score = state.battle_store.get_score(battle_id)
     return {
         "battle": record,
         "events": events,
         "scores": {"attacker": attacker_score, "defender": defender_score},
-        "internalScore": stored_internal_score
-        if stored_internal_score is not None
-        else scoring_glue.insufficient_internal_score(),
+        "internalScore": internal_score,
         "summary": report_summary,
     }

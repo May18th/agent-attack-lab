@@ -1273,6 +1273,22 @@ class BattleStore:
             ).fetchall()
         return [self._to_record(row) for row in rows]
 
+    def list_outputs(self, limit: int = 100000) -> list[dict[str, Any]]:
+        """Read the latest battle outputs without materializing unused metadata."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT attacker_out, defender_out FROM battles "
+                f"ORDER BY created_at DESC LIMIT {self._placeholder} OFFSET 0",
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "attackerOut": json.loads(row["attacker_out"]),
+                "defenderOut": json.loads(row["defender_out"]),
+            }
+            for row in rows
+        ]
+
     def list_events(self, battle_id: str) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._connection.execute(
