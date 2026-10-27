@@ -20,6 +20,19 @@ from agent_attack_lab.scoring import SCORING_VERSION
 router = APIRouter()
 
 
+def _role_score_summary(items: list[dict[str, Any]], role: str) -> dict[str, Any]:
+    scores = [
+        item[role]["score"]
+        for item in items
+        if isinstance(item[role]["score"], (int, float))
+    ]
+    return {
+        "scoredBattleCount": len(scores),
+        "insufficientEvidenceCount": len(items) - len(scores),
+        "averageScore": round(sum(scores) / len(scores), 1) if scores else None,
+    }
+
+
 @router.get(
     "/battles/{battle_id}/score",
     summary="查看战局内部运行质量评分",
@@ -61,32 +74,10 @@ def internal_scores(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
                 **score,
             }
         )
-    attacker_scores = [
-        item["attacker"]["score"]
-        for item in items
-        if isinstance(item["attacker"]["score"], (int, float))
-    ]
-    defender_scores = [
-        item["defender"]["score"]
-        for item in items
-        if isinstance(item["defender"]["score"], (int, float))
-    ]
     return {
         "version": SCORING_VERSION,
-        "attacker": {
-            "scoredBattleCount": len(attacker_scores),
-            "insufficientEvidenceCount": len(items) - len(attacker_scores),
-            "averageScore": round(sum(attacker_scores) / len(attacker_scores), 1)
-            if attacker_scores
-            else None,
-        },
-        "defender": {
-            "scoredBattleCount": len(defender_scores),
-            "insufficientEvidenceCount": len(items) - len(defender_scores),
-            "averageScore": round(sum(defender_scores) / len(defender_scores), 1)
-            if defender_scores
-            else None,
-        },
+        "attacker": _role_score_summary(items, "attacker"),
+        "defender": _role_score_summary(items, "defender"),
         "items": items,
     }
 
@@ -108,7 +99,7 @@ def leaderboard() -> dict[str, Any]:
         return cached
     attacker_score = defender_score = 0
     rounds = 0
-    for record in state.battle_store.list(limit=100000):
+    for record in state.battle_store.list_outputs(limit=100000):
         attack_points, defend_points = scoring_glue.role_scores(record)
         attacker_score += attack_points
         defender_score += defend_points
