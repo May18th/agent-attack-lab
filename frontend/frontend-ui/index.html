@@ -776,7 +776,7 @@ var BattleEventBus=(function(){
   function normalize(raw){
     if(!raw||!TYPES[raw.type])return null;
     var src=raw.source||mode,stageId=raw.stageId||'';
-    var agentId=raw.agentId||(/^A[1-8]/.test(stageId)?'attacker-agent':/^L[0-3]-/.test(stageId)?'defender-agent':'arbiter');
+    var agentId=raw.agentId||(stageId==='A6'?'arbiter':/^A[1-8]/.test(stageId)?'attacker-agent':/^L[0-3]-/.test(stageId)?'defender-agent':'arbiter');
     var bid=raw.battleId||activeBattle||'BATTLE';
     if(raw.type==='battle_started')activeBattle=bid;
     else if(activeBattle&&bid!==activeBattle)return null;

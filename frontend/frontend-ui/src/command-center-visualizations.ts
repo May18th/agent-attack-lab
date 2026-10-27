@@ -127,16 +127,19 @@ export function buildBattleVisualizations(rounds: readonly BattleVisualizationRo
 export function shouldRenderBattleTimelineEvent(type: string, data: Record<string, unknown> = {}): boolean {
   if (type.startsWith('arbiter.')) return true
   const stageId = typeof data.stageId === 'string' ? data.stageId.trim().toUpperCase() : ''
-  if (/^A[1-8]$/.test(stageId)) return type.startsWith('attack.stage.')
+  // The primary timeline is a result timeline: one card per logical stage.
+  // Started events remain available to the role log and 3D animation stream.
+  if (/^A[1-8]$/.test(stageId)) return type === 'attack.stage.completed'
   if (/^L[0-3]$/.test(stageId)) return type === 'defense.layer.started'
   if (/^L[0-3]-\d+$/.test(stageId)) {
-    return type === 'defense.check.started' || type === 'defense.layer.verdict'
+    return type === 'defense.layer.verdict'
   }
   return false
 }
 
 export class LiveBattleTimelineProjector {
   private readonly renderedRounds = new Set<number>()
+  private readonly renderedStages = new Set<string>()
 
   push(event: BattleTimelineEvent): BattleTimelineEntry[] {
     const round = Number(event.data.round || 0)
@@ -147,6 +150,9 @@ export class LiveBattleTimelineProjector {
       entries.push({ kind: 'round', round })
     }
     const stageId = String(event.data.stageId || '').trim().toUpperCase()
+    const stageKey = `${event.battleId}:${round}:${stageId}:${event.type.startsWith('arbiter.') ? event.type : 'stage'}`
+    if (stageId && this.renderedStages.has(stageKey)) return entries
+    if (stageId) this.renderedStages.add(stageKey)
     const side = event.type.startsWith('arbiter.') || stageId === 'A6' ? 'judge'
       : /^A[1-8]$/.test(stageId) ? 'att' : 'def'
     entries.push({ kind: 'event', side, event })
@@ -206,6 +212,9 @@ export class LiveBattleLifecycleProjector {
     }
     if (event.type === 'arbiter.layer.confirmed') {
       return [lifecycleEvent(event, 'arbiter_layer_confirm', event.data, stageId, event.status)]
+    }
+    if (event.type === 'arbiter.similarity.checked') {
+      return [lifecycleEvent(event, 'stage_completed', event.data, 'A6', event.status)]
     }
     if (event.type === 'arbiter.verdict') {
       return [lifecycleEvent(event, 'arbiter_verdict', event.data, stageId, event.status)]
