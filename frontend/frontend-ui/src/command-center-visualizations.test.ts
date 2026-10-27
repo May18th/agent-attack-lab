@@ -94,14 +94,21 @@ describe('live battle visualizations', () => {
     })
   })
 
-  it('hides low-level agent-call lifecycle entries from the primary round timeline', () => {
-    expect(shouldRenderBattleTimelineEvent('agent.call.started')).toBe(false)
-    expect(shouldRenderBattleTimelineEvent('agent.call.completed')).toBe(false)
-    expect(shouldRenderBattleTimelineEvent('round.completed')).toBe(true)
-    expect(shouldRenderBattleTimelineEvent('battle.completed')).toBe(true)
+  it('limits the primary timeline to canonical attacker, defender, and Arbiter events', () => {
+    expect(shouldRenderBattleTimelineEvent('attack.stage.started', { stageId: 'A1' })).toBe(true)
+    expect(shouldRenderBattleTimelineEvent('attack.stage.completed', { stageId: 'A8' })).toBe(true)
+    expect(shouldRenderBattleTimelineEvent('defense.layer.started', { stageId: 'L0' })).toBe(true)
+    expect(shouldRenderBattleTimelineEvent('defense.check.started', { stageId: 'L0-1' })).toBe(true)
+    expect(shouldRenderBattleTimelineEvent('defense.layer.verdict', { stageId: 'L3-4' })).toBe(true)
+    expect(shouldRenderBattleTimelineEvent('arbiter.layer.confirmed', { stageId: 'L0' })).toBe(true)
+    expect(shouldRenderBattleTimelineEvent('arbiter.verdict', { stageId: 'ARBITER' })).toBe(true)
+    expect(shouldRenderBattleTimelineEvent('agent.call.completed', { stageId: 'A1' })).toBe(false)
+    expect(shouldRenderBattleTimelineEvent('round.started', { round: 1 })).toBe(false)
+    expect(shouldRenderBattleTimelineEvent('attack.sample.generated', { round: 1 })).toBe(false)
+    expect(shouldRenderBattleTimelineEvent('battle.completed')).toBe(false)
   })
 
-  it('groups batched attack samples into their round when defense starts', () => {
+  it('groups only canonical events into their round and excludes lifecycle and sample events', () => {
     const projector = new LiveBattleTimelineProjector()
     const event = (type: string, sequence: number, round?: number, extra: Record<string, unknown> = {}): BattleTimelineEvent => ({
       id: `event-${sequence}`,
@@ -116,43 +123,37 @@ describe('live battle visualizations', () => {
     expect(projector.push(event('attack.sample.generated', 1, 1))).toEqual([])
     expect(projector.push(event('attack.sample.generated', 2, 2))).toEqual([])
     expect(projector.push(event('agent.call.completed', 3, undefined, { agentRole: 'attacker' }))).toEqual([])
-    expect(projector.push(event('round.started', 4, 1))).toEqual([
+    expect(projector.push(event('round.started', 4, 1))).toEqual([])
+    expect(projector.push(event('attack.stage.started', 5, 1, { stageId: 'A1' }))).toEqual([
       { kind: 'round', round: 1 },
-      { kind: 'event', side: 'att', event: event('attack.sample.generated', 1, 1) },
-      { kind: 'event', side: 'def', event: event('round.started', 4, 1) },
+      { kind: 'event', side: 'att', event: event('attack.stage.started', 5, 1, { stageId: 'A1' }) },
     ])
-    expect(projector.push(event('round.completed', 5, 1))).toEqual([
-      { kind: 'event', side: 'def', event: event('round.completed', 5, 1) },
-    ])
-    expect(projector.push(event('round.started', 6, 2))).toEqual([
+    expect(projector.push(event('round.completed', 6, 1))).toEqual([])
+    expect(projector.push(event('defense.layer.started', 7, 2, { stageId: 'L0' }))).toEqual([
       { kind: 'round', round: 2 },
-      { kind: 'event', side: 'att', event: event('attack.sample.generated', 2, 2) },
-      { kind: 'event', side: 'def', event: event('round.started', 6, 2) },
+      { kind: 'event', side: 'def', event: event('defense.layer.started', 7, 2, { stageId: 'L0' }) },
     ])
   })
 
-  it('renders an attack sample that arrives after its round has started', () => {
+  it('places Arbiter events centrally even when they carry an L-layer stage id', () => {
     const projector = new LiveBattleTimelineProjector()
-    const event = (type: string, sequence: number, round: number): BattleTimelineEvent => ({
+    const event = (type: string, sequence: number, round: number, data: Record<string, unknown>): BattleTimelineEvent => ({
       id: `event-${sequence}`,
       battleId: 'battle-1',
       type,
       sequence,
       status: 'completed',
       createdAt: `2026-10-26T00:00:0${sequence}Z`,
-      data: { round },
+      data: { round, ...data },
     })
 
-    expect(projector.push(event('round.started', 1, 1))).toEqual([
+    expect(projector.push(event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }))).toEqual([
       { kind: 'round', round: 1 },
-      { kind: 'event', side: 'def', event: event('round.started', 1, 1) },
-    ])
-    expect(projector.push(event('attack.sample.generated', 2, 1))).toEqual([
-      { kind: 'event', side: 'att', event: event('attack.sample.generated', 2, 1) },
+      { kind: 'event', side: 'judge', event: event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }) },
     ])
   })
 
-  it('keeps buffered attack samples visible when a battle fails before defense starts', () => {
+  it('does not add battle lifecycle events when there are no canonical stages', () => {
     const projector = new LiveBattleTimelineProjector()
     const sample: BattleTimelineEvent = {
       id: 'sample-1', battleId: 'battle-1',
@@ -166,11 +167,7 @@ describe('live battle visualizations', () => {
     }
 
     expect(projector.push(sample)).toEqual([])
-    expect(projector.push(failed)).toEqual([
-      { kind: 'round', round: 1 },
-      { kind: 'event', side: 'att', event: sample },
-      { kind: 'event', side: 'judge', event: failed },
-    ])
+    expect(projector.push(failed)).toEqual([])
   })
 
   it('projects backend rounds into the lifecycle events consumed by the attack animation', () => {
