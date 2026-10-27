@@ -84,7 +84,7 @@ def _safe_control_points(
 
     for event in events:
         data = _event_data(event)
-        if event.get("type") == "safe_control":
+        if event.get("type") in {"safe_control", "defense.safe_control"}:
             add(data.get("round"), data)
         elif isinstance(data.get("safeControl"), dict):
             add(data.get("round"), data["safeControl"])

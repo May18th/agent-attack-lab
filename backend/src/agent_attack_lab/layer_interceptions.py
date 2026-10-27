@@ -19,6 +19,13 @@ _LAYER_NAMES = (
     "审计监测恢复",
 )
 
+LAYER_CHECK_IDS: tuple[tuple[str, ...], ...] = (
+    ("L0-1", "L0-2", "L0-3"),
+    ("L1-1", "L1-2", "L1-3"),
+    ("L2-1", "L2-2", "L2-3", "L2-4", "L2-5"),
+    ("L3-1", "L3-2", "L3-3", "L3-4"),
+)
+
 _TOPIC_LAYERS: tuple[tuple[re.Pattern[str], tuple[int, ...]], ...] = (
     (
         re.compile(
@@ -60,6 +67,89 @@ def _finding_layer(topic: str, defense: Mapping[str, Any]) -> int | None:
     if re.search(r"tenant|越权|权限|tool|工具", text) and 3 in focused:
         return 3
     return None
+
+
+def _blocking_check(layer_index: int, defense: Mapping[str, Any]) -> int:
+    evidence = defense.get("caught") or []
+    text = " ".join(
+        str(item.get("ruleId", "")) + " " + str(item.get("owaspCategory", ""))
+        for item in evidence
+        if isinstance(item, Mapping)
+    ).lower()
+    if layer_index == 0:
+        return 1 if re.search(r"prompt|llm01|llm07", text) else 2
+    if layer_index == 1:
+        return 2 if re.search(r"prompt|llm01|llm07", text) else 0
+    if layer_index == 2:
+        if re.search(r"tenant|permission|llm02", text):
+            return 2
+        if re.search(r"sql|path|webhook|ssrf|llm05|llm06", text):
+            return 1
+        return 0
+    return 2
+
+
+def derive_round_layer_trace(
+    topic: str, defense: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Project recorded defense evidence onto the documented L0-L3 checks.
+
+    This is an explicit backend projection of persisted findings, not device
+    telemetry. Every emitted decision includes that basis and the rule IDs that
+    support a block. A round stops at the first derived blocking layer.
+    """
+
+    caught = defense.get("caught") or []
+    evidence_ids = [
+        str(item.get("ruleId"))
+        for item in caught
+        if isinstance(item, Mapping) and item.get("ruleId")
+    ]
+    block_layer = _finding_layer(topic, defense) if caught else None
+    if caught and block_layer is None:
+        focused = _focused_layers(topic)
+        block_layer = focused[0]
+    block_index = block_layer - 1 if block_layer is not None else None
+    blocking_check = (
+        _blocking_check(block_index, defense) if block_index is not None else None
+    )
+
+    trace: list[dict[str, Any]] = []
+    for layer_index, checks in enumerate(LAYER_CHECK_IDS):
+        if block_index is not None and layer_index > block_index:
+            break
+        decisions = []
+        for check_index, stage_id in enumerate(checks):
+            if block_index == layer_index and blocking_check is not None:
+                if check_index < blocking_check:
+                    status = "passed"
+                elif check_index == blocking_check:
+                    status = "blocked"
+                else:
+                    status = "skipped-by-block"
+            else:
+                status = "passed"
+            decisions.append(
+                {
+                    "stageId": stage_id,
+                    "status": status,
+                    "evidenceIds": evidence_ids if status == "blocked" else [],
+                }
+            )
+        trace.append(
+            {
+                "layerIndex": layer_index,
+                "layer": f"L{layer_index}",
+                "name": _LAYER_NAMES[layer_index],
+                "applicableChecks": list(checks),
+                "checks": decisions,
+                "confirmedPassed": all(
+                    item["status"] == "passed" for item in decisions
+                ),
+                "basis": "derived_from_defense_results",
+            }
+        )
+    return trace
 
 
 def derive_layer_interceptions(

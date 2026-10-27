@@ -204,6 +204,37 @@ export class LiveBattleLifecycleProjector {
   push(event: BattleTimelineEvent): BattleLifecycleEvent[] {
     const round = Number(event.data.round || 0)
     const key = `${event.battleId}:${round}`
+    const stageId = typeof event.data.stageId === 'string' ? event.data.stageId : undefined
+    if (event.type === 'attack.stage.started') {
+      return [lifecycleEvent(event, 'stage_started', event.data, stageId)]
+    }
+    if (event.type === 'attack.stage.completed') {
+      return [lifecycleEvent(event, 'stage_completed', event.data, stageId, event.data.classification as string | undefined)]
+    }
+    if (event.type === 'attack.stage.failed') {
+      return [lifecycleEvent(event, 'stage_failed', event.data, stageId, 'failed')]
+    }
+    if (event.type === 'defense.layer.started') {
+      return [lifecycleEvent(event, 'layer_started', event.data, stageId)]
+    }
+    if (event.type === 'defense.check.started') {
+      return [lifecycleEvent(event, 'stage_started', event.data, stageId)]
+    }
+    if (event.type === 'defense.layer.verdict') {
+      return [lifecycleEvent(event, 'layer_verdict', event.data, stageId, event.status)]
+    }
+    if (event.type === 'arbiter.layer.confirmed') {
+      return [lifecycleEvent(event, 'arbiter_layer_confirm', event.data, stageId, event.status)]
+    }
+    if (event.type === 'arbiter.verdict') {
+      return [lifecycleEvent(event, 'arbiter_verdict', event.data, stageId, event.status)]
+    }
+    if (event.type === 'round.settled') {
+      return [lifecycleEvent(event, 'round_settled', event.data, stageId, event.status)]
+    }
+    if (event.type === 'defense.safe_control') {
+      return [lifecycleEvent(event, 'safe_control', event.data, stageId, event.status)]
+    }
     if (event.type === 'attack.sample.generated' && round > 0) {
       this.pendingSamples.set(key, event)
       return []
@@ -213,6 +244,7 @@ export class LiveBattleLifecycleProjector {
       return [lifecycleEvent(event, 'battle_ended', event.data)]
     }
     if (event.type === 'round.completed' && round > 0) {
+      if (event.data.structuredTimelineVersion === 'v2.0') return []
       return this.projectDefense(event)
     }
     if (event.type !== 'round.started' || round <= 0) return []
@@ -222,7 +254,7 @@ export class LiveBattleLifecycleProjector {
     ]
     const sample = this.pendingSamples.get(key)
     this.pendingSamples.delete(key)
-    if (!sample) return output
+    if (!sample || event.data.structuredTimelineVersion === 'v2.0') return output
 
     const id = sampleId(sample.data.sample)
     const payload = id ? { sampleId: id } : {}

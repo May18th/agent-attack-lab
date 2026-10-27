@@ -175,6 +175,19 @@ def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_ve
         len({sample["testCaseId"] for sample in battle["attackerOut"]["samples"]}) == 5
     )
     assert client.get(f"/battles/{battle['id']}/rounds").json()["total"] == 5
+    battle_events = store.list_events(battle["id"])
+    assert (
+        sum(event["type"] == "attack.sample.generated" for event in battle_events) == 5
+    )
+    assert sum(event["type"] == "round.started" for event in battle_events) == 5
+    assert sum(event["type"] == "round.completed" for event in battle_events) == 5
+    assert sum(event["type"] == "round.settled" for event in battle_events) == 5
+    assert sum(event["type"] == "arbiter.verdict" for event in battle_events) == 5
+    assert all(
+        event["data"]["classification"] in {"blocked", "full-penetration", "unresolved"}
+        for event in battle_events
+        if event["type"] == "arbiter.verdict"
+    )
     assert not any(
         event["type"] == "attack.compromised"
         for event in store.list_events(battle["id"])
@@ -717,7 +730,23 @@ def test_background_battle_persists_staged_events() -> None:
             ]
         )
     expected_types.extend(["defense.completed", "battle.completed"])
-    assert [event["type"] for event in events] == expected_types
+    legacy_types = set(expected_types)
+    assert [
+        event["type"] for event in events if event["type"] in legacy_types
+    ] == expected_types
+    round_count = len(detail["attackerOut"]["samples"])
+    assert sum(event["type"] == "attack.stage.started" for event in events) == (
+        round_count * 8
+    )
+    assert sum(event["type"] == "attack.stage.completed" for event in events) == (
+        round_count * 8
+    )
+    assert sum(event["type"] == "arbiter.verdict" for event in events) == round_count
+    assert all(
+        {"agentRole", "round", "stageId"}.issubset(event["data"])
+        for event in events
+        if event["type"].startswith("agent.call.")
+    )
     generated = [
         event for event in events if event["type"] == "attack.sample.generated"
     ]

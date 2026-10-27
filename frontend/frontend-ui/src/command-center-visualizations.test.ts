@@ -229,4 +229,51 @@ describe('live battle visualizations', () => {
       { type: 'round_settled', battleId: 'battle-1', round: 1, payload: { classification: 'blocked' } },
     ])
   })
+
+  it('forwards the backend v2 lifecycle without synthesizing duplicate stages', () => {
+    const projector = new LiveBattleLifecycleProjector()
+    const event = (
+      type: string,
+      sequence: number,
+      data: Record<string, unknown>,
+      status = 'completed',
+    ): BattleTimelineEvent => ({
+      id: `event-${sequence}`,
+      battleId: 'battle-v2',
+      type,
+      sequence,
+      status,
+      createdAt: `2026-10-28T00:00:${String(sequence).padStart(2, '0')}Z`,
+      data: { round: 1, ...data },
+    })
+
+    expect(projector.push(event('attack.sample.generated', 1, {
+      sample: { testCaseId: 'sample-v2' },
+    }))).toEqual([])
+    expect(projector.push(event('round.started', 2, {
+      structuredTimelineVersion: 'v2.0',
+    }))).toEqual([
+      { type: 'round_started', battleId: 'battle-v2', round: 1, payload: { round: 1 } },
+    ])
+    expect(projector.push(event('attack.stage.started', 3, { stageId: 'A1' }, 'running')))
+      .toEqual([expect.objectContaining({ type: 'stage_started', stageId: 'A1' })])
+    expect(projector.push(event('defense.layer.started', 4, {
+      stageId: 'L0', layerIndex: 0, applicableChecks: ['L0-1'],
+    }, 'running'))).toEqual([
+      expect.objectContaining({ type: 'layer_started', stageId: 'L0' }),
+    ])
+    expect(projector.push(event('arbiter.verdict', 5, {
+      stageId: 'ARBITER', classification: 'unresolved',
+    }))).toEqual([
+      expect.objectContaining({ type: 'arbiter_verdict' }),
+    ])
+    expect(projector.push(event('round.settled', 6, {
+      stageId: 'FINAL', classification: 'unresolved',
+    }))).toEqual([
+      expect.objectContaining({ type: 'round_settled' }),
+    ])
+    expect(projector.push(event('round.completed', 7, {
+      structuredTimelineVersion: 'v2.0', classification: 'unresolved',
+    }))).toEqual([])
+  })
 })

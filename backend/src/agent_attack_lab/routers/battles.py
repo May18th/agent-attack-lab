@@ -33,7 +33,14 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 
-from agent_attack_lab import battle_runner, config, scoring_glue, security, state
+from agent_attack_lab import (
+    battle_runner,
+    battle_timeline,
+    config,
+    scoring_glue,
+    security,
+    state,
+)
 from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import ACPAgentError
 from agent_attack_lab.acp_agents import is_configured as acp_agent_configured
@@ -209,7 +216,6 @@ async def create_battle(
     )
     attack_result: dict[str, Any] = {"samples": []}
     defense_results: list[dict[str, Any]] = []
-    defense_call_ids: list[str] = []
     verification_mode = configured_verify_mode()
     verifications: list[dict[str, Any]] = []
     try:
@@ -224,7 +230,20 @@ async def create_battle(
                 payload, correlation_id=correlation_id
             ),
             add_event=add_event,
+            round_number=0,
+            stage_id="A2",
         )
+        for index, sample in enumerate(attack_result["samples"], start=1):
+            add_event(
+                "attack.sample.generated",
+                "completed",
+                {
+                    "round": index,
+                    "sample": sample,
+                    "attackerSource": attacker_source,
+                    "correlationId": attack_call_id,
+                },
+            )
         add_event(
             "attack.completed",
             "completed",
@@ -235,8 +254,33 @@ async def create_battle(
                 "correlationId": attack_call_id,
             },
         )
-        for sample in attack_result["samples"]:
-            defense, _, defense_call_id = await battle_runner.tracked_agent_call(
+        for index, sample in enumerate(attack_result["samples"], start=1):
+            add_event(
+                "round.started",
+                "running",
+                {
+                    "round": index,
+                    "rounds": payload.rounds,
+                    "structuredTimelineVersion": "v2.0",
+                    "defenderSource": "acp-pending"
+                    if acp_agent_configured("defender")
+                    else "local-rule",
+                },
+            )
+            battle_timeline.emit_attack_stages(
+                add_event,
+                round_number=index,
+                total_rounds=payload.rounds,
+                difficulty=payload.difficulty,
+                topic=payload.topic,
+                sample=sample,
+                correlation_id=attack_call_id,
+            )
+            (
+                defense,
+                defender_source,
+                defense_call_id,
+            ) = await battle_runner.tracked_agent_call(
                 battle_id=battle_id,
                 role="defender",
                 invoke=lambda correlation_id, current_sample=sample: (
@@ -245,9 +289,79 @@ async def create_battle(
                     )
                 ),
                 add_event=add_event,
+                round_number=index,
+                stage_id="DEFENSE",
             )
+            verification = verify_round(sample, defense, mode=verification_mode)
+            verifications.append(verification)
+            for key in ("attackSuccess", "defenseSuccess"):
+                if isinstance(verification.get(key), bool):
+                    defense[key] = verification[key]
+            arbiter_review = await review_round(sample, defense, verification)
+            defense["arbiterReview"] = arbiter_review
             defense_results.append(defense)
-            defense_call_ids.append(defense_call_id)
+            classification = battle_timeline.emit_defense_and_arbiter_stages(
+                add_event,
+                round_number=index,
+                topic=payload.topic,
+                defense=defense,
+                verification=verification,
+                arbiter_review=arbiter_review,
+                correlation_id=defense_call_id,
+            )
+            battle_timeline.emit_attack_review(
+                add_event,
+                round_number=index,
+                classification=classification,
+                arbiter_review=arbiter_review,
+                correlation_id=attack_call_id,
+            )
+            add_event(
+                "round.settled",
+                "completed",
+                {
+                    "round": index,
+                    "stageId": "FINAL",
+                    "classification": classification,
+                    "structuredTimelineVersion": "v2.0",
+                },
+            )
+            round_data = {
+                "round": index,
+                "sample": sample,
+                "caught": defense["caught"],
+                "risks": defense["risks"],
+                "fixed": defense["fixed"],
+                "defenderSource": defender_source,
+                "analysisMode": defense.get("analysisMode"),
+                "verificationStatus": defense.get("verificationStatus"),
+                "scopeNotice": defense.get("scopeNotice"),
+                "arbiterReview": arbiter_review,
+                "correlationId": defense_call_id,
+                "classification": classification,
+                "structuredTimelineVersion": "v2.0",
+            }
+            for key in ("attackSuccess", "defenseSuccess"):
+                if isinstance(defense.get(key), bool):
+                    round_data[key] = defense[key]
+            if isinstance(defense.get("safeControl"), dict):
+                round_data["safeControl"] = defense["safeControl"]
+            add_event("round.completed", "completed", round_data)
+            if verification["verified"]:
+                add_event(
+                    "attack.compromised",
+                    "completed",
+                    {
+                        "round": index,
+                        "targetAssetId": verification.get("targetAssetId"),
+                        "targetVerified": True,
+                        "verificationMode": verification["mode"],
+                        "simulated": verification["simulated"],
+                        "attackSuccess": verification.get("attackSuccess"),
+                        "evidence": verification["evidence"],
+                        "correlationId": defense_call_id,
+                    },
+                )
     except Exception as exc:
         message = (
             "独立 ACP Agent 调用失败，请检查服务端配置和日志"
@@ -278,54 +392,6 @@ async def create_battle(
                 headers={"X-Battle-ID": battle_id},
             ) from None
         raise
-    for index, (sample, defense, correlation_id) in enumerate(
-        zip(attack_result["samples"], defense_results, defense_call_ids), start=1
-    ):
-        verification = verify_round(sample, defense, mode=verification_mode)
-        verifications.append(verification)
-        for key in ("attackSuccess", "defenseSuccess"):
-            if isinstance(verification.get(key), bool):
-                defense[key] = verification[key]
-        arbiter_review = await review_round(sample, defense, verification)
-        defense["arbiterReview"] = arbiter_review
-        round_data = {
-            "round": index,
-            "sample": sample,
-            "caught": defense["caught"],
-            "risks": defense["risks"],
-            "fixed": defense["fixed"],
-            "defenderSource": defense["agentSource"],
-            "analysisMode": defense.get("analysisMode"),
-            "verificationStatus": defense.get("verificationStatus"),
-            "scopeNotice": defense.get("scopeNotice"),
-            "arbiterReview": arbiter_review,
-            "correlationId": correlation_id,
-        }
-        for key in ("attackSuccess", "defenseSuccess"):
-            if isinstance(defense.get(key), bool):
-                round_data[key] = defense[key]
-        if isinstance(defense.get("safeControl"), dict):
-            round_data["safeControl"] = defense["safeControl"]
-        add_event(
-            "round.completed",
-            "completed",
-            round_data,
-        )
-        if verification["verified"]:
-            add_event(
-                "attack.compromised",
-                "completed",
-                {
-                    "round": index,
-                    "targetAssetId": verification.get("targetAssetId"),
-                    "targetVerified": True,
-                    "verificationMode": verification["mode"],
-                    "simulated": verification["simulated"],
-                    "attackSuccess": verification.get("attackSuccess"),
-                    "evidence": verification["evidence"],
-                    "correlationId": correlation_id,
-                },
-            )
     add_event(
         "defense.completed",
         "completed",

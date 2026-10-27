@@ -82,8 +82,18 @@ _EVENT_STAGE_IDS = {
     "round.completed": "A6",
     "attack.compromised": "A7",
     "defense.completed": "A8",
-    "battle.completed": "L0",
-    "battle.failed": "L0",
+    "attack.stage.started": "ATTACK",
+    "attack.stage.completed": "ATTACK",
+    "attack.stage.failed": "ATTACK",
+    "defense.layer.started": "DEFENSE",
+    "defense.check.started": "DEFENSE",
+    "defense.layer.verdict": "DEFENSE",
+    "defense.safe_control": "SAFE-CONTROL",
+    "arbiter.layer.confirmed": "ARBITER",
+    "arbiter.verdict": "ARBITER",
+    "round.settled": "FINAL",
+    "battle.completed": "FINAL",
+    "battle.failed": "FINAL",
 }
 
 
@@ -100,6 +110,8 @@ def event_classification(event_type: str, data: dict[str, Any]) -> str:
         return "compromised"
     if event_type == "round.completed":
         return "blocked" if data.get("caught") else "passed"
+    if event_type in {"defense.layer.verdict", "defense.safe_control"}:
+        return str(data.get("status") or "unresolved")
     if event_type.endswith(".failed") or data.get("error"):
         return "failed"
     if event_type.endswith(".started"):

@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from agent_attack_lab import config, scoring_glue, state
+from agent_attack_lab import battle_timeline, config, scoring_glue, state
 from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
@@ -30,6 +30,7 @@ from agent_attack_lab.acp_agents import (
     is_configured as acp_agent_configured,
 )
 from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
+from agent_attack_lab.agents.arbiter import review_round
 from agent_attack_lab.agents.knowledge import (
     build_attacker_knowledge,
     build_defender_knowledge,
@@ -167,6 +168,8 @@ async def tracked_agent_call(
     role: Literal["attacker", "defender"],
     invoke: Callable[[str], Awaitable[tuple[dict[str, Any], str]]],
     add_event: Callable[[str, str, dict[str, Any]], None],
+    round_number: int | None = None,
+    stage_id: str | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     correlation_id = f"call-{uuid.uuid4()}"
     dispatch_mode = "acp" if acp_agent_configured(role) else "local"
@@ -174,6 +177,8 @@ async def tracked_agent_call(
         "correlationId": correlation_id,
         "agentRole": role,
         "dispatchMode": dispatch_mode,
+        "round": round_number,
+        "stageId": stage_id or ("A2" if role == "attacker" else "DEFENSE"),
     }
     expected_aic = os.getenv(
         f"AGENT_{role.upper()}_EXPECTED_AIC",
@@ -280,6 +285,8 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 payload, correlation_id=correlation_id
             ),
             add_event=add_event,
+            round_number=0,
+            stage_id="A2",
         )
         record["attackerOut"] = attack_result
         state.battle_store.save(record)
@@ -300,6 +307,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             "completed",
             {
                 "sampleCount": len(attack_result["samples"]),
+                "rounds": payload.rounds,
                 "attackerSource": attacker_source,
                 "correlationId": attack_call_id,
             },
@@ -312,10 +320,21 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 "running",
                 {
                     "round": index,
+                    "rounds": payload.rounds,
+                    "structuredTimelineVersion": "v2.0",
                     "defenderSource": "acp-pending"
                     if acp_agent_configured("defender")
                     else "local-rule",
                 },
+            )
+            battle_timeline.emit_attack_stages(
+                add_event,
+                round_number=index,
+                total_rounds=payload.rounds,
+                difficulty=payload.difficulty,
+                topic=payload.topic,
+                sample=sample,
+                correlation_id=attack_call_id,
             )
             await asyncio.sleep(0.8)
             defense, defender_source, defense_call_id = await tracked_agent_call(
@@ -325,6 +344,8 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     current_sample, correlation_id=correlation_id
                 ),
                 add_event=add_event,
+                round_number=index,
+                stage_id="DEFENSE",
             )
             verification = verify_round(sample, defense, mode=verification_mode)
             if isinstance(verification.get("attackSuccess"), bool):
@@ -333,8 +354,36 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 defense["defenseSuccess"] = verification["defenseSuccess"]
             defender_results.append(defense)
             verifications.append(verification)
+            arbiter_review = await review_round(sample, defense, verification)
+            defense["arbiterReview"] = arbiter_review
             record["defenderOut"] = defender_results
             state.battle_store.save(record)
+            classification = battle_timeline.emit_defense_and_arbiter_stages(
+                add_event,
+                round_number=index,
+                topic=payload.topic,
+                defense=defense,
+                verification=verification,
+                arbiter_review=arbiter_review,
+                correlation_id=defense_call_id,
+            )
+            battle_timeline.emit_attack_review(
+                add_event,
+                round_number=index,
+                classification=classification,
+                arbiter_review=arbiter_review,
+                correlation_id=attack_call_id,
+            )
+            add_event(
+                "round.settled",
+                "completed",
+                {
+                    "round": index,
+                    "stageId": "FINAL",
+                    "classification": classification,
+                    "structuredTimelineVersion": "v2.0",
+                },
+            )
             round_data = {
                 "round": index,
                 "sample": sample,
@@ -346,6 +395,9 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 "verificationStatus": defense.get("verificationStatus"),
                 "scopeNotice": defense.get("scopeNotice"),
                 "correlationId": defense_call_id,
+                "arbiterReview": arbiter_review,
+                "classification": classification,
+                "structuredTimelineVersion": "v2.0",
             }
             for key in ("attackSuccess", "defenseSuccess"):
                 if isinstance(defense.get(key), bool):
@@ -373,6 +425,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             "completed",
             {
                 "roundCount": len(defender_results),
+                "rounds": payload.rounds,
                 "layerInterceptions": derive_layer_interceptions(
                     payload.topic, defender_results
                 ),
