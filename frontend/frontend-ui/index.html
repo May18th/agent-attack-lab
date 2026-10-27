@@ -266,16 +266,19 @@
   .pill{font-size:11px;border-radius:6px;padding:2px 8px;background:#332a10;color:var(--judge)}
   .state{margin-left:auto;font-size:11.5px;color:var(--green)}
   .round-body{display:grid;grid-template-columns:1fr;gap:12px}
-  @media(min-width:820px){.round-body{grid-template-columns:1fr 1fr}}
-  .side h4{font-size:13px;margin-bottom:8px}
+  @media(min-width:820px){.round-body{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+  .side{min-width:0}
+  .side h4{font-size:13px;margin-bottom:8px;overflow-wrap:anywhere}
   .side.atk h4{color:var(--att)}
   .side.def h4{color:var(--def)}
-  .code-chip{display:inline-block;font-size:11px;color:var(--dim);background:#0e1319;border:1px solid var(--line);border-radius:6px;padding:3px 8px;margin-bottom:6px;margin-right:6px}
-  .sample{background:#0e1319;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:#c6d0dc;line-height:1.6;margin-top:4px}
+  .round-tags,.def-tags{display:flex;flex-wrap:wrap;gap:0 6px;min-width:0}
+  .code-chip{display:inline-block;max-width:100%;font-size:11px;color:var(--dim);background:#0e1319;border:1px solid var(--line);border-radius:6px;padding:3px 8px;margin-bottom:6px;overflow-wrap:anywhere;word-break:break-word}
+  .sample{min-width:0;max-width:100%;background:#0e1319;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:#c6d0dc;line-height:1.6;margin-top:4px;overflow-wrap:anywhere;word-break:break-word}
   .sample-label{display:block;font-size:11px;color:var(--dim);margin-bottom:4px}
-  .finding{display:flex;gap:8px;font-size:12px;padding:6px 0;border-top:1px dashed #283543}
+  .sample-copy{display:block;min-width:0;overflow-wrap:anywhere;word-break:break-word}
+  .finding{display:flex;min-width:0;gap:8px;font-size:12px;padding:6px 0;border-top:1px dashed #283543}
   .finding .k{color:var(--mut);flex:none;width:86px}
-  .finding .v{color:#c6d0dc;line-height:1.5}
+  .finding .v{min-width:0;color:#c6d0dc;line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
 
   /* ===== 右侧战局卡（准备选项卡，尺寸固定）===== */
   .live-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;text-align:center}

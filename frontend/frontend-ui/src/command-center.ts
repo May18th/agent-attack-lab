@@ -5,6 +5,8 @@ import {
   LiveBattleTimelineProjector,
   type BattleVisualizationRound,
 } from './command-center-visualizations'
+import { buildBattleCreationPayload } from './command-center-config'
+import { loginDialogMarkup, loginDialogStyles } from './command-center-login'
 
 type Difficulty = 'low' | 'mid' | 'high'
 
@@ -216,17 +218,12 @@ function intercept(target: EventTarget, type: string, handler: (event: Event) =>
 function installSessionDialog() {
   if (document.getElementById('agentLoginMask')) return
   const style = document.createElement('style')
-  style.textContent = `
-    .agent-login-mask{position:fixed;inset:0;z-index:2000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(2,5,12,.78);backdrop-filter:blur(8px)}
-    .agent-login-mask.open{display:flex}.agent-login-box{width:min(420px,100%);border:1px solid #35475d;border-radius:10px;background:#101722;padding:20px;box-shadow:0 20px 70px rgba(0,0,0,.62)}
-    .agent-login-box h2{font-size:18px;margin:0 0 5px}.agent-login-box p{color:#8fa0b2;font-size:12px;margin:0 0 15px}.agent-login-box input{margin-bottom:10px}.agent-login-actions{display:flex;justify-content:flex-end;gap:8px}.agent-login-error{min-height:18px;color:#ff8f6b;font-size:12px;margin-bottom:8px}
-    .agent-session-logout{display:none;border:1px solid #35475d;border-radius:6px;background:#101722;color:#9fb0c2;padding:7px 11px;font-size:12px;cursor:pointer}.agent-session-logout:hover{border-color:#59738f;color:#fff}
-  `
+  style.textContent = loginDialogStyles
   document.head.appendChild(style)
   const mask = document.createElement('div')
   mask.id = 'agentLoginMask'
   mask.className = 'agent-login-mask'
-  mask.innerHTML = `<form class="agent-login-box" id="agentLoginForm"><h2>登录攻防实验室</h2><p>密码只发送给后端换取 HttpOnly 会话，不会存入网页或浏览器存储。</p><input id="agentLoginPassword" type="password" autocomplete="current-password" placeholder="浏览器访问密码" required maxlength="256"><div class="agent-login-error" id="agentLoginError"></div><div class="agent-login-actions"><button type="submit" class="btn-ready" style="width:auto;padding:9px 24px">登录</button></div></form>`
+  mask.innerHTML = `<form class="agent-login-box" id="agentLoginForm">${loginDialogMarkup}<div class="agent-login-actions"><button type="submit" class="btn-ready" style="width:auto;padding:9px 24px">登录</button></div></form>`
   document.body.appendChild(mask)
   const logout = document.createElement('button')
   logout.id = 'agentSessionLogout'
@@ -619,12 +616,13 @@ async function startBattle() {
   start.disabled = true
   start.textContent = '正在创建…'
   try {
+    const roundsInput = element<HTMLInputElement>('roundInput').value
     const battle = await json<Battle>('/battles?background=true', {
-      method: 'POST', body: JSON.stringify({ topic, difficulty }),
+      method: 'POST', body: JSON.stringify(buildBattleCreationPayload(topic, difficulty, roundsInput)),
     })
     element('cfgMask').classList.remove('open')
     beginLiveBattle(battle)
-    showToast(`真实战局 ${battle.id} 已创建；回合数由后端生成样本数决定`)
+    showToast(`真实战局 ${battle.id} 已创建，共 ${battle.rounds ?? 3} 局`)
     await followEvents(battle.id)
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) showLogin(error.message)
