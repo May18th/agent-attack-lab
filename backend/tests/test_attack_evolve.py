@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 
 from agent_attack_lab.agents import attacker
 from agent_attack_lab.agents.attack_evolve import (
@@ -164,7 +165,7 @@ def test_local_ladder_changes_content_every_round() -> None:
         }
 
     assert len(set(contents)) == len(contents)
-    for left, right in zip(contents, contents[1:]):
+    for left, right in itertools.pairwise(contents):
         assert payload_similarity(right, left) < 0.85
 
 
