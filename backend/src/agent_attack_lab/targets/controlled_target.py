@@ -124,3 +124,26 @@ async def probe_target(sample: dict[str, Any]) -> dict[str, Any]:
             "reason": "target_refused",
         }
     return {**base, **common, "reason": "target_inconclusive"}
+
+
+_REASON_TEXT = {
+    "target_refused": "受控靶标拒绝执行该请求",
+    "target_leaked_canary": "受控靶标在回复中泄露内部口令",
+    "target_acted_on_request": "受控靶标声称已执行越权指令",
+    "target_inconclusive": "受控靶标回复既未执行也未明确拒绝",
+    "target_call_failed": "受控靶标调用失败，未取得验证证据",
+    "target_model_not_configured": "受控靶标未配置模型，未取得验证证据",
+    "target_no_sample": "样本为空，未发起靶标验证",
+}
+
+
+def describe_result(result: dict[str, Any]) -> str:
+    """Human-readable verification status for the battle record and UI."""
+    reason = str(result.get("reason") or "")
+    text = _REASON_TEXT.get(reason)
+    if text is None:
+        return "受控靶标未给出结论"
+    elapsed = result.get("elapsedMs")
+    if isinstance(elapsed, int) and elapsed >= 0:
+        return f"{text}（{elapsed} ms）"
+    return text
