@@ -29,8 +29,9 @@ from agent_attack_lab.acp_agents import (
 from agent_attack_lab.acp_agents import (
     is_configured as acp_agent_configured,
 )
-from agent_attack_lab.agent_logic import AttackRequest, DefendRequest, attack, defend
+from agent_attack_lab.agent_logic import DefendRequest, defend
 from agent_attack_lab.agents.arbiter import review_round
+from agent_attack_lab.agents.attack_evolve import summarize_escalation
 from agent_attack_lab.agents.knowledge import (
     build_attacker_knowledge,
     build_defender_knowledge,
@@ -120,9 +121,19 @@ def schedule_battle_task(battle_id: str, payload: BattleRequest) -> asyncio.Task
 
 
 async def battle_attack(
-    payload: BattleRequest, *, correlation_id: str
+    payload: BattleRequest,
+    *,
+    correlation_id: str,
+    round_index: int = 1,
+    total_rounds: int | None = None,
+    previous_round: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     agent_payload = payload.model_dump()
+    agent_payload["_roundIndex"] = round_index
+    agent_payload["_totalRounds"] = total_rounds or payload.rounds
+    if previous_round:
+        # 上一回合的实测结论要进到攻击方上下文里，否则每轮都是独立开盲盒。
+        agent_payload["_previousRound"] = previous_round
     knowledge = build_attacker_knowledge(
         state.battle_store.list_admin_samples(limit=200, offset=0),
         topic=payload.topic,
@@ -132,7 +143,15 @@ async def battle_attack(
     result = await call_attacker(agent_payload, correlation_id=correlation_id)
     source = "local-rule"
     if result is None:
-        result = attack(AttackRequest.model_validate(payload.model_dump()))
+        # 延迟导入：attacker 模块在导入时构建 AIP app，这里只需要纯本地演进逻辑。
+        from agent_attack_lab.agents.attacker import evolve_local
+
+        result = evolve_local(
+            agent_payload,
+            previous_round,
+            round_index,
+            total_rounds or payload.rounds,
+        )
         result["agentMode"] = "local-rule"
     else:
         source = result.pop("agentSource", None) or (
@@ -284,6 +303,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         attacker_sources: list[str] = []
         defender_results: list[dict[str, Any]] = []
         previous_sample: dict[str, Any] | None = None
+        previous_round: dict[str, Any] | None = None
         for index in range(1, payload.rounds + 1):
             add_event(
                 "round.started",
@@ -301,8 +321,16 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             generated, attacker_source, attack_call_id = await tracked_agent_call(
                 battle_id=battle_id,
                 role="attacker",
-                invoke=lambda correlation_id, current_payload=round_payload: (
-                    battle_attack(current_payload, correlation_id=correlation_id)
+                # 回调可能被重试逻辑延后调用：用默认参数把当轮的 index/previous_round
+                # 固定下来，避免读到后续轮次的值（B023）。
+                invoke=lambda correlation_id, current_payload=round_payload, current_round=index, previous=previous_round: (
+                    battle_attack(
+                        current_payload,
+                        correlation_id=correlation_id,
+                        round_index=current_round,
+                        total_rounds=payload.rounds,
+                        previous_round=previous,
+                    )
                 ),
                 add_event=add_event,
                 round_number=index,
@@ -410,6 +438,14 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 classification=classification,
                 correlation_id=defense_call_id,
             )
+            # 交给下一轮攻击方：样本、防守命中、靶标结论一起传，变体才有依据。
+            previous_round = {
+                "round": index,
+                "sample": sample,
+                "defense": defense,
+                "verification": verification,
+                "classification": classification,
+            }
             round_data = {
                 "round": index,
                 "sample": sample,
@@ -424,6 +460,11 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 "arbiterReview": arbiter_review,
                 "classification": classification,
                 "structuredTimelineVersion": "v2.0",
+                "strengthTier": sample.get("strengthTier"),
+                "strengthScore": sample.get("strengthScore"),
+                "tactic": sample.get("tactic"),
+                "variantOperator": sample.get("variantOperator"),
+                "adaptationNote": sample.get("adaptationNote"),
             }
             for key in ("attackSuccess", "defenseSuccess"):
                 if isinstance(defense.get(key), bool):
@@ -493,6 +534,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 "sampleCount": len(attack_result["samples"]),
                 "rounds": payload.rounds,
                 "attackerSource": attack_result.get("agentSource"),
+                "escalation": summarize_escalation(attack_result["samples"]),
             },
         )
         add_event(

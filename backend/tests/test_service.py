@@ -566,6 +566,9 @@ def test_battle_injects_role_scoped_knowledge_into_remote_agents(monkeypatch) ->
         "difficulty": "low",
         "topic": "知识库注入",
         "rounds": 1,
+        # 攻击方需要知道自己是第几轮，才能选择战术并判断是否已有上轮反馈。
+        "_roundIndex": 1,
+        "_totalRounds": 1,
         "_knowledgeContext": {
             "role": "attacker",
             "records": [

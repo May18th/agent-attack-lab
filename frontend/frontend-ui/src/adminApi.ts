@@ -57,6 +57,12 @@ export type AdminBattleRound = {
   scores?: { attacker: number | null; defender: number | null }
   attackSuccess?: boolean
   defenseSuccess?: boolean
+  // 攻击方演进：强度分级（S1-S4）、战术名、变体算子与依据。
+  strengthTier?: string
+  strengthScore?: number
+  tactic?: string
+  variantOperator?: string
+  adaptationNote?: string
   compromised?: { targetVerified: boolean; verificationMode?: string; simulated?: boolean; evidence?: unknown[] }
   arbiterReview?: AdminArbiterReview | null
 }

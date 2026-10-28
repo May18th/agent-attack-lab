@@ -421,3 +421,14 @@
 @media (max-width: 1120px) and (min-width: 721px) { .auth-solar-scene { left: -3%; width: 55vw; height: 66vh; } }
 @media (max-width: 720px) { .auth-solar-scene { left: 50%; top: 22%; width: min(100vw, 600px); height: min(54vh, 380px); transform: translate(-50%, -50%); opacity: .72; }.auth-solar-caption { left: 50%; bottom: 1%; transform: translateX(-50%); white-space: nowrap; }.auth-solar-caption strong { font-size: 11px; }.auth-solar-readout { left: 15%; top: 12%; font-size: 8px; } }
 @media (prefers-reduced-motion: reduce) { .auth-solar-scene canvas { opacity: .92; } }
+
+/* 攻击强度演进：每轮一行，条状长度即强度分（S1-S4） */
+.strength-track{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.strength-row{display:grid;grid-template-columns:44px 40px 96px 56px 128px 1fr;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #1d2a36;font-size:12px}
+.strength-row:last-child{border-bottom:0}
+.strength-round{color:#8fa6bb;font-family:"Cascadia Code",Consolas,monospace}
+.strength-bar{height:6px;background:#0c1620;border-radius:3px;overflow:hidden}
+.strength-bar i{display:block;height:100%;background:linear-gradient(90deg,#4c9ae8,#f39c12)}
+.strength-score{color:#dbe8f6;font-variant-numeric:tabular-nums}
+.strength-tactic{color:#a9c8e6}
+.strength-note{color:#8ca0b6;white-space:normal;line-height:1.5}

@@ -752,6 +752,16 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
             for key in ("attackSuccess", "defenseSuccess"):
                 if isinstance(data.get(key), bool):
                     item[key] = data[key]
+            # 攻击方演进元数据：强度分级、战术、变体来源，前台按轮对比要用。
+            for key in (
+                "strengthTier",
+                "strengthScore",
+                "tactic",
+                "variantOperator",
+                "adaptationNote",
+            ):
+                if data.get(key) is not None:
+                    item[key] = data[key]
             if isinstance(data.get("safeControl"), dict):
                 item["safeControl"] = data["safeControl"]
             if isinstance(data.get("durationMs"), (int, float)):
@@ -781,6 +791,15 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
             },
         )
         item["sample"] = item["sample"] if item["sample"] is not None else sample
+        for key in (
+            "strengthTier",
+            "strengthScore",
+            "tactic",
+            "variantOperator",
+            "adaptationNote",
+        ):
+            if item.get(key) is None and sample.get(key) is not None:
+                item[key] = sample[key]
         if index <= len(defenses):
             defense = defenses[index - 1] or {}
             for key in ("caught", "risks", "fixed"):

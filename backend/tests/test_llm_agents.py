@@ -51,11 +51,13 @@ def test_attacker_uses_configured_model_and_validates_generated_schema(
     assert all(
         sample["testVariation"] == expected_variation for sample in result["samples"]
     )
-    assert seen["payload"] == {
-        "topic": "电商支付越权",
-        "difficulty": difficulty,
-        "rounds": rounds,
-    }
+    # 请求体保留原有三个字段，并带上本轮序号与指定战术（攻击方演进需要）。
+    assert seen["payload"]["topic"] == "电商支付越权"
+    assert seen["payload"]["difficulty"] == difficulty
+    assert seen["payload"]["rounds"] == rounds
+    assert seen["payload"]["roundIndex"] == 1
+    assert seen["payload"]["totalRounds"] == rounds
+    assert seen["payload"]["assignedTactic"]
     assert '"samples"' in seen["prompt"]
 
 

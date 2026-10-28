@@ -47,8 +47,42 @@ function arbiterTitle(round: AdminBattleRounds['rounds'][number]): string {
   return [review.rationale, review.agentSource ? `来源 ${review.agentSource}` : ''].filter(Boolean).join(' · ')
 }
 
-function roundOutcome(round: AdminBattleRounds['rounds'][number]): Outcome {
-  if (round.compromised?.targetVerified) {
+type StrengthInfo = {
+  tier: string
+  score: number | null
+  label: string
+  tactic: string
+  operator: string
+  note: string
+}
+
+function strengthOf(value: Record<string, unknown>): StrengthInfo | null {
+  const tier = typeof value.strengthTier === 'string' ? value.strengthTier : ''
+  const score = typeof value.strengthScore === 'number' ? value.strengthScore : null
+  if (!tier && score === null) return null
+  return {
+    tier: tier || '—',
+    score,
+    label: typeof value.strengthLabel === 'string' ? value.strengthLabel : tier,
+    tactic: typeof value.tactic === 'string' ? value.tactic : '',
+    operator: typeof value.variantOperator === 'string' ? value.variantOperator : '',
+    note: typeof value.adaptationNote === 'string' ? value.adaptationNote : '',
+  }
+}
+
+function roundStrength(round: AdminBattleRounds['rounds'][number]): StrengthInfo | null {
+  return strengthOf(round as Record<string, unknown>) ?? strengthOf(asRecord(round.sample))
+}
+
+function strengthLabel(value: Record<string, unknown>): string {
+  const info = strengthOf(value)
+  if (!info) return ''
+  return info.score === null ? `强度 ${info.tier}` : `强度 ${info.tier}（${info.score}）`
+}
+
+const STRENGTH_TONES: Record<string, string> = { S1: 'gray', S2: 'green', S3: 'orange', S4: 'red' }
+
+function roundOutcome(round: AdminBattleRounds['rounds'][number]): Outcome {  if (round.compromised?.targetVerified) {
     return round.compromised.simulated
       ? { label: '穿透（规则推定，目标未验证）', tone: 'orange' }
       : { label: '已沦陷（已验证）', tone: 'red' }
@@ -71,7 +105,13 @@ function eventSummary(event: AdminBattleEvent): string {
   const type = eventType(event)
   if (type === 'attack.sample.generated') {
     const sample = asRecord(data.sample)
-    const parts = [round, String(sample.type ?? sample.topic ?? ''), labelOf(sample.severity, SEVERITY_LABELS, '')]
+    const parts = [
+      round,
+      String(sample.type ?? sample.topic ?? ''),
+      labelOf(sample.severity, SEVERITY_LABELS, ''),
+      strengthLabel(sample),
+      typeof sample.tactic === 'string' ? `战术：${sample.tactic}` : '',
+    ]
     return parts.filter(Boolean).join(' · ')
   }
   if (type === 'round.completed' || type === 'defense.completed') {
@@ -119,6 +159,11 @@ export function AdminBattleDetail(props: Props) {
   const interceptedRounds = typeof finalData.interceptedRounds === 'number' ? finalData.interceptedRounds : undefined
   const stats = rounds?.stats
   const roundList = asArray<AdminBattleRounds['rounds'][number]>(rounds?.rounds)
+  const strengthRounds = roundList
+    .map((round) => ({ round, info: roundStrength(round) }))
+    .filter((item): item is { round: AdminBattleRounds['rounds'][number]; info: StrengthInfo } => item.info !== null)
+  const escalationEvent = [...orderedEvents].reverse().find((event) => eventType(event) === 'attack.completed')
+  const escalation = asRecord(eventData(escalationEvent).escalation)
 
   const verdictNote = (() => {
     if (verdict === 'attacker_won') {
@@ -160,10 +205,11 @@ export function AdminBattleDetail(props: Props) {
       </header>
       {roundList.length ? <div className="readable-table-wrap">
         <table className="readable-table">
-          <thead><tr><th scope="col">回合</th><th scope="col">状态</th><th scope="col">攻击样本</th><th scope="col">命中</th><th scope="col">风险</th><th scope="col">修复建议</th><th scope="col">耗时</th><th scope="col">本轮结果</th><th scope="col">独立裁决</th></tr></thead>
+          <thead><tr><th scope="col">回合</th><th scope="col">状态</th><th scope="col">攻击样本</th><th scope="col">强度 / 战术</th><th scope="col">命中</th><th scope="col">风险</th><th scope="col">修复建议</th><th scope="col">耗时</th><th scope="col">本轮结果</th><th scope="col">独立裁决</th></tr></thead>
           <tbody>{roundList.map((round) => {
             const outcome = roundOutcome(round)
             const arbiter = arbiterOutcome(round)
+            const strength = roundStrength(round)
             const sample = asRecord(round.sample)
             const sampleText = String(sample.type ?? sample.topic ?? '未记录')
             const severity = labelOf(sample.severity, SEVERITY_LABELS, '')
@@ -171,6 +217,11 @@ export function AdminBattleDetail(props: Props) {
               <td>第 {round.round} 轮</td>
               <td>{labelOf(round.status, STATUS_LABELS)}</td>
               <td>{sampleText}{severity ? ` · ${severity}` : ''}</td>
+              <td>{strength
+                ? <span className={`outcome-pill tone-${STRENGTH_TONES[strength.tier] ?? 'gray'}`} title={strength.note || strength.label}>
+                  {strength.score === null ? strength.tier : `${strength.tier} · ${strength.score} 分`}{strength.tactic ? ` · ${strength.tactic}` : ''}
+                </span>
+                : <span className="readable-hint">未记录</span>}</td>
               <td>{asArray(round.caught).length}</td>
               <td>{asArray(round.risks).length}</td>
               <td>{asArray(round.fixed).length}</td>
@@ -183,6 +234,28 @@ export function AdminBattleDetail(props: Props) {
       </div> : <p className="empty">暂无回合记录，可能是战局尚未开始或事件未落库。</p>}
       {roundList.some((round) => round.arbiterReview) && <p className="readable-hint">独立裁决由 arbiter 单独复核本轮，不改变“本轮结果”；来源标注为 arbiter-rule-fallback 时未调用模型，只按证据规则判定。</p>}
     </section>
+
+    {strengthRounds.length > 0 && <section className="readable-card" aria-label="攻击强度演进">
+      <header className="readable-card-head">
+        <h3>攻击强度演进</h3>
+        <small>
+          S1 直白诱导 → S4 组合绕过
+          {typeof escalation.peakTier === 'string' && ` · 峰值 ${escalation.peakTier}`}
+          {typeof escalation.distinctTactics === 'number' && ` · ${escalation.distinctTactics} 种战术`}
+        </small>
+      </header>
+      <ol className="strength-track">
+        {strengthRounds.map(({ round, info }) => <li key={round.round} className="strength-row">
+          <span className="strength-round">R{round.round}</span>
+          <span className={`outcome-pill tone-${STRENGTH_TONES[info.tier] ?? 'gray'}`}>{info.tier}</span>
+          <span className="strength-bar" aria-hidden="true"><i style={{ width: `${Math.min(100, Math.max(4, info.score ?? 0))}%` }} /></span>
+          <span className="strength-score">{info.score === null ? '—' : `${info.score} 分`}</span>
+          <span className="strength-tactic">{info.tactic || '战术未标注'}{info.operator ? ` · ${info.operator}` : ''}</span>
+          <span className="strength-note">{info.note || info.label}</span>
+        </li>)}
+      </ol>
+      <p className="readable-hint">强度由样本实际用到的技术面累加（覆盖指令、载体夹带、编码改写、权威借用、绕过表述等），不是模型自评；每轮须针对上一轮被命中的检测点换形态，且强度只升不降。</p>
+    </section>}
 
     <section className="readable-card" aria-label="评分">
       <header className="readable-card-head"><h3>评分</h3>{score?.version && <small>规则版本 {score.version}</small>}</header>
