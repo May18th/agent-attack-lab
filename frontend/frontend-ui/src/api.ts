@@ -132,25 +132,27 @@ export class ApiError extends Error {
 }
 
 const localBrowserHosts = new Set(['localhost', '127.0.0.1', '::1'])
-const currentBrowserHost = typeof window === 'undefined' ? 'localhost' : window.location.hostname
+const PRODUCTION_API_BASE = 'https://api.yuanyiagentzhandui.cn'
+const productionHosts = new Set(['yuanyiagentzhandui.cn', 'www.yuanyiagentzhandui.cn'])
 
 /**
- * 正式站点下纠正被注入的预览 API 地址。
+ * 解析实际使用的 API 基址。
  *
  * 构建脚本按 `CF_PAGES_BRANCH === 'main'` 决定用生产还是预览 API；当 Pages 项目
  * 的 production 分支不是 main 时，正式域名会拿到 `preview-api.*`，表现成
  * “无法连接后端服务，请检查 API 地址和服务状态”，但后端其实是通的。
  *
- * 只对正式站点域名生效，预览子域保持隔离语义不变。
+ * 纠偏只对正式站点域名生效，预览子域的隔离语义保持不变。
  */
-const PRODUCTION_API_BASE = 'https://api.yuanyiagentzhandui.cn'
-const productionHosts = new Set(['yuanyiagentzhandui.cn', 'www.yuanyiagentzhandui.cn'])
-const rawApiBase = import.meta.env.VITE_AGENT_API?.trim()
-const isProductionHost = productionHosts.has(currentBrowserHost)
-const configuredApiBase =
-  isProductionHost && rawApiBase && rawApiBase.includes('preview-api') ? PRODUCTION_API_BASE : rawApiBase
+export function resolveApiBase(injected: string | undefined, hostname: string): string {
+  const trimmed = injected?.trim()
+  const corrected =
+    productionHosts.has(hostname) && trimmed && trimmed.includes('preview-api') ? PRODUCTION_API_BASE : trimmed
+  return (corrected || (localBrowserHosts.has(hostname) ? 'http://127.0.0.1:8787' : '')).replace(/\/$/, '')
+}
 
-const API_BASE = (configuredApiBase || (localBrowserHosts.has(currentBrowserHost) ? 'http://127.0.0.1:8787' : '')).replace(/\/$/, '')
+const currentBrowserHost = typeof window === 'undefined' ? 'localhost' : window.location.hostname
+const API_BASE = resolveApiBase(import.meta.env.VITE_AGENT_API, currentBrowserHost)
 
 function detailText(value: unknown): string | undefined {
   if (typeof value === 'string') return value
