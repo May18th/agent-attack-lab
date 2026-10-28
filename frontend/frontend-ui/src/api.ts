@@ -131,9 +131,25 @@ export class ApiError extends Error {
   }
 }
 
-const configuredApiBase = import.meta.env.VITE_AGENT_API?.trim()
 const localBrowserHosts = new Set(['localhost', '127.0.0.1', '::1'])
 const currentBrowserHost = typeof window === 'undefined' ? 'localhost' : window.location.hostname
+
+/**
+ * 正式站点下纠正被注入的预览 API 地址。
+ *
+ * 构建脚本按 `CF_PAGES_BRANCH === 'main'` 决定用生产还是预览 API；当 Pages 项目
+ * 的 production 分支不是 main 时，正式域名会拿到 `preview-api.*`，表现成
+ * “无法连接后端服务，请检查 API 地址和服务状态”，但后端其实是通的。
+ *
+ * 只对正式站点域名生效，预览子域保持隔离语义不变。
+ */
+const PRODUCTION_API_BASE = 'https://api.yuanyiagentzhandui.cn'
+const productionHosts = new Set(['yuanyiagentzhandui.cn', 'www.yuanyiagentzhandui.cn'])
+const rawApiBase = import.meta.env.VITE_AGENT_API?.trim()
+const isProductionHost = productionHosts.has(currentBrowserHost)
+const configuredApiBase =
+  isProductionHost && rawApiBase && rawApiBase.includes('preview-api') ? PRODUCTION_API_BASE : rawApiBase
+
 const API_BASE = (configuredApiBase || (localBrowserHosts.has(currentBrowserHost) ? 'http://127.0.0.1:8787' : '')).replace(/\/$/, '')
 
 function detailText(value: unknown): string | undefined {
