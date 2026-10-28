@@ -491,6 +491,37 @@ def payload_similarity(current: str, previous: str) -> float:
     return round(dot / (left_norm * right_norm), 6)
 
 
+def force_distinct(
+    content: str,
+    previous_content: str,
+    round_index: int,
+    tactic: str | None,
+    threshold: float = 0.85,
+) -> tuple[str, str, str]:
+    """Pick whichever rewrite actually lowers similarity, not just any rewrite.
+
+    追加一句话这种改动对字符级相似度几乎没影响，看上去"变了"其实还是同一段
+    文本。这里把所有可用算子都试一遍，取与上一轮最不像的那个；仍然太像就叠一层。
+    """
+    scored: list[tuple[float, str, str]] = []
+    for _name, (text, note) in _add_options(content, round_index, set()):
+        scored.append((payload_similarity(text, previous_content), text, note))
+    if not scored:
+        return content, "没有可用的改写算子", "保持原样"
+    scored.sort(key=lambda item: item[0])
+    best_sim, best_text, best_note = scored[0]
+    if best_sim >= threshold:
+        for _name, (text, note) in _add_options(best_text, round_index, set()):
+            candidate_sim = payload_similarity(text, previous_content)
+            if candidate_sim < best_sim:
+                best_sim, best_text, best_note = (
+                    candidate_sim,
+                    text,
+                    f"{best_note}；{note}",
+                )
+    return best_text, best_note, "强制换形态"
+
+
 def adapt_sample(
     sample: Mapping[str, Any],
     previous: Mapping[str, Any] | None,
@@ -525,6 +556,15 @@ def adapt_sample(
             variant_content, note, operator_label = _apply_operator(
                 content, operator, round_index, adapted.get("tactic")
             )
+            if previous_sample:
+                previous_content = str(previous_sample.get("content") or "")
+                if payload_similarity(variant_content, previous_content) >= 0.85:
+                    variant_content, note, operator_label = force_distinct(
+                        variant_content,
+                        previous_content,
+                        round_index,
+                        adapted.get("tactic"),
+                    )
             adapted["content"] = variant_content[:_MAX_CONTENT]
             adapted["adaptationNote"] = f"{_describe_previous(previous)}；{note}"
         else:
