@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
@@ -23,13 +24,33 @@ def _weighted_points(maximum: int, ratio: float) -> int:
     return int(maximum * max(0.0, min(ratio, 1.0)) + 0.5)
 
 
-def _response_points(durations: list[float]) -> int:
+def _response_points(durations: list[float], role: str) -> int:
     if not durations:
         return 0
-    average_duration = sum(durations) / len(durations)
-    # v1 迁移口径，须与原型源码核定：响应分按 durationMs 计算。
-    ratio = max(0.0, min(1.0, 1.0 - average_duration / 16000.0))
-    return round(100 * ratio)
+    thresholds = (
+        (30_000, 60_000, 120_000, 180_000)
+        if role == "attacker"
+        else (
+            2_000,
+            4_000,
+            8_000,
+            15_000,
+        )
+    )
+    scores = [
+        100
+        if duration <= thresholds[0]
+        else 80
+        if duration <= thresholds[1]
+        else 60
+        if duration <= thresholds[2]
+        else 30
+        if duration <= thresholds[3]
+        else 0
+        for duration in durations
+        if duration >= 0
+    ]
+    return round(sum(scores) / len(scores)) if scores else 0
 
 
 def _explicit_round_truth(
@@ -65,6 +86,149 @@ def _explicit_round_truth(
     for index, defense in enumerate(defenses, start=1):
         add(index, defense)
     return truth
+
+
+def _arbiter_classifications(
+    events: list[dict[str, Any]], round_count: int
+) -> dict[int, str]:
+    classifications: dict[int, str] = {}
+    for event in events:
+        if _event_type(event) not in {"arbiter.verdict", "round.settled"}:
+            continue
+        data = _event_data(event)
+        try:
+            number = int(data.get("round"))
+        except TypeError, ValueError:
+            continue
+        classification = data.get("classification")
+        if number in range(1, round_count + 1) and isinstance(classification, str):
+            classifications[number] = classification
+    return classifications
+
+
+def _attacker_layer_effect_points(
+    events: list[dict[str, Any]],
+    truth: dict[int, dict[str, bool]],
+    classifications: dict[int, str],
+    round_count: int,
+) -> int:
+    weights = {"L0": 5, "L1": 15, "L2": 25, "L3": 15}
+    passed_layers: dict[int, set[str]] = {}
+    for event in events:
+        if _event_type(event) != "arbiter.layer.confirmed":
+            continue
+        data = _event_data(event)
+        try:
+            number = int(data.get("round"))
+        except TypeError, ValueError:
+            continue
+        layer = data.get("layer")
+        if (
+            number in range(1, round_count + 1)
+            and data.get("classification") == "passed"
+            and layer in weights
+            and isinstance(data.get("evidenceIds"), list)
+            and data["evidenceIds"]
+        ):
+            passed_layers.setdefault(number, set()).add(layer)
+
+    total = 0
+    for number in range(1, round_count + 1):
+        reached = passed_layers.get(number, set())
+        if "L0" not in reached:
+            continue
+        total += weights["L0"]
+        if "L1" not in reached:
+            continue
+        total += weights["L1"]
+        if (
+            "L2" not in reached
+            or truth.get(number, {}).get("attackSuccess") is not True
+        ):
+            continue
+        total += weights["L2"]
+        if classifications.get(number) == "full-penetration" and "L3" in reached:
+            total += weights["L3"]
+    return _weighted_points(60, total / (60 * round_count)) if round_count else 0
+
+
+def _round_aggregate(
+    record: dict[str, Any], events: list[dict[str, Any]]
+) -> dict[str, Any]:
+    requested = max(0, int(record.get("rounds") or 0))
+    snapshots: dict[int, dict[str, Any]] = {}
+    invalid_rounds: set[int] = set()
+    unresolved_rounds: set[int] = set()
+    system_void_rounds: set[int] = set()
+    for event in events:
+        data = _event_data(event)
+        try:
+            number = int(data.get("round"))
+        except TypeError, ValueError:
+            continue
+        if event.get("type") == "arbiter.round.scored" and number > 0:
+            snapshots[number] = data
+        if data.get("roundValidity") == "invalid" and number > 0:
+            invalid_rounds.add(number)
+        if data.get("roundValidity") == "unresolved" and number > 0:
+            unresolved_rounds.add(number)
+        if (
+            event.get("type") == "system-void"
+            or data.get("classification") == "system-void"
+        ) and number > 0:
+            system_void_rounds.add(number)
+
+    valid = {
+        number: snapshot
+        for number, snapshot in snapshots.items()
+        if number not in invalid_rounds
+        and number not in unresolved_rounds
+        and number not in system_void_rounds
+        and snapshot.get("roundValidity") == "valid"
+        and isinstance(snapshot.get("attacker"), dict)
+        and isinstance(snapshot.get("defender"), dict)
+        and isinstance(snapshot["attacker"].get("score"), (int, float))
+        and isinstance(snapshot["defender"].get("score"), (int, float))
+    }
+
+    def average(
+        role: str, key: str, include_invalid_zero: bool = False
+    ) -> float | None:
+        values = [
+            snapshot[role].get("summary", {}).get(key) for snapshot in valid.values()
+        ]
+        values = [value for value in values if isinstance(value, (int, float))]
+        denominator = len(values)
+        if include_invalid_zero:
+            denominator += len(invalid_rounds)
+        if denominator == 0:
+            return None
+        return round(sum(values) / denominator, 2)
+
+    return {
+        "rulesVersion": SCORING_VERSION,
+        "requestedRounds": requested,
+        "validRounds": len(valid),
+        "invalidRounds": len(invalid_rounds),
+        "unresolvedRounds": len(unresolved_rounds),
+        "systemVoidRounds": len(system_void_rounds),
+        "coverageRatio": round(len(valid) / requested, 4) if requested else None,
+        "attacker": {
+            "averageBaseScore": average("attacker", "baseScore", True),
+            "averageResponseScore": average("attacker", "responseScore", True),
+            "averageFinalScore": average("attacker", "finalScore", True),
+        },
+        "defender": {
+            "averageBaseScore": average("defender", "baseScore"),
+            "averageResponseScore": average("defender", "responseScore"),
+            "averageFinalScore": average("defender", "finalScore"),
+        },
+        "status": (
+            "incomplete"
+            if system_void_rounds or unresolved_rounds or len(valid) < requested
+            else "available"
+        ),
+    }
 
 
 def _safe_control_points(
@@ -201,7 +365,101 @@ def score_battle(
             key = (role, correlation_id)
             if key in starts or key in terminals:
                 durations_by_call[correlation_id] = float(duration)
-        return _response_points(list(durations_by_call.values()))
+        if role == "attacker":
+            started_at = {
+                _event_data(event).get("round"): event.get("createdAt")
+                for event in events
+                if _event_type(event) == "round.started"
+                and _event_data(event).get("responseTimingEligible") is True
+            }
+            valid_rounds: set[int] = set()
+            invalid_rounds: set[int] = set()
+            for event in events:
+                data = _event_data(event)
+                classification = data.get("classification")
+                round_validity = data.get("roundValidity")
+                if round_validity in {"invalid", "unresolved", "system-void"}:
+                    try:
+                        invalid_rounds.add(int(data.get("round")))
+                    except TypeError, ValueError:
+                        pass
+                    continue
+                if classification in {
+                    "blocked",
+                    "contained",
+                    "full-penetration",
+                }:
+                    try:
+                        valid_rounds.add(int(data.get("round")))
+                    except TypeError, ValueError:
+                        continue
+            valid_rounds.difference_update(invalid_rounds)
+            eligible_durations: list[float] = []
+            for event in events:
+                data = _event_data(event)
+                if (
+                    _event_type(event) != "attack.stage.completed"
+                    or data.get("stageId") != "A7"
+                    or data.get("accepted") is not True
+                    or data.get("round") not in valid_rounds
+                ):
+                    continue
+                start_time = started_at.get(data.get("round"))
+                end_time = event.get("createdAt")
+                if not isinstance(start_time, str) or not isinstance(end_time, str):
+                    continue
+                try:
+                    started = datetime.fromisoformat(start_time)
+                    ended = datetime.fromisoformat(end_time)
+                    duration = (ended - started).total_seconds() * 1000
+                except ValueError:
+                    continue
+                if duration >= 0:
+                    eligible_durations.append(duration)
+            return _response_points(eligible_durations, role)
+
+        correct_round_correlations = {
+            data.get("correlationId")
+            for event in events
+            if _event_type(event) in {"round.completed", "arbiter.verdict"}
+            for data in [_event_data(event)]
+            if isinstance(data.get("correlationId"), str)
+            and (
+                data.get("attackSuccess") is False
+                and data.get("defenseSuccess") is True
+                or data.get("classification") == "contained"
+            )
+        }
+        attack_response = _response_points(
+            [
+                duration
+                for correlation_id, duration in durations_by_call.items()
+                if correlation_id in correct_round_correlations
+                and terminals.get((role, correlation_id), {}).get("eventType")
+                == "agent.call.completed"
+            ],
+            role,
+        )
+        control_durations: list[float] = []
+        for event in events:
+            data = _event_data(event)
+            control = (
+                data.get("safeControl")
+                if isinstance(data.get("safeControl"), dict)
+                else data
+            )
+            if (
+                _event_type(event) not in {"round.completed", "defense.safe_control"}
+                or control.get("status") != "passed"
+                or not isinstance(control.get("evidence"), list)
+                or not control["evidence"]
+            ):
+                continue
+            duration = control.get("durationMs")
+            if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+                control_durations.append(float(duration))
+        control_response = _response_points(control_durations, "defender")
+        return round((attack_response + control_response) / 2)
 
     attack_count = len(attack_samples)
     required_sample_fields = (
@@ -398,33 +656,21 @@ def score_battle(
         str(record.get("topic", "")), defense_results
     )
     truth = _explicit_round_truth(events, defense_results, round_count)
-    attack_truth = [
-        values["attackSuccess"]
-        for values in truth.values()
-        if isinstance(values.get("attackSuccess"), bool)
-    ]
-    defense_truth = [
-        values
-        for values in truth.values()
-        if isinstance(values.get("attackSuccess"), bool)
-        and isinstance(values.get("defenseSuccess"), bool)
-    ]
-    attacker_effect = (
-        _weighted_points(60, sum(attack_truth) / len(attack_truth))
-        if attack_truth
-        else 0
+    classifications = _arbiter_classifications(events, round_count)
+    attacker_effect = _attacker_layer_effect_points(
+        events, truth, classifications, round_count
+    )
+    correct_defenses = sum(
+        classifications.get(number) == "contained"
+        or (
+            classifications.get(number) == "blocked"
+            and values.get("attackSuccess") is False
+            and values.get("defenseSuccess") is True
+        )
+        for number, values in truth.items()
     )
     defender_effect = (
-        _weighted_points(
-            45,
-            sum(
-                values["defenseSuccess"] and not values["attackSuccess"]
-                for values in defense_truth
-            )
-            / len(defense_truth),
-        )
-        if defense_truth
-        else 0
+        _weighted_points(45, correct_defenses / round_count) if round_count else 0
     )
     attacker_response, defender_response = (
         response_score("attacker"),
@@ -437,7 +683,7 @@ def score_battle(
             "score": attacker_effect,
             "maxScore": 60,
             "group": "effect",
-            "basis": "按分层拦截结果中未被 caught 阻断的回合比例计分。",
+            "basis": "仅按 Arbiter 连续确认的 L0/L1/L2/L3 穿透证据逐层累计 5/15/25/15 分；L2 须有实际效果，L3 须为完整穿透。",
         },
         {
             "id": "A-RESPONSE",
@@ -455,7 +701,7 @@ def score_battle(
             "score": defender_effect,
             "maxScore": 45,
             "group": "effect",
-            "basis": "仅在 attackSuccess=false 且 defenseSuccess=true 的显式真值回合计分。",
+            "basis": "仅在 Arbiter 明确判定正确阻断或窗口内 contained 的回合计分；不从 caught/risks 推断。",
         },
         {
             "id": "D-07",
@@ -474,7 +720,6 @@ def score_battle(
             "basis": "按防守 Agent 调用平均 durationMs 计算。",
         },
     ]
-    # 同一套流程在低难度上更容易拿满，按难度折算，避免"难度不同、分数一样"。
     difficulty = str(record.get("difficulty") or "high").strip().lower()
     difficulty_factor = {"low": 0.88, "mid": 0.94}.get(difficulty, 1.0)
     if difficulty_factor != 1.0:
@@ -486,7 +731,7 @@ def score_battle(
             {**item, "score": round(item["score"] * difficulty_factor, 2)}
             for item in defender_categories
         ]
-    return {
+    result = {
         "version": SCORING_VERSION,
         "status": "scored" if scored_roles else "insufficient_evidence",
         "message": "分别评价流程规范、观察到的实际效果和响应速度；不代表漏洞检出准确率、攻击成功率或真实目标修复效果。",
@@ -526,6 +771,79 @@ def score_battle(
             "layerInterceptions": layer_interceptions,
         },
     }
+    raw_values = {
+        "A-01": sample_field_ratio,
+        "A-02": plan_ratio,
+        "A-03": attack_completion_ratio,
+        "A-04": attack_trace_ratio,
+        "A-05": source_ratio("attacker"),
+        "A-EFFECT": attacker_effect / 60,
+        "D-01": min(response_ratio, contract_ratio, analysis_ratio),
+        "D-02": remediation_ratio,
+        "D-03": defense_completion_ratio,
+        "D-04": defense_trace_ratio,
+        "D-05": source_ratio("defender"),
+        "D-06": correct_defenses / round_count if round_count else None,
+        "D-07": next(
+            (
+                category["score"] / category["maxScore"]
+                for category in defender_categories
+                if category.get("id") == "D-07"
+            ),
+            None,
+        ),
+    }
+    adjudicated_at = datetime.now(UTC).isoformat()
+    for role in ("attacker", "defender"):
+        role_result = result[role]
+        for category in role_result.get("categories", []):
+            group = category.get("group")
+            evidence_ids = [
+                str(event["id"])
+                for event in events
+                if event.get("id") is not None
+                and (
+                    (
+                        _event_data(event).get("agentRole") == role
+                        and _event_type(event)
+                        in {
+                            "agent.call.started",
+                            "agent.call.completed",
+                            "agent.call.failed",
+                        }
+                    )
+                    or group == "process"
+                    and (
+                        role == "attacker"
+                        and _event_type(event) == "attack.sample.generated"
+                        or role == "defender"
+                        and _event_type(event) == "round.completed"
+                    )
+                    or group == "effect"
+                    and _event_type(event)
+                    in {
+                        "arbiter.verdict",
+                        "arbiter.layer.confirmed",
+                        "attack.compromised",
+                        "defense.safe_control",
+                        "arbiter.safe_control",
+                    }
+                )
+            ][:4]
+            category.update(
+                {
+                    "itemId": category.get("id"),
+                    "rawValue": raw_values.get(category.get("id")),
+                    "awardedPoints": category.get("score"),
+                    "maxPoints": category.get("maxScore"),
+                    "evidenceIds": evidence_ids,
+                    "verdictVersion": SCORING_VERSION,
+                    "adjudicatedAt": adjudicated_at,
+                    "reviewStatus": role_result.get("status"),
+                }
+            )
+    result["roundAggregate"] = _round_aggregate(record, events)
+    return result
 
 
 def score_battle_rounds(
@@ -592,6 +910,8 @@ def score_battle_rounds(
         )
         round_record = {
             "status": record.get("status"),
+            "difficulty": record.get("difficulty"),
+            "rounds": 1,
             "topic": record.get("topic"),
             "attackerOut": {"samples": [sample]},
             "defenderOut": [defense],

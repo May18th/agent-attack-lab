@@ -2,6 +2,7 @@ from agent_attack_lab.battle_timeline import (
     emit_attack_stages,
     emit_defense_and_arbiter_stages,
     emit_post_verdict_stages,
+    submission_id_for,
 )
 from agent_attack_lab.events import build_event
 from agent_attack_lab.layer_interceptions import derive_round_layer_trace
@@ -79,7 +80,7 @@ def test_safe_control_pass_requires_evidence() -> None:
     )
 
     safe_event = next(item for item in emitted if item[0] == "defense.safe_control")
-    assert classification == "full-penetration"
+    assert classification == "unresolved"
     assert safe_event[1] == "unresolved"
     assert safe_event[2]["classification"] == "unresolved"
 
@@ -140,3 +141,118 @@ def test_similarity_check_is_an_arbiter_event_between_a5_and_a7() -> None:
         for item in emitted
         if item[0].endswith("completed") or item[0] == "arbiter.similarity.checked"
     ] == ["A1", "A2", "A3", "A4", "A5", "A6", "A7"]
+
+
+def test_submission_id_is_stable_for_payload_and_round() -> None:
+    sample = {"sampleId": "same-id", "content": "first payload"}
+    assert submission_id_for(sample, 2).startswith("SUB-R2-")
+    assert submission_id_for(sample, 2) == submission_id_for(sample, 2)
+    assert submission_id_for(sample, 2) != submission_id_for(
+        {"sampleId": "same-id", "content": "changed payload"}, 2
+    )
+
+
+def test_similarity_uses_maximum_across_historical_samples() -> None:
+    emitted: list[tuple[str, str, dict]] = []
+    emit_attack_stages(
+        lambda event_type, status, data: emitted.append((event_type, status, data)),
+        round_number=3,
+        total_rounds=3,
+        difficulty="mid",
+        topic="提示注入",
+        sample={"sampleId": "round-3", "content": "alpha beta gamma"},
+        previous_sample={"sampleId": "round-2", "content": "different payload"},
+        historical_samples=[
+            {"sampleId": "round-1", "content": "alpha beta gamma"},
+            {"sampleId": "round-2", "content": "different payload"},
+        ],
+        correlation_id="call-3",
+    )
+    similarity = next(
+        item for item in emitted if item[0] == "arbiter.similarity.checked"
+    )
+    assert similarity[2]["sourceType"] == "same-source"
+    assert similarity[2]["maxHistoricalSimilarity"] == 1.0
+    assert similarity[2]["nearestSampleId"] == "round-1"
+    assert similarity[2]["similarityToPrevious"] < 0.85
+    assert similarity[2]["comparedSampleIds"] == ["round-1", "round-2"]
+
+
+def test_layer_confirmation_requires_arbiter_evidence_ids() -> None:
+    emitted: list[tuple[str, str, dict]] = []
+    classification = emit_defense_and_arbiter_stages(
+        lambda event_type, status, data: emitted.append((event_type, status, data)),
+        round_number=1,
+        topic="通用安全测试",
+        defense={"caught": [], "risks": [], "fixed": []},
+        verification={"mode": "off"},
+        arbiter_review={"verdict": "attacker_won"},
+        correlation_id="call-1",
+    )
+
+    assert classification == "unresolved"
+    assert not any(
+        event_type == "arbiter.layer.confirmed" for event_type, _, _ in emitted
+    )
+
+    emitted.clear()
+    classification = emit_defense_and_arbiter_stages(
+        lambda event_type, status, data: emitted.append((event_type, status, data)),
+        round_number=1,
+        topic="通用安全测试",
+        defense={"caught": [], "risks": [], "fixed": []},
+        verification={"mode": "off"},
+        arbiter_review={
+            "verdict": "attacker_won",
+            "layerEvidence": {
+                layer: [f"evidence-{layer}"] for layer in ("L0", "L1", "L2", "L3")
+            },
+        },
+        correlation_id="call-1",
+    )
+    confirmed = [
+        data
+        for event_type, _, data in emitted
+        if event_type == "arbiter.layer.confirmed"
+    ]
+    assert classification == "full-penetration"
+    assert {item["layer"]: item["evidenceIds"] for item in confirmed} == {
+        layer: [f"evidence-{layer}"] for layer in ("L0", "L1", "L2", "L3")
+    }
+
+
+def test_similarity_reports_baseline_and_unresolved_missing_payload() -> None:
+    emitted: list[tuple[str, str, dict]] = []
+    emit_attack_stages(
+        lambda event_type, status, data: emitted.append((event_type, status, data)),
+        round_number=1,
+        total_rounds=1,
+        difficulty="mid",
+        topic="提示注入",
+        sample={"sampleId": "baseline", "content": "synthetic payload"},
+        correlation_id="call-1",
+    )
+    similarity = next(
+        item for item in emitted if item[0] == "arbiter.similarity.checked"
+    )
+    assert similarity[2]["sourceType"] == "baseline"
+    assert similarity[2]["similarityModelVersion"] == "1"
+    assert similarity[2]["nearestSampleId"] is None
+
+    emitted.clear()
+    emit_attack_stages(
+        lambda event_type, status, data: emitted.append((event_type, status, data)),
+        round_number=2,
+        total_rounds=2,
+        difficulty="mid",
+        topic="提示注入",
+        sample={"sampleId": "missing", "content": ""},
+        previous_sample={"sampleId": "baseline", "content": "synthetic payload"},
+        correlation_id="call-2",
+    )
+    similarity = next(
+        item for item in emitted if item[0] == "arbiter.similarity.checked"
+    )
+    assert similarity[1] == "unresolved"
+    assert similarity[2]["sourceType"] == "unresolved"
+    assert similarity[2]["similarity"] is None
