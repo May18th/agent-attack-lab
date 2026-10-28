@@ -247,10 +247,17 @@ async def verify_round_live(
     defense: dict[str, Any],
     *,
     mode: VerifyMode | None = None,
+    difficulty: str | None = None,
 ) -> dict[str, Any]:
-    """Run verification for one round, calling the controlled target in live mode."""
+    """Run verification for one round, calling the controlled target in live mode.
+
+    Difficulty decides how strong the target is, so the same attack family can be
+    evaluated against a baseline, a weak and a hardened deployment.
+    """
     selected_mode = mode or configured_verify_mode()
     if selected_mode != "live":
         return verify_round(sample, defense, mode=selected_mode)
-    probe = await probe_target(sample)
+    from agent_attack_lab.targets.controlled_target import profile_for_difficulty
+
+    probe = await probe_target(sample, profile_for_difficulty(difficulty))
     return verify_round(sample, defense, mode="live", config=probe)

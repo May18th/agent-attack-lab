@@ -297,7 +297,10 @@ async def create_battle(
                 stage_id="DEFENSE",
             )
             verification = await verify_round_live(
-                sample, defense, mode=verification_mode
+                sample,
+                defense,
+                mode=verification_mode,
+                difficulty=payload.difficulty,
             )
             if verification.get("mode") == "live":
                 defense["verificationStatus"] = describe_result(verification)
