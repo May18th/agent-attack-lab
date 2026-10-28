@@ -79,8 +79,6 @@ def test_live_round_uses_target_result(monkeypatch) -> None:
     assert aggregate_verdict("live", [verification], [{}]) == "attacker_won"
 
 
-
-
 def test_describe_result_reports_refusal_and_elapsed() -> None:
     text = controlled_target.describe_result(
         {"reason": "target_refused", "elapsedMs": 812}
