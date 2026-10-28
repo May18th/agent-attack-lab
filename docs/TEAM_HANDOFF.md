@@ -29,19 +29,19 @@
 - PR #15 已合并，提交 `10bb83e6703b244fcbdb5119c5c64f1e0f123cc8`。生产部署 Workflow `39119453067` 在 VPS self-hosted Runner `yuanyi-agent-attack-lab-vps`（`deployer`）上成功完成；部署脚本执行 Alembic 迁移，使用 `/home/deployer/agent-attack-lab-releases/<commit>` 隔离 release worktree，并保留 `/opt/agent-attack-lab` 既有未提交修改。
 - 首个本地 8787 健康探测在服务重启瞬间连接失败，后续重试通过，最终日志为 `DEPLOY OK: 10bb83e6703b244fcbdb5119c5c64f1e0f123cc8 (main)`。这只能证明健康探测最终通过，不能单独证明运行时导入的是目标 release 代码。
 - 2026-10-18 18:31（UTC+8）公网只读复验：`https://api.yuanyiagentzhandui.cn/health`、`/openapi.json`、`/dashboard/summary` 均 HTTP 200；健康响应 `requestId=req-2dfd86bc-49d9-4cd2-9978-9c1d8ee8894d`。OpenAPI 已包含 `DELETE /battles/{battle_id}`，但仍缺少 `/battles/{battle_id}/score` 和 `/internal-scores`。
-- 根因核查发现 release 的 `start-service.sh` 原先直接使用共享虚拟环境中的 `agent_attack_lab`，没有优先加入当前 release 的 `src`；因此可能出现部署提交已切换、运行时仍加载旧已安装包的情况。PR #16 已将 `PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"` 修复部署到生产，但公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径。PR #19 已合并，但 Workflow `39121146077` 仍因脚本把已带 `.service` 后缀的服务名拼成 `*.service.service.d` 而触发运行时路径护栏，部署已自动回滚；PR #20 已合并修正为 `$service.d`，但 Workflow `39121512220` 中 API 服务重启后未保持 active，诊断显示 release 的 `start-service.sh` Git 模式为 `100644`，systemd 报 `203/EXEC Permission denied`，部署再次自动回滚。跟进分支 `codex/fix-start-service-mode` 已将脚本模式修正为 `100755` 并补充回归测试。
+- 根因核查发现 release 的 `start-service.sh` 原先直接使用共享虚拟环境中的 `agent_attack_lab`，没有优先加入当前 release 的 `src`；因此可能出现部署提交已切换、运行时仍加载旧已安装包的情况。PR #16 已将 `PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"` 修复部署到生产，但公网评分路由仍返回 404。PR #17 的部署护栏在 Workflow `39120444732` 中确认 API 进程实际 cwd 仍为 `/opt/agent-attack-lab/backend`，不是目标 release；PR #18 的诊断确认 systemd `DropInPaths` 为空，脚本把 drop-in 写到了错误的 `$HOME/XDG_CONFIG_HOME` 路径。PR #19 已合并，但 Workflow `39121146077` 仍因脚本把已带 `.service` 后缀的服务名拼成 `*.service.service.d` 而触发运行时路径护栏，部署已自动回滚；PR #20 已合并修正为 `$service.d`，但 Workflow `39121512220` 中 API 服务重启后未保持 active，诊断显示 release 的 `start-service.sh` Git 模式为 `100644`，systemd 报 `203/EXEC Permission denied`，部署再次自动回滚。跟进分支 `feature/fix-start-service-mode` 已将脚本模式修正为 `100755` 并补充回归测试。
 - 本机从 `backend` 目录执行后端测试：`124 passed, 5 skipped`，仅保留既有 Starlette/httpx 弃用警告。外部 LLM/API 未接入，攻击与防守保持规则兜底。
 
 下一步：
 
-1. 审核并合入跟进分支 `codex/fix-start-service-mode`；不要将 `.env`、证书/私钥、Token、数据库、Redis 数据、日志或长期记忆带入提交。
+1. 审核并合入跟进分支 `feature/fix-start-service-mode`；不要将 `.env`、证书/私钥、Token、数据库、Redis 数据、日志或长期记忆带入提交。
 2. 合入后观察新的生产部署 Workflow，确认三项本地健康检查、公网 `/health`、systemd 服务和 release 路径均通过。
 3. 重新读取公网 `/openapi.json`，确认是否出现评分路由；若仍缺失，继续核查服务进程的实际 `PYTHONPATH` 和 `WorkingDirectory`，不要直接修改生产数据库或覆盖原工作树。
 4. 评分接口确认上线后，再用隔离数据源验收空主题 422、合法创建 201、完成删除 204、运行中删除 409；当前没有隔离数据源时，不对生产业务数据做破坏性写测试。
 
 ## 2026-10-18 PR #10 合并后的当前核验
 
-- GitHub PR #10 已合并到 `main`，合并提交 `e7abe1defa3b78750e8b0ca991d45662b601a911`；GitHub Actions 项目检查通过，当前无开放 PR。本机 `codex/fix-pr9-review-findings` 与 `origin/main` 内容无差异，尚未切换本地分支。
+- GitHub PR #10 已合并到 `main`，合并提交 `e7abe1defa3b78750e8b0ca991d45662b601a911`；GitHub Actions 项目检查通过，当前无开放 PR。本机 `feature/fix-pr9-review-findings` 与 `origin/main` 内容无差异，尚未切换本地分支。
 - 公网只读复验：生产 API `/health`、`/openapi.json`、`/auth/session`、`/dashboard/summary` 均返回 200；正式前端根域返回 200；正式前端来源 CORS 预检返回 200。`/metrics` 无密钥返回 401，`/rpc` 的 GET 返回 405。
 - 生产 OpenAPI 仍缺少 `/battles/{battle_id}/score` 与 `/internal-scores`，说明生产代码尚未对齐当前主线评分版本。不得把主线合并或公网健康 200 表述为评分已部署。
 - SSH `deployer@47.108.92.113:22` 本轮仍超时，未执行任何 VPS 命令、部署、重启、迁移或生产写请求。恢复后先核对远端 HEAD、分支、工作树、systemd 的 `WorkingDirectory`/`ExecStart`、数据库备份和回滚目录，再决定是否发布 `e7abe1d`；不得强制覆盖远端已有修改。
@@ -57,16 +57,16 @@
 ## 2026-10-13 PR #6 合并与 Pages Preview API 隔离排查
 
 - GitHub PR #6 已于 2026-10-13 合并到 `main`，merge commit `b00ca4b15f159793dc969a48a3dbbc3abe733529`；后端测试、前端构建与检查、Cloudflare Pages、Workers Builds 均通过。评分 v2 已进入 Git `main`，但尚未部署到生产 API。
-- 合并后的 Workers 分支 Preview `https://codex-internal-scoring-v2-agent-attack-lab.3498414260.workers.dev`、Pages 分支 Preview `https://codex-internal-scoring-v2.agent-attack-lab.pages.dev` 和隔离 API `/health` 当前均返回 HTTP 200。Workers Preview bundle 指向 `https://preview-api.yuanyiagentzhandui.cn`，不包含生产 API 或 localhost；该来源的 API CORS 预检返回 200。
+- 合并后的 Workers 分支 Preview `(分支 Preview 地址，随分支删除已失效)`、Pages 分支 Preview `(分支 Preview 地址，随分支删除已失效)` 和隔离 API `/health` 当前均返回 HTTP 200。Workers Preview bundle 指向 `https://preview-api.yuanyiagentzhandui.cn`，不包含生产 API 或 localhost；该来源的 API CORS 预检返回 200。
 - 发现 Pages 分支 Preview 的 bundle `index-DgvuxXLN.js` 指向正式 API `https://api.yuanyiagentzhandui.cn`。仅对页面和静态 bundle 做 GET 检查，未对 Pages Preview 执行创建战局等写请求；没有泄露认证信息。Cloudflare Pages 配置由账户 `434bfd2a8e4ae5b35caf32b2f2993147` 持有，本地 Cloudflare 会话只有账户 `5ae15bce614603a1748af32e96515395`，因此未直接修改 Pages 项目环境变量。
-- 本地在独立分支 `codex/preview-pages-api-isolation` 新增 Pages 构建分支保护：`CF_PAGES_BRANCH=main` 固定生产 API，其他 Pages 分支固定隔离 Preview API，缺少分支 metadata 时构建失败；普通本地构建不改写 API 环境变量。Vitest `19 passed`，构建环境 Node tests `4 passed`，lint/build 通过；已分别构建并检查 main 与 Preview bundle 的 API 地址。
-- 当前 Edge 没有 CDP 调试端口或 Codex 可附着浏览器句柄，启动隔离 Headless Edge 的尝试被执行策略拒绝；因此本轮仍未完成真实桌面/移动渲染、控制台和点击交互验收。HTTP 与静态资源检查不能视为浏览器验收。
-- 后续：为 `codex/preview-pages-api-isolation` 建立独立 PR，检查 CI/Pages Preview bundle 必须指向 Preview API；合并后复验 Pages Preview，再评估生产部署。不得通过旧 Preview 页面创建/删除战局；不覆盖 VPS 主工作树或改生产服务。
+- 本地在独立分支 `feature/preview-pages-api-isolation` 新增 Pages 构建分支保护：`CF_PAGES_BRANCH=main` 固定生产 API，其他 Pages 分支固定隔离 Preview API，缺少分支 metadata 时构建失败；普通本地构建不改写 API 环境变量。Vitest `19 passed`，构建环境 Node tests `4 passed`，lint/build 通过；已分别构建并检查 main 与 Preview bundle 的 API 地址。
+- 当前 Edge 没有 CDP 调试端口或可供自动化附着的浏览器句柄，启动隔离 Headless Edge 的尝试被执行策略拒绝；因此本轮仍未完成真实桌面/移动渲染、控制台和点击交互验收。HTTP 与静态资源检查不能视为浏览器验收。
+- 后续：为 `feature/preview-pages-api-isolation` 建立独立 PR，检查 CI/Pages Preview bundle 必须指向 Preview API；合并后复验 Pages Preview，再评估生产部署。不得通过旧 Preview 页面创建/删除战局；不覆盖 VPS 主工作树或改生产服务。
 
 ## 2026-10-13 Pages Preview API 隔离修复复验
 
-- Pages 构建隔离修复提交 `b606a7b` 已推送至 `codex/preview-pages-api-isolation` 并创建 [PR #7](https://github.com/May18th/agent-attack-lab/pull/7)。后端、前端、Cloudflare Pages、Workers Builds 检查全部通过，merge state `CLEAN`，目前等待队友审核；未自行合并。
-- PR #7 branch Pages Preview `https://codex-preview-pages-api-isol.agent-attack-lab.pages.dev` 与 Workers Preview `https://codex-preview-pages-api-isolation-agent-attack-lab.3498414260.workers.dev` 均返回 200。两边 HTML 引用 bundle `index-BOObAAuy.js`，bundle 均只含隔离 API `https://preview-api.yuanyiagentzhandui.cn`，不含生产 API 或 `127.0.0.1:8787`。Preview API health=200，Workers Preview 来源的 CORS OPTIONS=200。
+- Pages 构建隔离修复提交 `b606a7b` 已推送至 `feature/preview-pages-api-isolation` 并创建 [PR #7](https://github.com/May18th/agent-attack-lab/pull/7)。后端、前端、Cloudflare Pages、Workers Builds 检查全部通过，merge state `CLEAN`，目前等待队友审核；未自行合并。
+- PR #7 branch Pages Preview `(分支 Preview 地址，随分支删除已失效)` 与 Workers Preview `(分支 Preview 地址，随分支删除已失效)` 均返回 200。两边 HTML 引用 bundle `index-BOObAAuy.js`，bundle 均只含隔离 API `https://preview-api.yuanyiagentzhandui.cn`，不含生产 API 或 `127.0.0.1:8787`。Preview API health=200，Workers Preview 来源的 CORS OPTIONS=200。
 - PR #7 本地验证：Vitest 19 passed；构建环境测试 4 passed；lint/build 通过。模拟 `CF_PAGES_BRANCH=main` 的 bundle 指向生产 API；模拟非 main 分支的 bundle 指向 Preview API；未修改 Cloudflare Pages 账户环境变量。
 - 旧评分分支 Pages Preview 曾指向生产 API；对此只做页面与静态 bundle GET 检查，未发出业务写请求。修复 Preview 已实测隔离后，仍未完成真实桌面/移动浏览器视觉、控制台及按钮交互验收（无可附着 CDP，启动隔离 Edge 被执行策略拒绝）。
 - 后续：队友审核/合并 PR #7；之后复验 main Pages Preview bundle 仍指向生产 API，最后安排人工或具备浏览器控制权限的真实页面交互验收。生产评分 API 部署仍须按独立生产发布流程评估，不得因 PR 合并自动推断已部署。
@@ -75,7 +75,7 @@
 
 - 新增 [`SCORING_ALIGNMENT.md`](SCORING_ALIGNMENT.md)，仅按比赛对项目作品的评审项整理参赛证据，不是攻防实验室内部评分规则；标出需平台侧或人工补齐的材料。
 - 本地已新增逐 Agent 调用 correlationId、AIP session 关联、耗时/来源/失败事件、留存事件统计及后台指标；同步调用失败将保留失败战局，并通过 `X-Battle-ID` 响应头定位。完整后端测试 `107 passed, 4 skipped`，敏感文件扫描通过。
-- 相关代码已包含在 `codex/internal-scoring-v2` 分支提交 `158d820`；交接文档提交 `ac05961`。PR #6 已创建，自动检查通过，等待队友审核。隔离 Preview 已部署并验收，生产环境未更新。不要将本地新统计当作平台访问量，也不要将 Partner 自报 `acp-llm` 当作真实模型的独立证明。
+- 相关代码已包含在 `feature/internal-scoring-v2` 分支提交 `158d820`；交接文档提交 `ac05961`。PR #6 已创建，自动检查通过，等待队友审核。隔离 Preview 已部署并验收，生产环境未更新。不要将本地新统计当作平台访问量，也不要将 Partner 自报 `acp-llm` 当作真实模型的独立证明。
 - 部署/答辩前还需：隔离环境验收、真实平台 Discovery 与调用演示、录制完整互联视频、申请梧桐侧访问数据，以及决定是否接入模型。当前不自动配置外部 LLM、不部署生产。
 
 ## 2026-10-13 攻防实验室内部评分系统 v2（本地待验收）
@@ -85,7 +85,7 @@
 - 缺少调用事件的某侧按 `insufficient_evidence` 返回 null；评分不声称准确率、真实攻击效果、模型真实性或目标已修复。
 - v2 修正：LLM 攻击样本补齐 `testVariation`；来源留痕按成功调用中具有非空 `dispatchMode` 和 `resultSource` 的比例计分；统一普通四舍五入，并升级规则版本。旧战局从原始事件按当前版本实时重算，不保留历史分数快照。
 - 完整后端测试 `113 passed, 4 skipped`（跳过项因 Windows 缺少 Bash；另有既存 Starlette/httpx 弃用警告）。
-- 提交 `158d820` 和 Preview 交接文档 `ac05961` 已推送到 `codex/internal-scoring-v2`；GitHub PR #6 已创建，后端、前端、Cloudflare Pages、Workers Builds 检查均通过，等待队友审核。隔离 Preview 已部署验收；生产环境未部署。
+- 提交 `158d820` 和 Preview 交接文档 `ac05961` 已推送到 `feature/internal-scoring-v2`；GitHub PR #6 已创建，后端、前端、Cloudflare Pages、Workers Builds 检查均通过，等待队友审核。隔离 Preview 已部署验收；生产环境未部署。
 
 ## 2026-10-13 内部评分 v2 隔离 Preview 验收
 
@@ -142,10 +142,10 @@
 
 ## 2026-10-12 隔离 Preview 本轮复核
 
-- 本轮开始时 `codex/preview-isolation` 位于 `afa1d09`；交接记录提交 `931daa6`、`e87a443`、`2f65574` 已推送到 PR #4。`2f65574` 检查时 PR 为 OPEN、merge state `CLEAN`；GitHub 列出的后端、前端、Cloudflare Pages 和账户 `5ae` Workers Preview 四项检查均通过。账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的独立重复 Workers Builds trigger 在本轮运行时曾报告失败，但不在当前 PR 检查列表中；仍需该账户维护者确认归属并修复或移除。
+- 本轮开始时 `feature/preview-isolation` 位于 `afa1d09`；交接记录提交 `931daa6`、`e87a443`、`2f65574` 已推送到 PR #4。`2f65574` 检查时 PR 为 OPEN、merge state `CLEAN`；GitHub 列出的后端、前端、Cloudflare Pages 和账户 `5ae` Workers Preview 四项检查均通过。账户 `434bfd2a8e4ae5b35caf32b2f2993147` 的独立重复 Workers Builds trigger 在本轮运行时曾报告失败，但不在当前 PR 检查列表中；仍需该账户维护者确认归属并修复或移除。
 - 本机网络访问 Workers Preview 页面和 `pages.dev` branch preview 均返回 HTTP 200。下载当前 Workers Preview HTML/JS 后确认 bundle 配置为 `https://preview-api.yuanyiagentzhandui.cn`，不含生产 API 地址。该来源对 Preview API 的 CORS 预检返回 200，允许方法为 GET/POST/DELETE/OPTIONS。
 - 隔离 API 本轮复测：空 topic=422；low/mid/high 创建均为 201、状态 `completed`，对应删除均为 204。请求 ID：空 topic `req-e8c70732-0d48-405f-86fd-920d69761703`；low 创建/删除 `req-64151776-9df2-4ab1-ae6d-5ee8c177e3cf` / `req-ac5f9cb6-b138-4758-afaf-d1e796ac5f5b`；mid `req-5f528d9a-4ba2-4a81-b65b-0fc08cb3681f` / `req-722b6177-6fdd-4b9b-aae4-56a5ef57d849`；high `req-f8f36198-2183-41a3-aff2-5591ff026afa` / `req-37f9ca50-6ea8-46ef-9e7d-8725a51f052d`。均使用独立 Preview 数据库，写后清理；未访问生产写接口。
-- 浏览器自动化未通过：当前运行策略拒绝启动 Edge 子进程。上述 HTTP、静态 bundle 和 CORS 检查不等于页面内交互验收；仍需在可用浏览器中打开 `https://codex-preview-isolation-agent-attack-lab.3498414260.workers.dev`，检查渲染、控制台和实际请求，再做低中高难度交互。
+- 浏览器自动化未通过：当前运行策略拒绝启动 Edge 子进程。上述 HTTP、静态 bundle 和 CORS 检查不等于页面内交互验收；仍需在可用浏览器中打开 `(分支 Preview 地址，随分支删除已失效)`，检查渲染、控制台和实际请求，再做低中高难度交互。
 - 本轮仅清理未被服务占用的根目录 Vite 输出日志并更新交接记录；没有改生产服务、生产数据库、DNS、Tunnel 或 Registry。
 
 **后续动作与验收标准**
@@ -157,8 +157,8 @@
 
 ## 2026-10-12 Workers Builds Preview 复核
 
-- Cloudflare Build trigger `codex/deployment-status-sync` 仅匹配该分支。已将 root directory 设为 `/frontend/frontend-ui`、build command 设为 `npm run build`；保留 Preview command `npx wrangler preview` 和现有路径筛选。
-- PR #3 提交 `9b34aacebc2f31aff3783ce2a9245cf56208da54` 的 Cloudflare Build `1a8b6b30-fae2-444e-8a5f-6a2f5babb5cc` 成功；GitHub Workers Builds check 为 success。Preview URL `https://codex-deployment-status-sync-agent-attack-lab.3498414260.workers.dev` 返回 HTTP 200。
+- Cloudflare Build trigger `feature/deployment-status-sync` 仅匹配该分支。已将 root directory 设为 `/frontend/frontend-ui`、build command 设为 `npm run build`；保留 Preview command `npx wrangler preview` 和现有路径筛选。
+- PR #3 提交 `9b34aacebc2f31aff3783ce2a9245cf56208da54` 的 Cloudflare Build `1a8b6b30-fae2-444e-8a5f-6a2f5babb5cc` 成功；GitHub Workers Builds check 为 success。Preview URL `(分支 Preview 地址，随分支删除已失效)` 返回 HTTP 200。
 - 后续文档同步提交 `43e2f50d25605df96af10c6f67fc709be1f48ca1` 的自动 Preview build `fa2e3b8f-b976-49fa-80be-c8f3295270b9` 成功；该提交对应的 PR 后端、前端、Pages 和 Workers Builds 检查均通过。
 - Preview URL 公开可访问。构建环境未配置 `VITE_AGENT_API`，前端默认请求 `http://127.0.0.1:8787`，因此 Preview 首页可打开不代表浏览器能连到后端。生产 API `/health` 的只读请求返回 200，但没有把公开 Preview 指向生产 API，以避免预览写请求污染正式数据。后续前后端联调需使用隔离 API，并明确其数据与访问控制。
 - 本次没有改生产部署命令、DNS、Worker 生产代码或其他分支，也没有创建、修改或删除生产战局。
@@ -168,7 +168,7 @@
 - VPS 已启用用户级 `agent-attack-lab-preview.service`，监听 `127.0.0.1:8790`，使用独立 SQLite，不连接生产数据库或生产 Partner RPC。
 - Cloudflare Tunnel 已新增 `preview-api.yuanyiagentzhandui.cn -> http://127.0.0.1:8790`，并创建 Proxied CNAME；VPS cloudflared 已加载 Tunnel 版本 4。
 - Preview API 的 CORS 正则已支持多级 `workers.dev/pages.dev` Preview 来源；生产 CORS 白名单未改。
-- 账户 5ae 的 `codex/preview-isolation` Workers Preview 已设置：根目录 `frontend/frontend-ui`、构建 `npm ci && npm run build:preview`、部署 `npx wrangler preview`、`VITE_AGENT_API=https://preview-api.yuanyiagentzhandui.cn`。构建 UUID：`91e5d0de-2b9a-46d3-8b80-a985c1a63f25`，结果 success。
+- 账户 5ae 的 `feature/preview-isolation` Workers Preview 已设置：根目录 `frontend/frontend-ui`、构建 `npm ci && npm run build:preview`、部署 `npx wrangler preview`、`VITE_AGENT_API=https://preview-api.yuanyiagentzhandui.cn`。构建 UUID：`91e5d0de-2b9a-46d3-8b80-a985c1a63f25`，结果 success。
 - 公网隔离 API 验收：`/health` 返回 200；CORS 预检返回 200；空 topic 返回 422；合法 low 创建返回 201；完成战局删除返回 204。测试战局已清理，未触碰生产业务数据。
 - 历史说明：部署当时的执行环境直连 `workers.dev` Preview URL 超时。本轮本机现可访问页面并核对 bundle/CORS，但浏览器自动化受运行策略阻止，页面交互仍未验收。
 
@@ -585,7 +585,7 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 
 ### Git 交接待办（2026-10-09）
 
-后端修复已推送到 `codex/team-domain-handoff`：
+后端修复已推送到 `feature/team-domain-handoff`：
 
 - `85218a7`：修复本机 AIP 身份绑定默认值、Windows 代理环境兼容和相关测试。
 - `723133d`：记录正式前端来源 CORS 公网验收。
@@ -602,7 +602,7 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 
 ### Git 交接记录（2026-10-10）
 
-本次记录提交：`26664b0`（分支：`codex/team-domain-handoff`）。
+本次记录提交：`26664b0`（分支：`feature/team-domain-handoff`）。
 
 公网浏览器会话和战局主流程已完成 API 级验收：
 
@@ -816,7 +816,7 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 源站 `47.108.92.113` 的 `deployer` 已配置全量免密 sudo，实测 `sudo -n whoami` 返回 `root`；
 三个业务进程仍分别监听 `127.0.0.1:8787/8788/8789`，443 当前尚未监听。可将
 [`mTLS链路异常修复派活单_20261011.md`](../mTLS链路异常修复派活单_20261011.md) 第五部分直接
-转发给 WorkBuddy/Codex，由其使用 `deployer` 执行源站 mTLS、/rpc 放行、Cloudflare attack/defense
+转发给部署执行方，由其使用 `deployer` 执行源站 mTLS、/rpc 放行、Cloudflare attack/defense
 灰云切换和 Leader/Discovery 回填。验收完成前不得关闭现有 API Key Tunnel，也不得把 HTTPS 200
 描述为真实 mTLS。
 
@@ -875,7 +875,7 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 请队友按以下顺序处理：
 
-1. 审核 `codex/team-domain-handoff` 中的 API 修复提交 `7edf500`，并将经过审核的代码合入部署分支；当前 VPS 为 `61beebe`，其 OpenAPI 尚未包含 `DELETE /battles/{battle_id}`。
+1. 审核 `feature/team-domain-handoff` 中的 API 修复提交 `7edf500`，并将经过审核的代码合入部署分支；当前 VPS 为 `61beebe`，其 OpenAPI 尚未包含 `DELETE /battles/{battle_id}`。
 2. 更新 VPS 后，在安全测试环境验收：空白 `topic` POST 返回 422；合法创建返回 201；已结束战局删除返回 204 并清理事件；运行中战局删除返回 409。
 3. 更新后复验双域名 `/health=200`、无证书 `/rpc=403`、合法 mTLS 调用成功，并确认 Discovery 仍仅收录 Leader 与两个新 Partner。
 4. `battle-694dce7f` 在本机及 VPS 默认战局库均不存在，不要凭旧回执删除其他数据；若在自定义数据库找到，先报告数据源与状态。
@@ -893,9 +893,9 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - 正式 API 本轮只读结果：`/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1` 均为 HTTP 200；`/openapi.json` 已包含 `DELETE /battles/{battle_id}`。未登录请求 `/dashboard` 和战局回放返回 401，符合后台鉴权边界。
 - Partner mTLS 本轮进行了只读复核：attack/defense DNS 均解析至 `47.108.92.113`；VPS nginx、443 listener 和 API/攻击/防守 systemd 用户服务均 active，nginx 配置检查通过。使用本机梧桐 trust bundle，无客户端证书访问两个 `/health` 均为 200、`/rpc` 均为 403；使用 Leader clientAuth 证书访问时 `/health` 均为 200，`/rpc` TLS 握手成功（GET 返回 405，仅说明 GET 方法不适用于 RPC，不代表完成 AIP 调用）。因此较早资料里的 525/不可达与本轮结果不一致；私有 CA 客户端需显式使用梧桐 trust bundle。本轮未调用 Registry/Discovery，也未创建或删除生产战局。
 - 本轮未重新执行 topic 422、battle create/delete 204/409 写接口验收，也未重跑生产 low/mid/high 和桌面/移动全链路；这些结论仍引用本文件前文历史记录。
-- PR #3 文档同步分支 `codex/deployment-status-sync` 的后端测试、前端构建检查、Cloudflare Pages 均通过；Workers Builds 失败。Cloudflare build 记录显示 checkout 后在根目录 `/` 运行 `npx wrangler preview`，未找到前端子目录中的 `frontend/frontend-ui/wrangler.jsonc` 并报缺少 `previews` 配置。仓库中的该配置已有空 `previews` block；需队友确认 Workers Builds 的 root directory/preview command 配置。未修改 Cloudflare 构建设置；启用 Preview 前要确认预览公开性及是否绑定生产资源。
+- PR #3 文档同步分支 `feature/deployment-status-sync` 的后端测试、前端构建检查、Cloudflare Pages 均通过；Workers Builds 失败。Cloudflare build 记录显示 checkout 后在根目录 `/` 运行 `npx wrangler preview`，未找到前端子目录中的 `frontend/frontend-ui/wrangler.jsonc` 并报缺少 `previews` 配置。仓库中的该配置已有空 `previews` block；需队友确认 Workers Builds 的 root directory/preview command 配置。未修改 Cloudflare 构建设置；启用 Preview 前要确认预览公开性及是否绑定生产资源。
 - 本轮没有创建、修改或删除生产战局，没有操作数据库、VPS 配置、Cloudflare 配置、Registry 或 Discovery。生产只读请求未改变服务状态。
-- 当前协作分支仍为 `codex/team-domain-handoff`，HEAD `47d5916`；本机未跟踪队友材料及 WIT wheel 保持原样，不纳入本次同步。长期记忆、凭据、证书/私钥、数据库、日志、JSONL 和私有发行物禁止提交。
+- 当前协作分支仍为 `feature/team-domain-handoff`，HEAD `47d5916`；本机未跟踪队友材料及 WIT wheel 保持原样，不纳入本次同步。长期记忆、凭据、证书/私钥、数据库、日志、JSONL 和私有发行物禁止提交。
 
 下一步：由负责人安排隔离测试数据源，验证空白 topic 返回 422、合法创建返回 201、已完成战局删除返回 204 且关联事件清理、运行中战局删除返回 409；避免对生产业务数据做破坏性验收。若尚无隔离环境，先由队友确认测试环境/数据库，不创建或删除生产战局。
 

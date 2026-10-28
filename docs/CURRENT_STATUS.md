@@ -77,8 +77,8 @@
 
 ## PR #3 Preview 更新（2026-10-12）
 
-- Cloudflare Workers Builds trigger 仅匹配 `codex/deployment-status-sync`；`root_directory` 已改为 `/frontend/frontend-ui`，`build_command` 为 `npm run build`，保留 `npx wrangler preview`。未改生产部署命令、DNS 或其他分支。
-- 提交 `9b34aacebc2f31aff3783ce2a9245cf56208da54` 的 Preview 构建成功，GitHub PR #3 的 Workers Builds 检查已通过。Preview URL：`https://codex-deployment-status-sync-agent-attack-lab.3498414260.workers.dev`，公网 GET 返回 200。
+- Cloudflare Workers Builds trigger 仅匹配 `feature/deployment-status-sync`；`root_directory` 已改为 `/frontend/frontend-ui`，`build_command` 为 `npm run build`，保留 `npx wrangler preview`。未改生产部署命令、DNS 或其他分支。
+- 提交 `9b34aacebc2f31aff3783ce2a9245cf56208da54` 的 Preview 构建成功，GitHub PR #3 的 Workers Builds 检查已通过。Preview URL：`(分支 Preview 地址，随分支删除已失效)`，公网 GET 返回 200。
 - 后续交接文档提交 `43e2f50d25605df96af10c6f67fc709be1f48ca1` 的自动 Preview build `fa2e3b8f-b976-49fa-80be-c8f3295270b9` 也成功，PR #3 后端、前端、Pages、Workers Builds 四项检查均通过。
 - Preview URL 目前公开可访问。该构建没有设置 `VITE_AGENT_API`；前端默认 API 地址是 `http://127.0.0.1:8787`，即访问者自己的本机地址。虽然生产 API `/health` 当前返回 200，Preview 未连接生产 API，避免公开预览的写请求进入生产数据。端到端前后端联调需另设隔离 API 环境。
 - 本地已增加 `npm run build:preview` 和 `frontend/frontend-ui/preview.env.example`；该构建强制使用独立 HTTPS API，并拒绝正式 API、localhost 和缺失配置。公开 Preview 若未配置 API，运行时会阻止请求，不再回退到访问者本机。
@@ -86,7 +86,7 @@
 ## 代码与发布
 
 - PR #2 已于 2026-10-11 合并，合并提交 `ae959fb`，PR head 为 `47d5916`；后端、前端、Cloudflare Pages、Workers Builds 四项检查均成功。
-- 当前本地协作分支 `codex/team-domain-handoff` 指向 `47d5916`，与对应 origin 分支同步。
+- 当前本地协作分支 `feature/team-domain-handoff` 指向 `47d5916`，与对应 origin 分支同步。
 - 前端正式域名 `https://yuanyiagentzhandui.cn` 与 `https://www.yuanyiagentzhandui.cn` 本轮只读请求均返回 200，首页引用 bundle `index-BzFvd3kT.js`。检查该 bundle 未发现密码表单、`/auth/session` 调用或管理员登录文案；公开前端不设浏览器密码。
 - API 正式地址 `https://api.yuanyiagentzhandui.cn`：本轮 `/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1` 均返回 200；OpenAPI 包含 `DELETE /battles/{battle_id}`。
 - 后台 `/dashboard` 和战局回放接口未登录均返回 401，后台鉴权仍保留。此次未对生产发送创建、更新或删除请求。
