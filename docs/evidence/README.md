@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 1 | 开源项目/SDK/示例的名称、仓库链接、版本或 commit；复用与自主改造范围 | 部分 | `01-open-source-baseline.md`；**缺**上游公开仓库地址（私有发布包） |
 | 2 | 改造前后对照：文件/函数/接口字段、原因、效果、测试依据 | 已有 | `JUDGE_OPENSOURCE_REWORK.md`、`MATERIAL_OPENSOURCE_REWORK.md`、`git log` |
-| 3 | 平台后台 Agent 注册状态及能力声明截图 | 缺口 | 需平台后台账号；本机浏览器有登录态，可截取（见 §三） |
+| 3 | 平台后台 Agent 注册状态及能力声明截图 | 缺口 | 需**梧桐平台后台**（wt.ioa.pub）账号，与本站 admin 不是同一套 |
 | 4 | Discovery 自动发现响应日志 | 已有 | `raw/discovery-response.json`（2026-10-28 13:55 实测，200，7.5 KB） |
 | 5 | AIP Start/Complete 请求与响应记录（来源、时间、关联 ID） | 部分 | 战局详情里的 `agentSource` + `battleId` 构成调用链；**缺**原始 AIP 报文 |
 | 6 | 跨智能体双向调用真实记录，与同一战局/调用链对应 | 部分 | `03-battle-chain.md`：A-083~A-087 三路来源同 `battleId`；**缺**平台→我们的入站记录 |
@@ -18,7 +18,7 @@
 | 8 | 规则模式无外部模型 API Key 的完整演示证据 | 部分 | A-085/086/087 防守已是 `local-rule-fallback`；完整演示需断 Key 跑一局 |
 | 9 | 局部测试结果、范围、命令与日期；历史与复测分开 | 已有 | `05-test-evidence.md`（240 passed, 2026-10-28） |
 | 10 | off/simulated/live 边界测试；不把结果包装成真实目标胜负 | 已有 | `04-mode-boundary.md`（`scopeNotice` 字段为运行时自证） |
-| 11 | 3D 回放与持久化事件对应的截图或录屏 | 缺口 | 需打开前端回放页截图（本机可做，见 §三） |
+| 11 | 3D 回放与持久化事件对应的截图或录屏 | 缺口 | 本站 admin 已恢复（`/admin/` 200），但进入回放页需**管理密码** |
 | 12 | 源码包部署说明、依赖、配置示例、启动步骤、脱敏说明 | 部分 | `DEPLOYMENT.md`、`INTEGRATION_GUIDE.md`；**缺**合并版与脱敏清单 |
 
 统计：**已有 4 项、部分 5 项、缺口 3 项**。
