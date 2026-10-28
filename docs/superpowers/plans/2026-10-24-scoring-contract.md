@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python, FastAPI, SQLite/MySQL/PostgreSQL SQL branches, Alembic, React/TypeScript, Vitest, pytest.
 
-**Spec:** `codex/CODEX_TASK_20261024_scoring_contract.md`
+**Spec:** 2026-10-24 评分合约设计说明（内部文档）
 
 ## Global Constraints
 

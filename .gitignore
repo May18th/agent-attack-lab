@@ -26,7 +26,6 @@ backend/acps-cli.toml
 artifacts/
 
 # Local tools, reports, build snapshots, and environment backups
-.workbuddy/
 /tools/
 backend/.env.bak*
 /index-*.js
@@ -36,9 +35,6 @@ backend/.env.bak*
 
 # Node dependencies (root and nested)
 node_modules/
-
-# Codex local handoff state
-codex/
 
 # Local editor and OS files
 .vscode/
