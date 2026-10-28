@@ -449,7 +449,7 @@ describe('AdminApp', () => {
     expect(screen.getByText(/未取得验证证据/)).toBeInTheDocument()
     expect(screen.getByText('回合明细（2 轮）')).toBeInTheDocument()
     expect(screen.getByText('请求 3 轮，实际产出 2 轮')).toBeInTheDocument()
-    expect(screen.getAllByText('已拦截').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/已拦截/).length).toBeGreaterThan(0)
     expect(screen.getAllByText('穿透（规则推定，目标未验证）').length).toBeGreaterThan(0)
     expect(screen.getAllByText('证据不足').length).toBeGreaterThan(0)
     expect(screen.getAllByText('事件 ID 重复').length).toBeGreaterThan(0)
