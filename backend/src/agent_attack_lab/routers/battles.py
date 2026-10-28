@@ -52,7 +52,7 @@ from agent_attack_lab.scoring import score_battle_rounds
 from agent_attack_lab.target_verify import (
     aggregate_verdict,
     configured_verify_mode,
-    verify_round,
+    verify_round_live,
 )
 
 router = APIRouter()
@@ -295,7 +295,9 @@ async def create_battle(
                 round_number=index,
                 stage_id="DEFENSE",
             )
-            verification = verify_round(sample, defense, mode=verification_mode)
+            verification = await verify_round_live(
+                sample, defense, mode=verification_mode
+            )
             verifications.append(verification)
             for key in ("attackSuccess", "defenseSuccess"):
                 if isinstance(verification.get(key), bool):

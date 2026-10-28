@@ -133,7 +133,7 @@ jobs:
           upsert AGENT_REPORT_LLM_ENABLED "1"
           upsert AGENT_RULE_DISCOVERY_LLM_ENABLED "1"
           upsert AGENT_AMP_ENABLED "1"
-          upsert AGENT_TARGET_VERIFY_MODE "simulated"
+          upsert AGENT_TARGET_VERIFY_MODE "live"
           printf 'injected model and AMP settings into %s\n' "$env_file"
 
       - name: 部署、迁移并验收

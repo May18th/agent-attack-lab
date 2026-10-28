@@ -128,3 +128,71 @@ async def complete_json(
     if not isinstance(result, dict):
         raise LLMError("model response is not a JSON object")
     return result
+
+
+async def complete_text(
+    system_prompt: str,
+    user_text: str,
+    *,
+    role: str | None = None,
+) -> str:
+    """Call the configured chat endpoint and return plain text.
+
+    The controlled target must answer like a real service, so it cannot be
+    forced into JSON mode the way the agent roles are.
+    """
+    prefix = _selected_prefix(role)
+    if not _configured(prefix):
+        raise LLMError("model is not configured")
+    body = {
+        "model": os.environ[prefix + "MODEL"].strip(),
+        "temperature": 0.2,
+        "max_tokens": int(_setting(prefix, "MAX_TOKENS", "800")),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ],
+    }
+    try:
+        timeout = httpx.Timeout(float(_setting(prefix, "TIMEOUT_SECONDS", "20")))
+        retries = min(max(int(_setting(prefix, "RETRIES", "1")), 0), 2)
+    except ValueError:
+        raise LLMError("invalid model timeout or retry count") from None
+    for attempt in range(retries + 1):
+        started = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                response = await client.post(
+                    _endpoint(prefix),
+                    headers={
+                        "Authorization": f"Bearer {os.environ[prefix + 'API_KEY'].strip()}",
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                )
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"]["content"]
+            if not isinstance(content, str) or not content.strip():
+                raise LLMError("model returned an empty reply")
+            logger.info(
+                "model_text_completed role=%s duration_ms=%d attempt=%d",
+                role or "shared",
+                int((time.perf_counter() - started) * 1000),
+                attempt + 1,
+            )
+            return content
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            logger.warning(
+                "model_text_failed role=%s duration_ms=%d attempt=%d error=%s",
+                role or "shared",
+                int((time.perf_counter() - started) * 1000),
+                attempt + 1,
+                type(exc).__name__,
+            )
+            retryable = (
+                not isinstance(exc, httpx.HTTPStatusError)
+                or exc.response.status_code >= 500
+            )
+            if attempt >= retries or not retryable:
+                raise LLMError(f"model request failed ({type(exc).__name__})") from None
+    raise LLMError("model request failed")

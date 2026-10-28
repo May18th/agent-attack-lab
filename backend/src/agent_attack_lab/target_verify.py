@@ -13,6 +13,8 @@ import os
 import re
 from typing import Any, Literal
 
+from agent_attack_lab.targets.controlled_target import probe_target
+
 VerifyMode = Literal["off", "simulated", "live"]
 _SIMULATABLE_RULES = {
     "LAB-SQLI-001",
@@ -167,11 +169,6 @@ def verify_round(
         "targetAssetId": None,
         "evidence": [],
     }
-    if selected_mode == "off":
-        return {**base, "reason": "verification_disabled"}
-    if selected_mode == "live":
-        return {**base, "reason": "no_live_adapter"}
-
     explicit = {}
     if isinstance(config, dict):
         explicit = config
@@ -179,27 +176,48 @@ def verify_round(
         defense.get("targetVerification"), dict
     ):
         explicit = defense["targetVerification"]
+
+    if selected_mode == "off":
+        return {**base, "reason": "verification_disabled"}
     if not explicit:
-        # 显式靶标优先；没有显式结果时交给内置的模拟靶标判定。
+        if selected_mode == "live":
+            return {**base, "reason": "no_live_adapter"}
+        # 没有显式靶标结果时交给内置的模拟靶标判定。
         return _simulated_target(sample, defense, base)
+
     attack_success = explicit.get("attackSuccess")
     defense_success = explicit.get("defenseSuccess")
+    if isinstance(explicit.get("targetAssetId"), str):
+        base["targetAssetId"] = explicit["targetAssetId"]
     if isinstance(attack_success, bool):
         base["attackSuccess"] = attack_success
     if isinstance(defense_success, bool):
         base["defenseSuccess"] = defense_success
-    if attack_success is not True:
-        return {**base, "reason": "no_simulated_target_adapter"}
+    reason = explicit.get("reason")
+    reason_text = reason if isinstance(reason, str) and reason else None
     evidence = explicit.get("evidence")
-    if not isinstance(evidence, list) or not evidence:
-        return {**base, "reason": "missing_target_success_evidence"}
-    return {
-        **base,
-        "verified": True,
-        "attackSuccess": True,
-        "evidence": evidence,
-        "reason": "simulated_target_success",
-    }
+    evidence_list = evidence if isinstance(evidence, list) else []
+    if attack_success is True:
+        if not evidence_list:
+            return {**base, "reason": "missing_target_success_evidence"}
+        return {
+            **base,
+            "verified": True,
+            "evidence": evidence_list,
+            "reason": reason_text or "target_success",
+        }
+    if attack_success is False and defense_success is True:
+        # 目标明确拒绝 = 已实际执行过一次验证，只是结果是被拦下。
+        return {
+            **base,
+            "verified": True,
+            "evidence": evidence_list,
+            "reason": reason_text or "target_blocked",
+        }
+    fallback = (
+        "no_live_adapter" if selected_mode == "live" else "no_simulated_target_adapter"
+    )
+    return {**base, "reason": reason_text or fallback}
 
 
 def aggregate_verdict(
@@ -222,3 +240,17 @@ def aggregate_verdict(
     ):
         return "defender_won"
     return "undetermined"
+
+
+async def verify_round_live(
+    sample: dict[str, Any],
+    defense: dict[str, Any],
+    *,
+    mode: VerifyMode | None = None,
+) -> dict[str, Any]:
+    """Run verification for one round, calling the controlled target in live mode."""
+    selected_mode = mode or configured_verify_mode()
+    if selected_mode != "live":
+        return verify_round(sample, defense, mode=selected_mode)
+    probe = await probe_target(sample)
+    return verify_round(sample, defense, mode="live", config=probe)

@@ -40,7 +40,7 @@ from agent_attack_lab.scoring import score_battle_rounds
 from agent_attack_lab.target_verify import (
     aggregate_verdict,
     configured_verify_mode,
-    verify_round,
+    verify_round_live,
 )
 
 if TYPE_CHECKING:
@@ -354,7 +354,9 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 round_number=index,
                 stage_id="DEFENSE",
             )
-            verification = verify_round(sample, defense, mode=verification_mode)
+            verification = await verify_round_live(
+                sample, defense, mode=verification_mode
+            )
             if isinstance(verification.get("attackSuccess"), bool):
                 defense["attackSuccess"] = verification["attackSuccess"]
             if isinstance(verification.get("defenseSuccess"), bool):
