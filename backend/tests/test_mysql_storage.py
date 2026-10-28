@@ -124,3 +124,41 @@ def test_mysql_store_uses_mysql_pool_schema_and_queries(monkeypatch) -> None:
     )
     store.close()
     assert engine.disposed is True
+
+
+def test_mysql_admin_rule_sql_quotes_reserved_words(monkeypatch) -> None:
+    """condition/action 是 MySQL 保留字，三处 SQL 都必须反引号转义。
+
+    这是生产事故的回归点：规则库列表在无搜索词时不碰这两列，所以“页面能打开”，
+    但 INSERT/UPDATE 一直语法报错，规则写不进去、自动示例库也就补不上。
+    """
+    import sqlalchemy
+
+    engine = _Engine()
+    monkeypatch.setattr(sqlalchemy, "create_engine", lambda url, **kwargs: engine)
+
+    store = BattleStore("mysql://lab_user:test_password@db.example.test/attack_lab")
+    store.save_admin_rule(
+        {"name": "保留字", "condition": "ignore previous", "action": "拦截"}
+    )
+    store.list_admin_rules("保留字")
+    store.update_admin_rule("rule-1", {"condition": "x", "action": "放行"})
+
+    statements = [statement for statement, _parameters in engine.calls]
+    insert = next(s for s in statements if "INSERT INTO admin_rules" in s)
+    assert "`condition`" in insert
+    assert "`action`" in insert
+    assert "name, condition" not in insert
+
+    search = next(s for s in statements if "FROM admin_rules" in s and "LIKE" in s)
+    assert "`condition` LIKE" in search
+
+    update = next(s for s in statements if s.startswith("UPDATE admin_rules"))
+    assert "`condition` = %s" in update
+    assert "`action` = %s" in update
+
+    create = next(
+        s for s in statements if "CREATE TABLE IF NOT EXISTS admin_rules" in s
+    )
+    assert "`condition` TEXT NOT NULL" in create
+    assert "`action` TEXT NOT NULL" in create
