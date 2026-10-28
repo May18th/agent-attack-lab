@@ -2438,51 +2438,52 @@ var battle3d=(function(){
 
   /* ============ 计分图表 ============ */
   var pie=echarts.init(document.getElementById('pieChart'));
-  function pieOption(block,escape,emptyLabel){
+  function pieOption(block,escape){
     var total=block+escape;
     var blockPct=total?block/total*100:0;
     var escapePct=total?escape/total*100:0;
-    var centerText=total?'{block|拦截 '+blockPct.toFixed(2)+'%}\n{escape|逃逸 '+escapePct.toFixed(2)+'%}':'{empty|'+(emptyLabel||'暂无可分类结果')+'}';
-    return {backgroundColor:'transparent',tooltip:{trigger:'item',formatter:'{b}: {d}%'},graphic:[{type:'text',left:'center',top:'middle',silent:true,style:{text:centerText,textAlign:'center',textVerticalAlign:'middle',fontSize:12,fontWeight:700,lineHeight:21,rich:{block:{fill:'#7fd49b',align:'center'},escape:{fill:'#ff6b6b',align:'center'},empty:{fill:'#8190a0',align:'center',fontSize:11}}}}],series:[{type:'pie',radius:['56%','84%'],center:['50%','53%'],showEmptyCircle:true,emptyCircleStyle:{color:'#253140'},avoidLabelOverlap:true,label:{show:false},labelLine:{show:false},itemStyle:{borderColor:'#1a2230',borderWidth:2},data:total?[
+    var centerText='{block|拦截 '+blockPct.toFixed(2)+'%}\n{escape|逃逸 '+escapePct.toFixed(2)+'%}';
+    return {backgroundColor:'transparent',tooltip:{trigger:'item',formatter:'{b}: {d}%'},graphic:[{type:'text',left:'center',top:'middle',silent:true,style:{text:centerText,textAlign:'center',textVerticalAlign:'middle',fontSize:12,fontWeight:700,lineHeight:21,rich:{block:{fill:'#7fd49b',align:'center'},escape:{fill:'#ff6b6b',align:'center'}}}}],series:[{type:'pie',radius:['56%','84%'],center:['50%','53%'],showEmptyCircle:true,emptyCircleStyle:{color:'#253140'},avoidLabelOverlap:true,label:{show:false},labelLine:{show:false},itemStyle:{borderColor:'#1a2230',borderWidth:2},data:[
       {value:block,name:'拦截',itemStyle:{color:'#7fd49b'}},
       {value:escape,name:'逃逸',itemStyle:{color:'#ff6b6b'}}
-    ]:[]}]};
+    ]}]} ;
   }
   pie.setOption(pieOption(0,0));
   var line=echarts.init(document.getElementById('lineChart'));
   function emptyChartGraphic(id,message,show){return [{id:id,type:'text',left:'center',top:'middle',silent:true,invisible:!show,style:{text:message,textAlign:'center',fill:'#68717e',fontSize:11}}];}
-  line.setOption({backgroundColor:'transparent',tooltip:{trigger:'axis'},grid:{left:58,right:26,top:34,bottom:42,containLabel:false},graphic:emptyChartGraphic('line-empty','等待回合评分',true),xAxis:{type:'category',data:[],boundaryGap:true,axisLine:{lineStyle:{color:'#26303f'}},axisLabel:{color:'#9aa6b2'}},yAxis:{type:'value',min:0,max:100,interval:10,name:'综合分',nameLocation:'middle',nameGap:40,nameTextStyle:{color:'#68717e',fontSize:11},splitLine:{lineStyle:{color:'#1a2230'}},axisLabel:{color:'#68717e',margin:8}},series:[{name:'Attacker',type:'line',smooth:true,data:[],symbolSize:7,lineStyle:{width:3,color:'#ff8f6b'},itemStyle:{color:'#ff8f6b'}},{name:'Defender',type:'line',smooth:true,data:[],symbolSize:7,lineStyle:{width:3,color:'#9fc4ff'},itemStyle:{color:'#9fc4ff'}}]});
+  line.setOption({backgroundColor:'transparent',tooltip:{trigger:'axis'},grid:{left:58,right:26,top:34,bottom:42,containLabel:false},xAxis:{type:'category',data:['R1'],boundaryGap:true,axisLine:{lineStyle:{color:'#26303f'}},axisLabel:{color:'#9aa6b2'}},yAxis:{type:'value',min:0,max:100,interval:10,name:'综合分',nameLocation:'middle',nameGap:40,nameTextStyle:{color:'#68717e',fontSize:11},splitLine:{lineStyle:{color:'#1a2230'}},axisLabel:{color:'#68717e',margin:8}},series:[{name:'Attacker',type:'line',smooth:true,data:[0],symbolSize:7,lineStyle:{width:3,color:'#ff8f6b'},itemStyle:{color:'#ff8f6b'}},{name:'Defender',type:'line',smooth:true,data:[0],symbolSize:7,lineStyle:{width:3,color:'#9fc4ff'},itemStyle:{color:'#9fc4ff'}}]});
   var bar=echarts.init(document.getElementById('barChart'));
   bar.setOption({backgroundColor:'transparent',grid:{left:'16%',right:'16%',top:34,bottom:26},graphic:emptyChartGraphic('bar-empty','等待回合评分',true),xAxis:{type:'category',data:['Attacker','Defender'],axisLine:{show:false},axisTick:{show:false},axisLabel:{show:true,color:'#8190a0',fontSize:10}},yAxis:{type:'value',min:0,max:100,axisLabel:{show:false},splitLine:{show:false}},series:[{type:'bar',barWidth:44,data:[
-    {value:null,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},
-    {value:null,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}
-  ],label:{show:true,position:'top',color:'#c8d0dc',fontSize:12,fontWeight:600,formatter:function(p){return p.value==null?'':Number(p.value).toFixed(1);}}}]});
+    {value:0,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},
+    {value:0,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}
+  ],label:{show:true,position:'top',color:'#c8d0dc',fontSize:12,fontWeight:600}}]});
 
   function setLiveVisualizationState(detail){
     if(!detail||detail.status==='loading'){
       document.getElementById('ratePayload').textContent='0%';
       document.getElementById('rateDefender').textContent='0%';
       document.getElementById('avgResp').textContent='0.00 s';
-      pie.setOption(pieOption(0,0,'等待回合结果'));
-      line.setOption({graphic:emptyChartGraphic('line-empty','等待回合评分',true),xAxis:{data:[]},series:[{data:[]},{data:[]}]});
-      bar.setOption({graphic:emptyChartGraphic('bar-empty','等待回合评分',true),series:[{data:[{value:null,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},{value:null,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}]}]});
+      pie.setOption(pieOption(0,0));
+      line.setOption({graphic:emptyChartGraphic('line-empty','等待回合评分',false),xAxis:{data:['R1']},series:[{data:[0]},{data:[0]}]});
+      bar.setOption({graphic:emptyChartGraphic('bar-empty','等待回合评分',false),series:[{data:[{value:0,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},{value:0,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}]}]});
       return;
     }
     if(detail.status!=='ready'){
       document.getElementById('ratePayload').textContent='0%';
       document.getElementById('rateDefender').textContent='0%';
       document.getElementById('avgResp').textContent='0.00 s';
-      pie.setOption(pieOption(0,0,'读取结果失败'));
-      line.setOption({graphic:emptyChartGraphic('line-empty','评分数据暂不可用',true),xAxis:{data:[]},series:[{data:[]},{data:[]}]});
-      bar.setOption({graphic:emptyChartGraphic('bar-empty','评分数据暂不可用',true),series:[{data:[{value:null},{value:null}]}]});
+      pie.setOption(pieOption(0,0));
+      line.setOption({graphic:emptyChartGraphic('line-empty','评分数据暂不可用',false),xAxis:{data:['R1']},series:[{data:[0]},{data:[0]}]});
+      bar.setOption({graphic:emptyChartGraphic('bar-empty','评分数据暂不可用',false),series:[{data:[{value:0},{value:0}]}]});
       return;
     }
     var points=Array.isArray(detail.points)?detail.points:[];
     var labels=points.map(function(point){return 'R'+point.round;});
     var attacker=points.map(function(point){return typeof point.attacker==='number'?point.attacker:null;});
     var defender=points.map(function(point){return typeof point.defender==='number'?point.defender:null;});
-    pie.setOption(pieOption(Number(detail.interceptedRounds||0),Number(detail.escapedRounds||0),'暂无可分类结果'));
+    pie.setOption(pieOption(Number(detail.interceptedRounds||0),Number(detail.escapedRounds||0)));
     var hasScore=attacker.some(function(value){return value!==null;})||defender.some(function(value){return value!==null;});
+    if(!points.length){labels=['R1'];attacker=[0];defender=[0];hasScore=true;}
     line.setOption({graphic:emptyChartGraphic('line-empty','暂无评分证据',!hasScore),xAxis:{data:labels},series:[{data:attacker},{data:defender}]});
     var attackerResponse=typeof detail.averageResponseScore?.attacker==='number'?detail.averageResponseScore.attacker:null;
     var defenderResponse=typeof detail.averageResponseScore?.defender==='number'?detail.averageResponseScore.defender:null;
