@@ -587,6 +587,27 @@ describe('AdminApp', () => {
     expect(screen.queryByText('http.request')).not.toBeInTheDocument()
   })
 
+  it('spells out which agent call happened instead of only "调用完成"', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.listAdminAuditLogs).mockResolvedValue([
+      { id: 'a-9', createdAt: '2026-10-28T13:59:31Z', actorRole: 'defender', eventType: 'agent.call.completed', status: 'completed', data: { agentRole: 'defender', round: 2, stageId: 'DEFENSE', resultSource: 'acp-rule-fallback', durationMs: 2788 } },
+    ] as never)
+    render(<AdminApp />)
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
+    fireEvent.click(screen.getByRole('tab', { name: '审计日志' }))
+
+    expect(
+      await screen.findByText('防守方智能体调用完成：第 2 轮 · 阶段 DEFENSE · 来源 acp-rule-fallback · 耗时 2788 ms'),
+    ).toBeInTheDocument()
+    // 角色列也要能读懂，而不是显示 defender
+    expect(screen.getByText('防守方')).toBeInTheDocument()
+  })
+
   it('exports the survey CSV from the management module and reports how many responses were included', async () => {
     vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
     vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)

@@ -2692,3 +2692,23 @@ def test_rate_limit_returns_retry_after(monkeypatch) -> None:
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.headers["Retry-After"].isdigit()
+
+
+def test_rounds_expose_defender_source_and_verification_status(
+    tmp_path, monkeypatch
+) -> None:
+    """回合明细要能直接读出"谁判的、依据什么、有没有连到真实目标"。"""
+    store = BattleStore(str(tmp_path / "rounds-source.sqlite3"))
+    monkeypatch.setattr(state, "battle_store", store)
+    monkeypatch.setattr(battle_routes, "configured_verify_mode", lambda: "off")
+    response = client.post(
+        "/battles", json={"topic": "提示注入", "difficulty": "low", "rounds": 1}
+    )
+    assert response.status_code == 201
+    battle = response.json()
+
+    rounds = client.get(f"/battles/{battle['id']}/rounds").json()["rounds"]
+
+    assert rounds[0]["defenderSource"] == "local-rule"
+    assert "真实目标未验证" in rounds[0]["verificationStatus"]
+    assert rounds[0]["classification"]

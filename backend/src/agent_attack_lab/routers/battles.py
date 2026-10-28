@@ -374,6 +374,11 @@ async def create_battle(
                 "defenderSource": defender_source,
                 "analysisMode": defense.get("analysisMode"),
                 "verificationStatus": defense.get("verificationStatus"),
+                "verificationMode": defense.get("verificationMode"),
+                "verificationTarget": defense.get("verificationTarget"),
+                "verificationEvidence": defense.get("verificationEvidence"),
+                "targetProfile": defense.get("targetProfile"),
+                "baselineAttackSuccess": defense.get("baselineAttackSuccess"),
                 "scopeNotice": defense.get("scopeNotice"),
                 "arbiterReview": arbiter_review,
                 "correlationId": defense_call_id,
@@ -801,6 +806,23 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
             ):
                 if data.get(key) is not None:
                     item[key] = data[key]
+            # 取证相关：这一轮是谁判的、依据什么、是否连到了真实目标。
+            # 缺了这些字段，回放里只能看到"命中几条规则"，说不清来源与边界。
+            for key in (
+                "defenderSource",
+                "analysisMode",
+                "verificationStatus",
+                "verificationMode",
+                "verificationTarget",
+                "scopeNotice",
+                "classification",
+                "targetProfile",
+                "baselineAttackSuccess",
+            ):
+                if data.get(key) is not None:
+                    item[key] = data[key]
+            if isinstance(data.get("verificationEvidence"), list):
+                item["verificationEvidence"] = data["verificationEvidence"]
             if isinstance(data.get("safeControl"), dict):
                 item["safeControl"] = data["safeControl"]
             if isinstance(data.get("durationMs"), (int, float)):

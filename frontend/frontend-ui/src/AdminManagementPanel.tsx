@@ -90,6 +90,17 @@ const auditSummary = (log: AdminAuditLog): string => {
     return `${actor}载入内置示例${[created, rules].filter(Boolean).length ? `：${[created, rules].filter(Boolean).join('、')}` : ''}`
   }
   const event = labelOf(log.eventType, EVENT_LABELS, log.eventType)
+  if (log.eventType.startsWith('agent.call.')) {
+    // 智能体调用是审计里量最大的业务事件：只写"调用完成"等于没写，
+    // 至少要能看出谁、第几轮、哪个阶段、走了模型还是规则、花了多久。
+    const role = labelOf(data.agentRole, ACTOR_LABELS, String(data.agentRole ?? '智能体'))
+    const round = typeof data.round === 'number' ? `第 ${data.round} 轮` : ''
+    const stage = typeof data.stageId === 'string' ? `阶段 ${data.stageId}` : ''
+    const source = typeof data.resultSource === 'string' ? `来源 ${data.resultSource}` : ''
+    const cost = typeof data.durationMs === 'number' ? `耗时 ${Math.round(data.durationMs)} ms` : ''
+    const parts = [round, stage, source, cost].filter(Boolean)
+    return `${role}${event}${parts.length ? `：${parts.join(' · ')}` : ''}`
+  }
   const subject = [data.topic, data.name, data.battleCode].find((value) => typeof value === 'string' && value.trim())
   const id = [data.battleId, data.sampleId, data.ruleId].find((value) => typeof value === 'string' && value)
   if (subject && id) return `${actor}${event}：${subject}（${id}）`

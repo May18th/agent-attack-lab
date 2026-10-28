@@ -56,6 +56,7 @@ export const AUDIT_STATUS_LABELS: Record<string, string> = {
 /** 审计日志 actorRole 取值的中文名。 */
 export const ACTOR_LABELS: Record<string, string> = {
   admin: '管理员', operator: '操作员', public: '前台用户', system: '系统', http: '接口调用',
+  attacker: '攻击方', defender: '防守方', arbiter: '裁决方', target: '靶标',
 }
 
 /** 审计日志字段说明，用于页面顶部的「怎么看」提示。 */
