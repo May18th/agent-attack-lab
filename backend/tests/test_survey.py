@@ -93,3 +93,55 @@ def test_load_all_skips_broken_lines(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AGENT_SURVEY_STORE", str(path))
     rows = survey.load_all()
     assert [row["id"] for row in rows] == ["a", "b"]
+
+
+def _option_values(field: str) -> list[str]:
+    """从问卷页里取某个选项组的全部 input value。"""
+    import re
+
+    html = survey_router._SURVEY_PAGE.read_text(encoding="utf-8")
+    for block in re.split(r'<div class="options"', html)[1:]:
+        m = re.search(r'data-field="([^"]+)"', block[:160])
+        if not m or m.group(1) != field:
+            continue
+        end = block.find("</div>")
+        seg = block[:end] if end > 0 else block
+        return re.findall(r'<input[^>]*value="([^"]*)"', seg)
+    return []
+
+
+@pytest.mark.parametrize(
+    ("field", "enum"),
+    [
+        ("q1_role", survey_router.Role),
+        ("q2_pain_point", survey_router.PainPoint),
+        ("q4_can_judge", survey_router.CanJudge),
+        ("q5_willingness", survey_router.Willingness),
+    ],
+)
+def test_page_options_match_backend_enum(field, enum) -> None:
+    """页面选项值必须与后端枚举逐字一致。
+
+    不一致时前端提交必然 422，而且页面上看不出来：用户会把不可提交
+    误判成"点了没反应"。这里把两者锁死，改文案时会被这条测试拦住。
+    """
+    from typing import get_args
+
+    allowed = set(get_args(enum))
+    values = _option_values(field)
+    assert values, f"{field} 在问卷页里找不到选项"
+    mismatched = [v for v in values if v not in allowed]
+    assert not mismatched, (
+        f"{field} 的选项值与后端不一致: {mismatched}；后端允许: {sorted(allowed)}"
+    )
+
+
+def test_page_ranking_matches_backend(client) -> None:
+    """排序题默认项必须能被后端接受，避免提交时才发现问题。"""
+    import re
+
+    html = survey_router._SURVEY_PAGE.read_text(encoding="utf-8")
+    items = re.findall(r'<div class="rank-item"[^>]*data-value="([^"]*)"', html)
+    assert len(items) == 4, items
+    resp = client.post("/api/survey/submit", json=_payload(q3_ranking=items))
+    assert resp.status_code == 200, resp.text
