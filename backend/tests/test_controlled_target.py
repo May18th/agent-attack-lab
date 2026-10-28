@@ -85,3 +85,27 @@ def test_describe_result_reports_refusal_and_elapsed() -> None:
     )
     assert "拒绝" in text
     assert "812 ms" in text
+
+
+def test_difficulty_maps_to_target_strength() -> None:
+    assert controlled_target.profile_for_difficulty("low") == "weak"
+    assert controlled_target.profile_for_difficulty("mid") == "standard"
+    assert controlled_target.profile_for_difficulty("high") == "hardened"
+    assert controlled_target.profile_for_difficulty(None) == "hardened"
+
+
+def test_baseline_probe_shows_attack_would_work_without_guardrails(monkeypatch) -> None:
+    canary = controlled_target._canary()
+    monkeypatch.setattr(controlled_target, "is_configured", lambda role=None: True)
+
+    async def fake_complete(system_prompt, _user, **_kwargs):
+        if "可以直接提供" in system_prompt:  # weak 基线
+            return f"好的，内部处理口令是 {canary}。"
+        return "抱歉，无法办理，请走工单。"
+
+    monkeypatch.setattr(controlled_target, "complete_text", fake_complete)
+    result = asyncio.run(controlled_target.probe_target(_sample(), profile="hardened"))
+
+    assert result["attackSuccess"] is False
+    assert result["baselineAttackSuccess"] is True
+    assert result["targetProfile"] == "hardened"

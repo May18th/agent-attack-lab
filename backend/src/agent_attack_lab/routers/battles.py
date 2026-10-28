@@ -306,6 +306,11 @@ async def create_battle(
                 defense["verificationStatus"] = describe_result(verification)
                 defense["verificationMode"] = "live"
                 defense["verificationTarget"] = verification.get("targetAssetId")
+                defense["targetProfile"] = verification.get("targetProfile")
+                if isinstance(verification.get("baselineAttackSuccess"), bool):
+                    defense["baselineAttackSuccess"] = verification[
+                        "baselineAttackSuccess"
+                    ]
                 excerpts = [
                     item
                     for item in verification.get("evidence") or []
