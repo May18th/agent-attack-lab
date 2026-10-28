@@ -57,8 +57,8 @@
     .col-main{min-height:620px}
     .col-main .battle-visual-panel{height:100%;min-height:620px}
     .side-right{display:flex;flex-direction:column;min-height:620px}
-    .side-right>div[style*="margin-top:14px"]{display:flex;flex:1;min-height:0;margin-top:14px!important}
-    .side-right .timeline{height:auto;min-height:520px;flex:1}
+    .side-right .timeline-slot{height:520px;flex:0 0 520px;margin-top:14px}
+    .side-right .timeline{height:100%;min-height:0;flex:none}
   }
   .layout>div:last-child{align-self:start}
   .col-main{display:grid;grid-template-columns:1fr;gap:14px}
@@ -313,8 +313,9 @@
   .memory-help:last-child .memory-help-pop{left:auto;right:0;transform:translateY(4px)}.memory-help:last-child:hover .memory-help-pop,.memory-help:last-child:focus-within .memory-help-pop{transform:translateY(0)}
 
   /* ===== 实时时间线 div（固定尺寸位置）===== */
-  .timeline{height:420px;width:100%;min-width:0;background:radial-gradient(circle at 0 65%,rgba(255,73,45,.12),transparent 42%),radial-gradient(circle at 100% 35%,rgba(44,126,255,.13),transparent 42%),#101720;border:1px solid #263545;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;position:relative}
-  .tl-head{min-height:58px;flex:none;border-bottom:1px solid #253443;padding:8px 14px;display:grid;grid-template-columns:minmax(0,1fr) max-content;align-items:start;gap:8px}
+  .timeline-slot{height:420px;min-width:0;margin-top:14px}
+  .timeline{height:100%;width:100%;min-width:0;background:radial-gradient(circle at 0 65%,rgba(255,73,45,.12),transparent 42%),radial-gradient(circle at 100% 35%,rgba(44,126,255,.13),transparent 42%),#101720;border:1px solid #263545;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;position:relative}
+  .tl-head{height:58px;min-height:58px;flex:none;border-bottom:1px solid #253443;padding:8px 14px;display:grid;grid-template-columns:minmax(0,1fr) max-content;align-items:start;gap:8px;overflow:hidden}
   .title{font-size:14px;font-weight:800;min-width:0}.title-main{display:flex;align-items:center;gap:6px}.title small{display:block;color:var(--mut);font-size:10.5px;font-weight:400;line-height:1.35;margin-top:3px;white-space:normal;overflow-wrap:anywhere}
   .live{font-size:10.5px;color:var(--dim);white-space:nowrap;flex:none;padding-top:2px}.live.run{color:var(--green)}.live.run::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:4px;box-shadow:0 0 8px var(--green)}
   .tl-body{position:relative;overflow-y:auto;overflow-x:hidden;flex:1;padding:10px 12px 28px;scroll-behavior:smooth;overscroll-behavior:contain}
@@ -556,7 +557,7 @@
       </div>
 
       <!-- 实时时间线 div（固定尺寸位置，开始攻防后才生成） -->
-      <div style="margin-top:14px">
+      <div class="timeline-slot">
         <section class="timeline" aria-label="实时攻防回合时间线">
           <header class="tl-head"><div class="title"><div class="title-main"><span>攻防回合时间线</span><button class="role-log-toggle" id="roleLogToggle" type="button" title="打开角色同步日志" aria-label="打开角色同步日志" aria-expanded="false">▼</button></div><small id="tlSub">ATTACKER ↔ DEFENDER · 实时事件流</small></div><div class="tl-actions"><span class="live" id="liveStatus">等待攻防事件</span></div></header>
           <div class="tl-body" id="tlStream"><div class="event-content" id="tlContent"><div class="axis"></div><div class="tl-empty" id="tlEmpty">点击右上「准备」配置并开始攻防<br>本时间线将实时生成事件流</div></div></div>
