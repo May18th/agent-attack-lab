@@ -246,7 +246,7 @@
   .log-filter{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:10px 10px;font-size:13px;outline:none;cursor:pointer;white-space:nowrap}
   .battle-list{display:flex;flex-direction:column;gap:6px}
   .battle-item{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 12px;cursor:pointer;text-align:left;color:var(--mut);font-size:12.5px}
-  .battle-item:hover,.battle-item.active{border-color:#2a5a80}
+  .battle-item:hover{border-color:#2a5a80}.battle-item.active{border-color:#6ca8ff;box-shadow:0 0 0 1px rgba(108,168,255,.32),0 0 18px rgba(76,135,232,.24);background:linear-gradient(100deg,rgba(35,57,88,.82),rgba(22,31,47,.94))}
   .battle-badge{font-size:10.5px;font-weight:700;border-radius:6px;padding:2px 7px;flex:none}
   .battle-badge.mid{background:#332a10;color:var(--judge)}
   .battle-badge.high{background:#3a1f14;color:var(--att)}
@@ -296,7 +296,7 @@
   .live-theme{font-size:13px;color:var(--txt);margin:6px 0;min-height:18px;text-align:left}
   .round-num{font-size:44px;font-weight:800;color:var(--judge);font-family:monospace;line-height:1;margin:10px 0 14px}
   .btn-ready{width:100%;background:linear-gradient(135deg,#2e6fd8,#6a4bd8);color:#fff;border:1px solid rgba(140,180,255,.35);border-radius:10px;padding:12px;font-size:15px;font-weight:800;letter-spacing:1px;cursor:pointer;box-shadow:0 4px 18px rgba(70,110,255,.3),inset 0 1px 0 rgba(200,220,255,.25)}
-  .btn-ready:hover{transform:translateY(-1px)}
+  .btn-ready:hover:not(:disabled){transform:translateY(-1px)}.btn-ready:disabled{opacity:.42;cursor:not-allowed;box-shadow:none}
   .live-tags{margin-top:10px;text-align:left}
   .mem-switch{display:flex;align-items:center;justify-content:flex-start;gap:7px;min-width:0;font-size:13px;color:var(--mut)}
   .switch{position:relative;display:inline-block;width:40px;height:22px;flex:none}
@@ -421,7 +421,7 @@
   .cover-hint-arrow{width:16px;height:16px;border-left:1.5px solid #7ba8d8;border-top:1.5px solid #7ba8d8;transform:rotate(45deg);opacity:.7}
   .cover-hint-text{font-size:10px;color:#6f8aa8;letter-spacing:1px;white-space:nowrap}
   .cover-tooltip{position:fixed;z-index:10000;max-width:300px;padding:12px 14px;background:linear-gradient(165deg,rgba(16,24,42,.94),rgba(8,12,22,.94));border:1px solid rgba(96,150,255,.4);border-radius:10px;color:#dce8f8;font-size:13px;line-height:1.6;box-shadow:0 8px 30px rgba(0,0,0,.55),0 0 22px -6px rgba(96,150,255,.5);backdrop-filter:blur(6px);pointer-events:none;opacity:0;transform:translate(-50%,-130%);transition:opacity .18s ease}
-  .cover-tooltip.show{opacity:1}
+  .cover-tooltip.show{opacity:1}.cover-tooltip.core-tip{transform:translate(-50%,-100%)}
   .cover-tooltip b{display:block;font-size:14px;margin-bottom:6px;letter-spacing:1px}
   .cover-tooltip .tt-tag{display:inline-block;font-size:10px;padding:1px 7px;border-radius:4px;margin-right:6px;font-weight:700;letter-spacing:.5px}
   .cover-title{pointer-events:auto;cursor:pointer;position:relative}
@@ -544,7 +544,7 @@
         <div class="live-theme" id="liveTheme">对抗主题：未选择</div>
         <div class="live-row"><span>回合</span></div>
         <div class="round-num" id="liveRounds">0/0</div>
-        <button class="btn-ready" id="btnReady">准备</button>
+        <button class="btn-ready" id="btnReady" type="button" disabled>准备</button>
         <div class="live-tags">
           <div class="mem-switch">
             <span>跨局记忆</span>
@@ -2518,23 +2518,54 @@ var battle3d=(function(){
     return {process:fullProcessItems(ATT_PROCESS_ITEMS,40),effect:[scoreItem('A-06-L0','穿透 L0 输入清洗层',effect>=5?5:0,5),scoreItem('A-06-L1','穿透 L1 推理引导层',effect>=20?15:0,15),scoreItem('A-06-L2','穿透 L2 工具管控层',effect>=45?25:0,25),scoreItem('A-06-L3','完整穿透 L3 审计恢复层',effect>=60?15:0,15)],response:[scoreItem('A-R','有效正式提交响应分',response,100)]};
   }
   function defenderScoreItems(block,safePass,attackResponse,controlResponse,response){return {process:fullProcessItems(DEF_PROCESS_ITEMS,40),effect:[scoreItem('D-06','正确拦截或窗口内有效控制',block,45),scoreItem('D-07','正常样本正确放行',safePass,15)],response:[scoreItem('D-R1','攻击样本响应分',attackResponse,100),scoreItem('D-R2','安全对照响应分',controlResponse,100),scoreItem('D-R','回合响应分（D-R1×50% + D-R2×50%）',response,100)]};}
-  function fallbackScoreItems(score,role){if(score&&score.items)return score.items;return role==='att'?attackerScoreItems(score&&score.effect,score&&score.response):defenderScoreItems(score&&score.block,score&&score.safePass,score&&score.attackResponse,score&&score.controlResponse,score&&score.response);}
+  function fallbackScoreItems(score,role){
+    if(score&&score.items)return score.items;
+    if(score&&Array.isArray(score.categories)){
+      var groups={process:[],effect:[],response:[]};
+      score.categories.forEach(function(item){var group=item.group,awarded=item.awarded!=null?item.awarded:item.score,max=item.max!=null?item.max:item.maxScore;if(groups[group]&&Number.isFinite(Number(awarded))&&Number.isFinite(Number(max)))groups[group].push(scoreItem(item.id||item.code||'',item.name||item.label||'评分项',awarded,max));});
+      return groups;
+    }
+    function summaryItem(id,name,key,max){var value=scoreField(score,key);return value==null?[]:[scoreItem(id,name,value,max)];}
+    var process=summaryItem(role==='att'?'A-PROCESS':'D-PROCESS','流程规范小计','process',40);
+    var effect=summaryItem(role==='att'?'A-EFFECT':'D-EFFECT','实际效果小计','effect',60);
+    var response=summaryItem(role==='att'?'A-RESPONSE':'D-RESPONSE','响应分','response',100);
+    if(process.length||effect.length||response.length)return {process:process,effect:effect,response:response};
+    return {process:[],effect:[],response:[]};
+  }
   function averageScoreItems(scores){
     if(!scores.length)return null;
     var groups=['process','effect','response'],out={};
     groups.forEach(function(group){var source=fallbackScoreItems(scores[0],scores[0].block===undefined?'att':'def')[group];out[group]=source.map(function(item,idx){var sum=scores.reduce(function(n,s){var role=s.block===undefined?'att':'def';var items=fallbackScoreItems(s,role)[group];return n+Number(items[idx]?items[idx].awarded:0);},0);return scoreItem(item.id,item.name,sum/scores.length,item.max);});});
     return out;
   }
+  function scoreField(score,key){
+    if(!score)return null;
+    var summary=score.summary&&typeof score.summary==='object'?score.summary:{};
+    var aliases={process:['process','processScore'],effect:['effect','effectScore'],response:['response','responseScore'],base:['base','baseScore'],weighted:['weighted','finalScore','score'],block:['block','correctIntercept','d06'],safePass:['safePass','safePassScore','d07'],attackResponse:['attackResponse','attackResponseScore'],controlResponse:['controlResponse','controlResponseScore']};
+    var keys=aliases[key]||[key];
+    for(var i=0;i<keys.length;i++){
+      var value=score[keys[i]]!=null?score[keys[i]]:summary[keys[i]];
+      if(typeof value==='number'&&Number.isFinite(value))return value;
+    }
+    if(key==='process'||key==='effect'||key==='response'){
+      var items=Array.isArray(score.items)?score.items:(Array.isArray(score.categories)?score.categories:[]);
+      var group=key==='process'?'process':key==='effect'?'effect':'response';
+      var grouped=items.filter(function(item){return item.group===group;});
+      if(grouped.length)return grouped.reduce(function(total,item){return total+(Number(item.awarded!=null?item.awarded:item.score)||0);},0);
+    }
+    return null;
+  }
   function scoreValue(v){v=Number(v||0);return Number.isInteger(v)?String(v):v.toFixed(2);}
+  function scoreDisplay(score,key,fallback){var value=scoreField(score,key);return value==null?(fallback==null?'—':fallback):scoreValue(value);}
   function detailRows(items,roundNo){return (items||[]).map(function(item){return '<div class="score-row detail"><span>'+(roundNo?'第 '+roundNo+' 回合 · ':'')+item.id+' · '+item.name+'</span><b>'+scoreValue(item.awarded)+' / '+item.max+'</b></div>';}).join('');}
   function scorePairDetailHTML(atk,def,roundNo){
     if(!atk||!def)return '<div class="score-status">等待有效回合生成评分证据</div>';
     var ai=fallbackScoreItems(atk,'att'),di=fallbackScoreItems(def,'def');
     var prefix=roundNo?'第 '+roundNo+' 回合 · ':'';
-    return '<div class="score-cols"><div class="score-col atk"><h5>Attacker · '+prefix+'各环节</h5><div class="score-subhead">流程规范 / 40</div>'+detailRows(ai.process,roundNo)+'<div class="score-subhead">A-06 分层穿透效果 / 60</div>'+detailRows(ai.effect,roundNo)+'<div class="score-subhead">响应 / 100</div>'+detailRows(ai.response,roundNo)+'<div class="score-row formula"><span>'+prefix+'综合分</span><b>'+scoreValue(atk.base)+'×95% + '+scoreValue(atk.response)+'×5% = '+Number(atk.weighted||0).toFixed(2)+'</b></div></div><div class="score-col def"><h5>Defender · '+prefix+'各环节</h5><div class="score-subhead">流程规范 / 40</div>'+detailRows(di.process,roundNo)+'<div class="score-subhead">实际防御效果 / 60</div>'+detailRows(di.effect,roundNo)+'<div class="score-subhead">响应 / 100</div>'+detailRows(di.response,roundNo)+'<div class="score-row formula"><span>'+prefix+'综合分</span><b>'+scoreValue(def.base)+'×95% + '+scoreValue(def.response)+'×5% = '+Number(def.weighted||0).toFixed(2)+'</b></div></div></div>';
+    return '<div class="score-cols"><div class="score-col atk"><h5>Attacker · '+prefix+'各环节</h5><div class="score-subhead">流程规范 / 40</div>'+detailRows(ai.process,roundNo)+'<div class="score-subhead">A-06 分层穿透效果 / 60</div>'+detailRows(ai.effect,roundNo)+'<div class="score-subhead">响应 / 100</div>'+detailRows(ai.response,roundNo)+'<div class="score-row formula"><span>'+prefix+'综合分</span><b>'+scoreDisplay(atk,'base')+'×95% + '+scoreDisplay(atk,'response')+'×5% = '+scoreDisplay(atk,'weighted')+'</b></div></div><div class="score-col def"><h5>Defender · '+prefix+'各环节</h5><div class="score-subhead">流程规范 / 40</div>'+detailRows(di.process,roundNo)+'<div class="score-subhead">实际防御效果 / 60</div>'+detailRows(di.effect,roundNo)+'<div class="score-subhead">响应 / 100</div>'+detailRows(di.response,roundNo)+'<div class="score-row formula"><span>'+prefix+'综合分</span><b>'+scoreDisplay(def,'base')+'×95% + '+scoreDisplay(def,'response')+'×5% = '+scoreDisplay(def,'weighted')+'</b></div></div></div>';
   }
   function detailedScoreHTML(atk,def,isBattle,rounds){
-    if(isBattle&&rounds&&rounds.length)return rounds.map(function(round,index){var no=round.no||index+1,as=round.scores.attacker,ds=round.scores.defender;return '<section class="score-round-block"><h4 class="score-round-title">第 '+no+' 回合 · 各环节详细评分 <span class="score-round-summary">Attacker '+Number(as.weighted||0).toFixed(2)+' / Defender '+Number(ds.weighted||0).toFixed(2)+'</span></h4>'+scorePairDetailHTML(as,ds,no)+'</section>';}).join('');
+    if(rounds&&rounds.length)return rounds.map(function(round,index){var no=round.no||round.round||index+1,as=round.scores?round.scores.attacker:round.attacker,ds=round.scores?round.scores.defender:round.defender;if(!as&&!ds)return '';return '<section class="score-round-block"><h4 class="score-round-title">第 '+no+' 回合 · 各环节详细评分 <span class="score-round-summary">Attacker '+scoreDisplay(as,'weighted')+' / Defender '+scoreDisplay(ds,'weighted')+'</span></h4>'+scorePairDetailHTML(as,ds,no)+'</section>';}).join('');
     return scorePairDetailHTML(atk,def,null);
   }
   function renderInlineRoundScores(rounds){
@@ -2544,7 +2575,7 @@ var battle3d=(function(){
     rounds.forEach(function(round,index){
       var as=round.scores&&round.scores.attacker||{},ds=round.scores&&round.scores.defender||{};
       var row=document.createElement('div');row.className='live-round-score-row';
-      row.innerHTML='<span class="round-number">R'+(round.no||index+1)+'</span><span class="round-att"><span>Attacker</span><b>'+(Number(as.weighted||0)).toFixed(2)+'</b></span><span class="round-def"><span>Defender</span><b>'+(Number(ds.weighted||0)).toFixed(2)+'</b></span>';
+      row.innerHTML='<span class="round-number">R'+(round.no||round.round||index+1)+'</span><span class="round-att"><span>Attacker</span><b>'+scoreDisplay(as,'weighted')+'</b></span><span class="round-def"><span>Defender</span><b>'+scoreDisplay(ds,'weighted')+'</b></span>';
       list.appendChild(row);
     });
   }
@@ -2575,14 +2606,14 @@ var battle3d=(function(){
     document.getElementById('defScoreLabel').textContent=isBattle?'防守方整局最终综合分':'防守方本回合综合分';
     ['atk','def'].forEach(function(role){document.getElementById(role+'ProcessLabel').textContent='流程'+scopeWord+' / 40';document.getElementById(role+'EffectLabel').textContent='效果'+scopeWord+' / 60';document.getElementById(role+'ResponseLabel').textContent='响应'+scopeWord+' / 100';});
     document.getElementById('scoreFormula').innerHTML=isBattle?'<strong>整局最终综合分</strong> = 各回合综合分之和 ÷ '+(roundCount||'有效')+' 回合 = 基础攻防均分 × 0.95 + 响应均分 × 0.05':'<strong>本回合综合分</strong> = 基础攻防分 × 0.95 + 响应分 × 0.05';
-    document.getElementById('atkProcess').textContent=atk?atk.process:0;
-    document.getElementById('atkEffect').textContent=atk?atk.effect:0;
-    document.getElementById('atkResponse').textContent=atk?atk.response:0;
-    document.getElementById('atkWeighted').textContent=atk?atk.weighted.toFixed(2):'0.00';
-    document.getElementById('defProcess').textContent=def?def.process:0;
-    document.getElementById('defEffect').textContent=def?def.effect:0;
-    document.getElementById('defResponse').textContent=def?def.response:0;
-    document.getElementById('defWeighted').textContent=def?def.weighted.toFixed(2):'0.00';
+    document.getElementById('atkProcess').textContent=atk?scoreDisplay(atk,'process','证据不足'):'0';
+    document.getElementById('atkEffect').textContent=atk?scoreDisplay(atk,'effect','证据不足'):'0';
+    document.getElementById('atkResponse').textContent=atk?scoreDisplay(atk,'response','证据不足'):'0';
+    document.getElementById('atkWeighted').textContent=atk?scoreDisplay(atk,'weighted','证据不足'):'0.00';
+    document.getElementById('defProcess').textContent=def?scoreDisplay(def,'process','证据不足'):'0';
+    document.getElementById('defEffect').textContent=def?scoreDisplay(def,'effect','证据不足'):'0';
+    document.getElementById('defResponse').textContent=def?scoreDisplay(def,'response','证据不足'):'0';
+    document.getElementById('defWeighted').textContent=def?scoreDisplay(def,'weighted','证据不足'):'0.00';
     document.getElementById('scoreStatus').textContent=label||'等待有效回合';
     document.getElementById('liveScoreDetailPanel').innerHTML=detailedScoreHTML(atk,def,isBattle,rounds);
     if(rounds)renderInlineRoundScores(rounds);
@@ -2590,6 +2621,14 @@ var battle3d=(function(){
   var liveScoreDetailToggle=document.getElementById('liveScoreDetailToggle'),liveScoreDetailPanel=document.getElementById('liveScoreDetailPanel');
   liveScoreDetailPanel.innerHTML=detailedScoreHTML(null,null);
   liveScoreDetailToggle.addEventListener('change',function(){liveScoreDetailPanel.hidden=!this.checked;});
+  window.addEventListener('battle-scores:update',function(event){
+    var detail=event.detail||{},rounds=Array.isArray(detail.rounds)?detail.rounds:[];
+    var latest=detail.latest||rounds[rounds.length-1]||{};
+    var atk=latest.scores?latest.scores.attacker:latest.attacker;
+    var def=latest.scores?latest.scores.defender:latest.defender;
+    if(atk||def)setScoreboard(atk,def,detail.label||'评分已同步',false,rounds.length,rounds);
+    else if(rounds.length)renderInlineRoundScores(rounds);
+  });
 
   /* ============ CVE 案例库 ============ */
   var CVES=[
@@ -3788,6 +3827,7 @@ var battle3d=(function(){
           hoverRole=role;
           var info=(role==='core')?getCoreInfo():INFO[role];
           tooltip.innerHTML='<span class="tt-tag" style="color:'+info.color+';border:1px solid '+info.color+'">'+info.tag+'</span><b>'+info.name+'</b>'+info.desc;
+          tooltip.classList.toggle('core-tip',role==='core');
           tooltip.style.left=e.clientX+'px';
           tooltip.style.top=e.clientY+'px';
           tooltip.classList.add('show');
@@ -3796,6 +3836,7 @@ var battle3d=(function(){
         }
       }
       hoverRole=null;
+      tooltip.classList.remove('core-tip');
       tooltip.classList.remove('show');
       canvas.style.cursor='';
     }
