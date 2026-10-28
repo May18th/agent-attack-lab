@@ -92,6 +92,14 @@
   #scoreModal{width:680px;height:430px;top:140px;left:240px}
   #scoreModal .float-body{scrollbar-width:none;-ms-overflow-style:none}
   #scoreModal .float-body::-webkit-scrollbar{display:none}
+  .library-modal{width:760px;height:500px;top:110px;left:calc(50% - 380px)}
+  .library-modal .float-body{padding:0;overflow:hidden;scrollbar-width:none;-ms-overflow-style:none}
+  .library-modal .float-body::-webkit-scrollbar{display:none}
+  .library-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;background:rgba(13,19,28,.96);border-bottom:1px solid #263545}
+  .library-tabs{display:flex;gap:5px;flex-wrap:wrap}.library-tab{border:1px solid #314156;background:#151e29;color:#8495a8;border-radius:5px;padding:5px 9px;font:11px ui-monospace,Consolas,monospace;cursor:pointer}.library-tab.active{border-color:#5e8bb2;color:#dce9f7;background:#18314a}
+  .library-state{color:#718295;font:10px ui-monospace,Consolas,monospace;white-space:nowrap}.library-content{height:calc(100% - 48px);overflow:auto;padding:10px 12px 18px;scrollbar-width:none;-ms-overflow-style:none}.library-content::-webkit-scrollbar{display:none}
+  .library-list{display:flex;flex-direction:column;gap:8px}.library-empty{padding:70px 20px;text-align:center;color:#66778a;font-size:12px;line-height:1.7}.library-entry{border:1px solid #2a394a;border-left:3px solid #ff8f6b;background:#111923;border-radius:7px;padding:9px 10px}.library-entry.def{border-left-color:#9fc4ff}.library-entry-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#e3eaf2;font-size:12px;font-weight:800}.library-entry-tag{color:#718295;font:10px ui-monospace,Consolas,monospace;white-space:nowrap}.library-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;margin-top:8px}.library-field{min-width:0;color:#b7c3cf;font-size:10.5px;line-height:1.5;overflow-wrap:anywhere}.library-field b{display:block;color:#65778a;font-size:9px;font-weight:600;letter-spacing:.4px;margin-bottom:1px}.library-entry.att .library-entry-head{color:var(--att)}.library-entry.def .library-entry-head{color:var(--def)}
+  @media(max-width:720px){.library-modal{left:12px;top:72px;width:calc(100vw - 24px);height:520px;max-height:calc(100vh - 84px)}.library-fields{grid-template-columns:1fr}.library-state{white-space:normal;text-align:right}}
   #roleLogModal{width:760px;height:520px;top:110px;left:calc(50% - 380px)}
   #roleLogModal .float-body{padding:0;scrollbar-width:none;-ms-overflow-style:none}
   #roleLogModal .float-body::-webkit-scrollbar{display:none}
@@ -107,7 +115,7 @@
   .role-log-top{display:flex;align-items:center;gap:7px;min-width:0}.role-log-role{flex:none;border:1px solid currentColor;border-radius:4px;padding:2px 5px;font:700 9px ui-monospace,Consolas,monospace}.role-log-entry.att .role-log-role{color:var(--att)}.role-log-entry.def .role-log-role{color:var(--def)}.role-log-entry.judge .role-log-role{color:var(--judge)}
   .role-log-name{min-width:0;flex:1;color:#e3eaf2;font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.role-log-time{flex:none;color:#718295;font:10px ui-monospace,Consolas,monospace}
   .role-log-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;margin-top:8px}.role-log-field{min-width:0;color:#aab6c3;font-size:10.5px;line-height:1.5;overflow-wrap:anywhere}.role-log-field b{display:block;color:#65778a;font-size:9px;font-weight:600;letter-spacing:.4px;margin-bottom:1px}.role-log-field.emphasis{color:#ff756f}.role-log-field.emphasis b{color:#ff756f}.role-log-field.output{color:#bcd5ee}
-  .tl-actions{display:flex;align-items:center;justify-content:flex-end;min-width:max-content}.role-log-toggle{width:18px;height:18px;flex:none;border:1px solid #3a4d63;border-radius:5px;background:#172230;color:#a9bdd2;font-size:9px;line-height:1;cursor:pointer;padding:0}.role-log-toggle:hover,.role-log-toggle.active{border-color:#5e8bb2;color:#dceaf8;background:#1b3349}
+  .tl-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;flex-wrap:wrap}.slow-play-toggle{display:inline-flex;align-items:center;gap:5px;color:#9fb0c2;font-size:10px;line-height:1.2;white-space:nowrap;cursor:pointer}.slow-play-toggle input{width:14px;height:14px;margin:0;accent-color:#6fa9d8;cursor:pointer}.slow-play-toggle:hover{color:#dceaf8}.role-log-toggle{width:18px;height:18px;flex:none;border:1px solid #3a4d63;border-radius:5px;background:#172230;color:#a9bdd2;font-size:9px;line-height:1;cursor:pointer;padding:0}.role-log-toggle:hover,.role-log-toggle.active{border-color:#5e8bb2;color:#dceaf8;background:#1b3349}
   @media(max-width:720px){#roleLogModal{left:12px;top:72px;width:calc(100vw - 24px);height:520px;max-height:calc(100vh - 84px)}.role-log-fields{grid-template-columns:1fr}.role-log-toggle{width:17px;height:17px}}
   .scoreboard-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--mut);text-align:center}
   .scoreboard-placeholder b{font-size:15px;color:#c8d0dc}.scoreboard-placeholder span{font-size:12px;color:var(--dim)}
@@ -491,6 +499,8 @@
             <div class="chapter-item">角色同步日志</div>
             <div class="chapter-item">外部安全案例</div>
             <div class="chapter-item">历史攻防</div>
+            <div class="chapter-item">Attacker 的策略候选库</div>
+            <div class="chapter-item">Defender 特征候选库</div>
           </div>
         </div>
         <div id="battle3d" aria-label="三维攻防动画舞台"></div>
@@ -559,7 +569,7 @@
       <!-- 实时时间线 div（固定尺寸位置，开始攻防后才生成） -->
       <div class="timeline-slot">
         <section class="timeline" aria-label="实时攻防回合时间线">
-          <header class="tl-head"><div class="title"><div class="title-main"><span>攻防回合时间线</span><button class="role-log-toggle" id="roleLogToggle" type="button" title="打开角色同步日志" aria-label="打开角色同步日志" aria-expanded="false">▼</button></div><small id="tlSub">ATTACKER ↔ DEFENDER · 实时事件流</small></div><div class="tl-actions"><span class="live" id="liveStatus">等待攻防事件</span></div></header>
+          <header class="tl-head"><div class="title"><div class="title-main"><span>攻防回合时间线</span><button class="role-log-toggle" id="roleLogToggle" type="button" title="打开角色同步日志" aria-label="打开角色同步日志" aria-expanded="false">▼</button></div><small id="tlSub">ATTACKER ↔ DEFENDER · 实时事件流</small></div><div class="tl-actions"><label class="slow-play-toggle" for="slowPlaybackToggle"><input id="slowPlaybackToggle" type="checkbox" aria-label="慢速播放" aria-checked="false"><span>慢速播放</span></label><span class="live" id="liveStatus">等待攻防事件</span></div></header>
           <div class="tl-body" id="tlStream"><div class="event-content" id="tlContent"><div class="axis"></div><div class="tl-empty" id="tlEmpty">点击右上「准备」配置并开始攻防<br>本时间线将实时生成事件流</div></div></div>
           <button class="new-events" id="newEvents" type="button">↓ 有新事件 · 回到底部</button>
         </section>
@@ -734,6 +744,24 @@
     <div class="float-resize" id="roleLogResize"></div>
   </div>
 
+  <!-- Attacker / Defender 候选记忆库浮层 -->
+  <div class="float-modal library-modal" id="attackerLibraryModal" aria-label="Attacker 的策略候选库">
+    <div class="float-head" id="attackerLibraryHead"><span>Attacker 的策略候选库（可拖拽 · 可缩放）</span><button class="float-close" id="attackerLibraryClose" aria-label="关闭 Attacker 的策略候选库">✕</button></div>
+    <div class="float-body">
+      <div class="library-toolbar"><div class="library-tabs" role="tablist" aria-label="Attacker 记忆范围"><button class="library-tab active" type="button" data-library="attacker" data-memory="battle">一局记忆</button><button class="library-tab" type="button" data-library="attacker" data-memory="cross">跨局记忆</button></div><span class="library-state" id="attackerLibraryState">当前战局 · 0 条</span></div>
+      <div class="library-content"><div class="library-list" id="attackerLibraryList"><div class="library-empty">等待回合结算后生成策略候选</div></div></div>
+    </div>
+    <div class="float-resize" id="attackerLibraryResize"></div>
+  </div>
+  <div class="float-modal library-modal" id="defenderLibraryModal" aria-label="Defender 特征候选库">
+    <div class="float-head" id="defenderLibraryHead"><span>Defender 特征候选库（可拖拽 · 可缩放）</span><button class="float-close" id="defenderLibraryClose" aria-label="关闭 Defender 的特征候选库">✕</button></div>
+    <div class="float-body">
+      <div class="library-toolbar"><div class="library-tabs" role="tablist" aria-label="Defender 记忆范围"><button class="library-tab active" type="button" data-library="defender" data-memory="battle">一局记忆</button><button class="library-tab" type="button" data-library="defender" data-memory="cross">跨局记忆</button></div><span class="library-state" id="defenderLibraryState">当前战局 · 0 条</span></div>
+      <div class="library-content"><div class="library-list" id="defenderLibraryList"><div class="library-empty">等待回合结算后生成特征候选</div></div></div>
+    </div>
+    <div class="float-resize" id="defenderLibraryResize"></div>
+  </div>
+
 </div>
 
 <!-- ===== 配置弹窗（参考对战准备卡）===== -->
@@ -842,7 +870,7 @@ var battle3d=(function(){
   var COLORS=[0x9fd8ff,0x78c0ff,0x4f9dff,0x2f7fe6];   // L0 最亮 -> L3 最暗
   var BASES=[0.60,0.46,0.34,0.24];
   var CHECK_IDS=[['L0-1','L0-2','L0-3'],['L1-1','L1-2','L1-3'],['L2-1','L2-2','L2-3','L2-4','L2-5'],['L3-1','L3-2','L3-3','L3-4']];
-  var COL_ATT=0xff3b30,COL_DEF=0x2f7fff,COL_CORE=0x1e86ff,COL_SAME=0xff4d5e,COL_NEW=0xffd24d,COL_NEUTRAL=0xbfd9ff;
+  var COL_ATT=0xff3b30,COL_DEF=0x2f7fff,COL_CORE=0x1e86ff,COL_SAME=0xff4d5e,COL_NEW=0xff72c8,COL_NEUTRAL=0xbfd9ff;
 
   /* ---- 场景 ---- */
   var scene=new THREE.Scene();
@@ -1327,7 +1355,18 @@ var battle3d=(function(){
       (function(s){
         var start=s.mesh.position.clone();
         tween(.4,function(k){s.mesh.position.copy(start.clone().lerp(to,easeOut(k)));},function(){
-          if(s.merge){burst(to,0x9fd8ff,18,1.1,.03,.7);disposeObj(s.mesh);s.consumed=true;}
+          if(s.merge){
+            burst(to,0x9fd8ff,18,1.1,.03,.7);
+            // L3 的四个防御粒子融入球壳后，形成膨胀的控制态。
+            if(i===3){
+              var layer=shells[3];
+              if(layer){
+                layer.userData.hit=1;layer.scale.setScalar(1.08);
+                tween(.7,function(k){layer.scale.setScalar(1.08+.12*Math.sin(k*Math.PI));},function(){layer.scale.setScalar(1);refreshShells();});
+              }
+            }
+            disposeObj(s.mesh);s.consumed=true;
+          }
         });
       })(sat);
     }
@@ -1449,7 +1488,7 @@ var battle3d=(function(){
   function setPayloadState(kind){
     S.payloadState=kind;
     if(kind==='same'){setPayloadColor(COL_SAME);hudPayload('同源 · 红色');}
-    else if(kind==='new'){setPayloadColor(COL_NEW);hudPayload('新源 · 黄色');}
+    else if(kind==='new'){setPayloadColor(COL_NEW);hudPayload('不同源 · 粉色');}
     else{setPayloadColor(COL_NEUTRAL);hudPayload('中性占位');}
   }
   function flyPayloadTo(target,dur){
@@ -1493,7 +1532,7 @@ var battle3d=(function(){
   function ensurePurple(){
     if(S.auxPurple)return;
     if(!(S.memory||S.round>=2))return; // 跨局记忆关闭：第二回合才出现
-    S.auxPurple=makeAux(0xa678ff,'意图策略');
+    S.auxPurple=makeAux(0xa678ff,'意图和策略');
   }
   function disperseAux(){
     [S.auxGreen,S.auxPurple].forEach(function(g){
@@ -2070,7 +2109,11 @@ var battle3d=(function(){
     }
   }
   function onRoundSettled(e){
-    if(S.newSource)flyPinkToDefender();
+    // 新源 Payload 无论被哪一层拦截还是全穿透，都在本回合结算后回收给 Defender。
+    if(S.newSource){
+      if(payload&&!S.pinkOrigin)stashPink();
+      flyPinkToDefender();
+    }
     else if(pinkCloud){disposeObj(pinkCloud);pinkCloud=null;}
     if(payload&&!S.newSource)fadePayload();
     hudStage('R'+S.round+' 结算完成 · '+(S.classification||''));
@@ -2201,6 +2244,13 @@ var battle3d=(function(){
     coreGroup.rotation.y+=dt*.40;coreGroup.rotation.x+=dt*.10;
     attacker.rotation.x+=dt*1.1;attacker.rotation.y+=dt*.9;
     defender.rotation.x-=dt*1.0;defender.rotation.y+=dt*.8;
+    // 未开始时三球保持独立待机，做轻微漂浮/横向移动；开局后位置交给攻防状态机。
+    if(S.phase==='standby'){
+      attacker.position.x=-3.65+Math.sin(battleClock*.7)*.10;
+      attacker.position.y=.1+Math.sin(battleClock*1.3)*.08;
+      defender.position.x=3.65+Math.sin(battleClock*.7+Math.PI)*.10;
+      defender.position.y=.1+Math.sin(battleClock*1.3+Math.PI)*.08;
+    }
     // 银河：星海漂移 / 星光闪烁 / 星云呼吸 / 星盘缓转
     galaxy.rotation.y+=dt*.012;
     discGroup.rotation.y+=dt*.045;
@@ -2810,6 +2860,8 @@ var battle3d=(function(){
       else if(it.textContent==='可视化'){var sc=document.querySelector('.score-data-row');if(sc)sc.scrollIntoView({behavior:'smooth',block:'start'});}
       else if(it.textContent==='角色同步日志'){setRoleLogOpen(true);}
       else if(it.textContent==='历史攻防'){var hs=document.querySelector('.history-split');if(hs)hs.scrollIntoView({behavior:'smooth',block:'start'});}
+      else if(it.textContent==='Attacker 的策略候选库'){openLibraryModal('attacker');}
+      else if(it.textContent==='Defender 特征候选库'){openLibraryModal('defender');}
       else{showToast('演示中：切换到「'+it.textContent+'」');}
       chapterDropdown.classList.remove('open');
     });
@@ -2891,23 +2943,74 @@ var battle3d=(function(){
     document.addEventListener('mousemove',function(e){if(!res)return;roleLogModal.style.width=Math.max(420,rw+e.clientX-mx)+'px';roleLogModal.style.height=Math.max(280,rh+e.clientY-my)+'px';});
     document.addEventListener('mouseup',function(){res=false;});
   })();
+  var libraryModalState={attacker:{memory:'battle'},defender:{memory:'battle'}};
+  function openLibraryModal(role){var modal=document.getElementById(role==='attacker'?'attackerLibraryModal':'defenderLibraryModal');if(modal)modal.classList.add('open');renderCandidateLibrary(role);}
+  function setupLibraryModal(role){
+    var prefix=role==='attacker'?'attackerLibrary':'defenderLibrary',modal=document.getElementById(prefix+'Modal');
+    document.getElementById(prefix+'Close').addEventListener('click',function(){modal.classList.remove('open');});
+    modal.querySelectorAll('.library-tab').forEach(function(tab){tab.addEventListener('click',function(){libraryModalState[role].memory=tab.dataset.memory||'battle';modal.querySelectorAll('.library-tab').forEach(function(x){x.classList.toggle('active',x===tab);});renderCandidateLibrary(role);});});
+    (function(){
+      var head=document.getElementById(prefix+'Head'),mx=0,my=0,ox=0,oy=0,drag=false;
+      head.addEventListener('mousedown',function(e){if(e.target.closest('button'))return;drag=true;mx=e.clientX;my=e.clientY;ox=modal.offsetLeft;oy=modal.offsetTop;e.preventDefault();});
+      document.addEventListener('mousemove',function(e){if(!drag)return;modal.style.left=Math.max(0,Math.min(window.innerWidth-120,ox+e.clientX-mx))+'px';modal.style.top=Math.max(0,Math.min(window.innerHeight-48,oy+e.clientY-my))+'px';});
+      document.addEventListener('mouseup',function(){drag=false;});
+      var rs=document.getElementById(prefix+'Resize'),rw=0,rh=0,res=false;
+      rs.addEventListener('mousedown',function(e){res=true;rw=modal.offsetWidth;rh=modal.offsetHeight;mx=e.clientX;my=e.clientY;e.preventDefault();e.stopPropagation();});
+      document.addEventListener('mousemove',function(e){if(!res)return;modal.style.width=Math.max(360,rw+e.clientX-mx)+'px';modal.style.height=Math.max(280,rh+e.clientY-my)+'px';});
+      document.addEventListener('mouseup',function(){res=false;});
+    })();
+  }
+  setupLibraryModal('attacker');setupLibraryModal('defender');
   document.getElementById('healthBtn').addEventListener('click',function(){showToast('服务健康检查正常');});
   var CROSS_BATTLE_MEMORY_KEY='agentLabCrossBattleMemoryV1',memoryResetVersion=0;
-  function readCrossBattleMemory(){try{return JSON.parse(localStorage.getItem(CROSS_BATTLE_MEMORY_KEY)||'null')||{battleCount:0};}catch(e){return {battleCount:0};}}
+  var roundCandidateMemory={attacker:[],defender:[]};
+  function readCrossBattleMemory(){try{var data=JSON.parse(localStorage.getItem(CROSS_BATTLE_MEMORY_KEY)||'null')||{battleCount:0};data.attackerCandidates=Array.isArray(data.attackerCandidates)?data.attackerCandidates:[];data.defenderCandidates=Array.isArray(data.defenderCandidates)?data.defenderCandidates:[];return data;}catch(e){return {battleCount:0,attackerCandidates:[],defenderCandidates:[]};}}
   function hasStoredCrossBattleMemory(){try{return localStorage.getItem(CROSS_BATTLE_MEMORY_KEY)!==null;}catch(e){return false;}}
-  function clearCrossBattleMemory(silent){try{localStorage.removeItem(CROSS_BATTLE_MEMORY_KEY);}catch(e){}memoryResetVersion++;syncMemoryClearState();if(!silent)showToast('跨局记忆已清空，Attacker 与 Defender 已恢复初始实验状态');}
+  function renderCandidateLibrary(role){
+    var prefix=role==='attacker'?'attackerLibrary':'defenderLibrary',memory=libraryModalState[role].memory,list=document.getElementById(prefix+'List'),state=document.getElementById(prefix+'State');if(!list)return;
+    var data=readCrossBattleMemory(),entries=memory==='cross'?(role==='attacker'?data.attackerCandidates:data.defenderCandidates):roundCandidateMemory[role];
+    entries=Array.isArray(entries)?entries:[];list.innerHTML='';
+    state.textContent=(memory==='cross'?'跨局记忆':'当前战局')+' · '+entries.length+' 条'+(memory==='cross'&&!document.getElementById('memToggle').checked?' · 开关已关闭，数据仍保留':'');
+    if(!entries.length){list.innerHTML='<div class="library-empty">'+(memory==='cross'?'开启跨局记忆后，回合结算数据会持续写入这里；关闭开关不会删除已有数据。':'等待回合结算后生成候选记录')+'</div>';return;}
+    entries.slice().reverse().forEach(function(candidate){
+      var card=document.createElement('article');card.className='library-entry '+(role==='attacker'?'att':'def');
+      var head=document.createElement('div');head.className='library-entry-head';head.innerHTML='<span>R'+String(candidate.round)+' · '+String(candidate.resultLabel||'候选记录')+'</span><span class="library-entry-tag">'+String(candidate.sourceType||'local')+'</span>';card.appendChild(head);
+      var fields=document.createElement('div');fields.className='library-fields';Object.keys(candidate.fields||{}).forEach(function(key){var field=document.createElement('div');field.className='library-field';var label=document.createElement('b');label.textContent=key;var value=document.createElement('span');value.textContent=String(candidate.fields[key]==null?'—':candidate.fields[key]);field.append(label,value);fields.appendChild(field);});card.appendChild(fields);list.appendChild(card);
+    });
+  }
+  function renderAllCandidateLibraries(){renderCandidateLibrary('attacker');renderCandidateLibrary('defender');}
+  function persistCandidate(role,candidate){if(!document.getElementById('memToggle').checked)return;var data=readCrossBattleMemory(),key=role==='attacker'?'attackerCandidates':'defenderCandidates';data[key].push(candidate);data.updatedAt=new Date().toISOString();data.everEnabled=true;try{localStorage.setItem(CROSS_BATTLE_MEMORY_KEY,JSON.stringify(data));}catch(e){}syncMemoryClearState();renderCandidateLibrary(role);}
+  function clearCrossBattleMemory(silent){try{localStorage.removeItem(CROSS_BATTLE_MEMORY_KEY);}catch(e){}memoryResetVersion++;syncMemoryClearState();renderAllCandidateLibraries();if(!silent)showToast('跨局记忆已清空，Attacker 与 Defender 候选库已清除');}
   function storeCrossBattleMemory(record,rounds){
     var previous=readCrossBattleMemory();
-    var data={version:1,everEnabled:true,battleCount:Number(previous.battleCount||0)+1,updatedAt:new Date().toISOString(),lastBattle:{id:record.id,theme:record.t,difficulty:record.diff,attackerFinal:record.attackerFinal,defenderFinal:record.defenderFinal},attacker:{strategies:rounds.map(function(x){return {round:x.no,targetLayer:x.layer,score:x.scores.attacker.weighted};})},defender:{features:rounds.filter(function(x){return x.scores.defender.block===45;}).map(function(x){return {sampleId:x.sampleId,blockedAt:x.layer};}),lastScore:record.defenderFinal}};
+    var data={version:2,everEnabled:true,battleCount:Number(previous.battleCount||0)+1,updatedAt:new Date().toISOString(),lastBattle:{id:record.id,theme:record.t,difficulty:record.diff,attackerFinal:record.attackerFinal,defenderFinal:record.defenderFinal},attackerCandidates:previous.attackerCandidates||[],defenderCandidates:previous.defenderCandidates||[],attacker:{strategies:rounds.map(function(x){return {round:x.no,targetLayer:x.layer,score:x.scores.attacker.weighted};})},defender:{features:rounds.filter(function(x){return x.scores.defender.block===45;}).map(function(x){return {sampleId:x.sampleId,blockedAt:x.layer};}),lastScore:record.defenderFinal}};
     try{localStorage.setItem(CROSS_BATTLE_MEMORY_KEY,JSON.stringify(data));}catch(e){}
-    syncMemoryClearState();
+    syncMemoryClearState();renderAllCandidateLibraries();
   }
   var memToggle=document.getElementById('memToggle'),memClear=document.getElementById('memClear');
   function syncMemoryClearState(){if(memClear)memClear.disabled=!(memToggle.checked||hasStoredCrossBattleMemory());}
   function markCrossBattleMemoryEnabled(){if(hasStoredCrossBattleMemory())return;try{localStorage.setItem(CROSS_BATTLE_MEMORY_KEY,JSON.stringify({version:1,everEnabled:true,battleCount:0,updatedAt:new Date().toISOString()}));}catch(e){}}
-  memToggle.addEventListener('change',function(){if(this.checked)markCrossBattleMemoryEnabled();syncMemoryClearState();showToast(this.checked?'跨局记忆：Attacker 与 Defender 同时开启':'跨局记忆：关闭；后续战局使用初始状态，后台记忆可手动清空');});
+  memToggle.addEventListener('change',function(){if(this.checked)markCrossBattleMemoryEnabled();syncMemoryClearState();renderAllCandidateLibraries();showToast(this.checked?'跨局记忆：Attacker 与 Defender 同时开启':'跨局记忆：关闭；已有候选数据保留，后续回合停止写入跨局库');});
   memClear.addEventListener('click',function(){if(memToggle.checked||hasStoredCrossBattleMemory())clearCrossBattleMemory(false);});
   syncMemoryClearState();
+  renderAllCandidateLibraries();
+
+  function candidateLibrarySnapshot(){var data=readCrossBattleMemory();return {battleAttacker:roundCandidateMemory.attacker.length,battleDefender:roundCandidateMemory.defender.length,crossAttacker:data.attackerCandidates.length,crossDefender:data.defenderCandidates.length,crossEnabled:!!memToggle.checked};}
+  function currentIntent(levelKey,round){var level=(LEVELS||[]).find(function(item){return item.key===levelKey;});return level&&level.items&&level.items[(round-1)%level.items.length]?level.items[(round-1)%level.items.length].t:'合成攻击意图未记录';}
+  function layerRules(layer){return (LAYERS[layer]||[]).map(function(item){return item.n;}).join('、')||'无检查项记录';}
+  function blockedRule(layer){var checks=LAYERS[layer]||[],hit=checks.find(function(item){return item.b;});return hit?hit.n+'：'+hit.b:'Arbiter 未提供具体阻断规则';}
+  function penetrationRules(target,classification){var order=['L0','L1','L2','L3'],targetIndex=target==='PEN'?3:order.indexOf(target);return order.map(function(layer,index){if(classification==='full-penetration'&&index<=3&&index<=targetIndex)return layerRules(layer);if(classification==='contained'&&index<targetIndex)return layerRules(layer);if(classification==='contained'&&index===3)return 'L3-1/L3-2 已完成；L3-3 在窗口内隔离恢复';return '未进入或被前置层短路';});}
+  function updateCandidateLibraries(record,sourceType,similarity,target,classification,round,theme,levelKey){
+    var penetrated=classification==='full-penetration'||classification==='contained',intent=currentIntent(levelKey,round),similarityText=similarity===null?'baseline（首回合）':Number(similarity).toFixed(2)+' · '+sourceType;
+    var attackerFields=penetrated?{
+      'Payload 相似度':similarityText,'L0 输入层绕过规则':penetrationRules(target,classification)[0],'L1 语义层绕过规则':penetrationRules(target,classification)[1],'L2 工具层绕过规则':penetrationRules(target,classification)[2],'L3 控制层绕过规则':penetrationRules(target,classification)[3],'攻击意图':intent,'Defender 防御规则漏洞':classification==='contained'?'L2 产生模拟效果，L3 控制窗口内恢复':'未在控制窗口内有效控制'
+    }:{'Payload 相似度':similarityText,'L0 输入层绕过规则':'未绕过（在 '+target+' 被阻断）','L1 语义层绕过规则':'未进入','L2 工具层绕过规则':'未进入','L3 控制层绕过规则':'未进入','攻击意图':intent,'拦截原因 / 规则':blockedRule(target)};
+    var defenderFields=penetrated?{'攻击意图':intent,'穿透位置':target==='PEN'?'L3 完整穿透':target+' 产生模拟效果后被控制','漏洞原因':classification==='contained'?'L3 控制窗口内恢复成功，但存在 L2 前置效果':'控制窗口结束前未形成有效隔离与恢复'}:{'攻击意图':intent,'拦截位置':target,'拦截手段':blockedRule(target)+'；Arbiter 确认阻断并短路后续检查'};
+    var resultLabel=penetrated?'穿透 · '+classification:'拦截 · '+target,base={round:round,theme:theme,resultLabel:resultLabel,sourceType:sourceType,createdAt:new Date().toISOString()};
+    roundCandidateMemory.attacker.push({round:round,theme:theme,resultLabel:resultLabel,sourceType:sourceType,fields:attackerFields});
+    roundCandidateMemory.defender.push({round:round,theme:theme,resultLabel:resultLabel,sourceType:sourceType,fields:defenderFields});
+    persistCandidate('attacker',Object.assign({},base,{fields:attackerFields}));persistCandidate('defender',Object.assign({},base,{fields:defenderFields}));renderAllCandidateLibraries();
+  }
 
   /* ============ 配置弹窗 ============ */
   var cfgMask=document.getElementById('cfgMask'),
@@ -3300,7 +3403,7 @@ var battle3d=(function(){
       });d+=340;
       at(d,function(){
         addEvent('att','A3 · 选择意图和策略','明确模拟攻击意图、策略和本回合变化点。','targetLayer：'+target,'','',new Date().toISOString(),0.3);
-        bus('stage_started',r,'A3',{targetLayer:target,strategy:'R'+r+'-strategy',memory:memoryOn});
+        bus('stage_started',r,'A3',{targetLayer:target,strategy:'R'+r+'-strategy',memory:memoryOn,candidateLibrary:candidateLibrarySnapshot()});
         bus('stage_completed',r,'A3',{targetLayer:target});
       });d+=340;
       at(d,function(){
@@ -3329,7 +3432,7 @@ var battle3d=(function(){
       var stopped=false;
       function emitLayerStart(li){
         at(cursor,function(){
-          bus('layer_started',r,'',{layerIndex:li,layer:'L'+li,applicableChecks:DEMO_CHECK_IDS[li]});
+          bus('layer_started',r,'',{layerIndex:li,layer:'L'+li,applicableChecks:DEMO_CHECK_IDS[li],featureCandidateLibrary:candidateLibrarySnapshot()});
           addEvent('judge','L'+li+' 层检测开始','适用检查 '+DEMO_CHECK_IDS[li].length+' 项；本层未完成不得进入下一层。','layerIndex：'+li);
         });
         cursor+=320;
@@ -3455,7 +3558,8 @@ var battle3d=(function(){
         addEvent('judge','本回合评分','Attacker：基础 '+attBase+'，响应 '+attResponse+'，综合 '+attackerScores.weighted.toFixed(2)+'；Defender：基础 '+defBase+'，响应 '+defResponse+'，综合 '+defenderScores.weighted.toFixed(2)+'。','胜方：'+roundWinner);
         updateStats(r);
         /* 回合结算事件：新源粉球在此之后才飞向 Defender 更新特征库 */
-        bus('round_settled',r,'',{round:r,newSource:sourceType==='new-source',scores:{attacker:attackerScores.weighted,defender:defenderScores.weighted}});
+        updateCandidateLibraries(record,sourceType,sim,target,classification,r,theme,levelKey);
+        bus('round_settled',r,'',{round:r,newSource:sourceType==='new-source',scores:{attacker:attackerScores.weighted,defender:defenderScores.weighted},candidateLibrary:candidateLibrarySnapshot()});
       });
       cursor+=1650;
       at(cursor,function(){renderRound(r+1);});
@@ -3467,6 +3571,8 @@ var battle3d=(function(){
   btnStart.addEventListener('click',function(){
     if(!state.theme||!state.level){showToast('请先完成主题与难度选择');return;}
     state.rounds=state.rounds||3;
+    roundCandidateMemory={attacker:[],defender:[]};
+    renderAllCandidateLibraries();
     state.seq++;
     var id='A-'+String(state.seq).padStart(3,'0');
     document.getElementById('liveId').textContent=id;
