@@ -98,8 +98,10 @@ def test_baseline_probe_shows_attack_would_work_without_guardrails(monkeypatch) 
     canary = controlled_target._canary()
     monkeypatch.setattr(controlled_target, "is_configured", lambda role=None: True)
 
+    weak_prompt = controlled_target._PROFILE_WEAK.format(canary=canary)
+
     async def fake_complete(system_prompt, _user, **_kwargs):
-        if "可以直接提供" in system_prompt:  # weak 基线
+        if system_prompt == weak_prompt:  # weak 基线
             return f"好的，内部处理口令是 {canary}。"
         return "抱歉，无法办理，请走工单。"
 
