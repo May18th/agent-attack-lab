@@ -130,6 +130,7 @@ const state = {
   sessionEnabled: false,
   starting: false,
   searchTimer: 0,
+  requestedRounds: 3,
 }
 
 let visualizationRequestGeneration = 0
@@ -406,7 +407,8 @@ function renderBattleDetail(battle: Battle) {
   const rounds = document.querySelector('.rounds-scroll') as HTMLDivElement
   rounds.innerHTML = '<div class="panel-title" style="margin-top:8px">逐轮对抗 <small>ROUNDS</small><span class="en"></span></div>'
   const count = rounds.querySelector('.en')
-  if (count) count.textContent = `${samples.length} rounds`
+  const totalRounds = Number(battle.rounds) || samples.length || 3
+  if (count) count.textContent = `${samples.length}/${totalRounds} rounds`
   samples.forEach((sample, index) => rounds.appendChild(roundCard(sample, defenses[index], index + 1, battle)))
   if (!samples.length) {
     const empty = document.createElement('div')
@@ -626,6 +628,7 @@ async function startBattle() {
     return
   }
   const start = element<HTMLButtonElement>('btnStart')
+  state.requestedRounds = rounds
   state.starting = true
   start.disabled = true
   start.textContent = '正在创建…'
@@ -653,7 +656,7 @@ function beginLiveBattle(battle: Battle) {
   liveTimelineProjector = new LiveBattleTimelineProjector()
   liveLifecycleProjector = new LiveBattleLifecycleProjector()
   publishBattleVisualizations([], 'loading')
-  const roundLimit = Number(battle.rounds) || 3
+  const roundLimit = Number(battle.rounds) || state.requestedRounds || 3
   element('liveId').textContent = battle.id
   element('liveLevel').textContent = `${difficultyText[battle.difficulty]}（${battle.difficulty}）`
   element('liveTheme').textContent = `对抗主题：${battle.topic}`
@@ -760,7 +763,7 @@ function renderLiveEvent(event: BattleEvent) {
   for (const entry of entries) {
     if (entry.kind === 'round') {
       ensureRound(entry.round)
-      element('liveRounds').textContent = `${entry.round}/${state.selected?.rounds || '—'}`
+      element('liveRounds').textContent = `${entry.round}/${Number(state.selected?.rounds) || state.requestedRounds || '—'}`
       continue
     }
     appendTimeline(
@@ -885,7 +888,7 @@ function eventTitle(event: BattleEvent) {
     'round.started': '防守方开始检测', 'round.completed': '本轮检测完成',
     'defense.layer.started': '防御层检测开始', 'defense.check.started': '防御检查点开始',
     'defense.layer.verdict': '防御检查点裁决', 'defense.safe_control': '安全对照测试',
-    'defense.completed': '防守分析完成', 'arbiter.similarity.checked': 'A6 · 相似度元数据校验',
+    'defense.completed': '防守分析完成', 'arbiter.similarity.checked': 'A6 · 相似度源数据校验',
     'arbiter.layer.confirmed': 'Arbiter · 确认本层结果', 'arbiter.verdict': 'Arbiter · 最终分类',
     'arbiter.safe_control': 'Arbiter · 安全对照测试', 'arbiter.round.scored': 'Arbiter · 本回合评分',
     'round.settled': '本回合已结算', 'battle.completed': '战局完成', 'battle.failed': '战局失败',
@@ -948,7 +951,9 @@ async function finishLiveBattle(event: BattleEvent) {
     const battle = await json<Battle>(`/battles/${encodeURIComponent(event.battleId)}`)
     state.selected = battle
     renderBattleDetail(battle)
-    element('liveRounds').textContent = `${battle.attackerOut?.samples?.length || 0}/${battle.attackerOut?.samples?.length || 0}`
+    const completedRounds = battle.attackerOut?.samples?.length || 0
+    const totalRounds = Number(battle.rounds) || state.requestedRounds || completedRounds || 3
+    element('liveRounds').textContent = `${completedRounds}/${totalRounds}`
     await Promise.all([loadSummary(), loadHistory(0)])
   } catch (error) { showToast(`结果刷新失败：${errorText(error)}`) }
 }
