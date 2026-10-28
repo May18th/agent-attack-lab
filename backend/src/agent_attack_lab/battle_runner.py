@@ -360,6 +360,15 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             )
             if verification.get("mode") == "live":
                 defense["verificationStatus"] = describe_result(verification)
+                defense["verificationMode"] = "live"
+                defense["verificationTarget"] = verification.get("targetAssetId")
+                excerpts = [
+                    item
+                    for item in verification.get("evidence") or []
+                    if isinstance(item, str)
+                ][:2]
+                if excerpts:
+                    defense["verificationEvidence"] = excerpts
             if isinstance(verification.get("attackSuccess"), bool):
                 defense["attackSuccess"] = verification["attackSuccess"]
             if isinstance(verification.get("defenseSuccess"), bool):

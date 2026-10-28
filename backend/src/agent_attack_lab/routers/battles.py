@@ -301,6 +301,15 @@ async def create_battle(
             )
             if verification.get("mode") == "live":
                 defense["verificationStatus"] = describe_result(verification)
+                defense["verificationMode"] = "live"
+                defense["verificationTarget"] = verification.get("targetAssetId")
+                excerpts = [
+                    item
+                    for item in verification.get("evidence") or []
+                    if isinstance(item, str)
+                ][:2]
+                if excerpts:
+                    defense["verificationEvidence"] = excerpts
             verifications.append(verification)
             for key in ("attackSuccess", "defenseSuccess"):
                 if isinstance(verification.get(key), bool):
