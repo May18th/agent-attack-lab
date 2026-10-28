@@ -203,6 +203,9 @@ def list_admin_audit_logs(
     user: str | None = Query(default=None, max_length=64),
     operation: str | None = Query(default=None, max_length=128),
     limit: int = Query(default=200, ge=1, le=500),
+    include_http: bool = Query(
+        default=False, description="是否包含每个接口的访问流水；默认只看业务操作"
+    ),
 ) -> list[dict[str, Any]]:
     security.check_browser_or_api_auth(request)
     return state.battle_store.list_audit_events_filtered(
@@ -211,4 +214,5 @@ def list_admin_audit_logs(
         actor_role=user,
         event_type=operation,
         limit=limit,
+        include_http=include_http,
     )

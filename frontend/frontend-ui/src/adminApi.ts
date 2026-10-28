@@ -213,8 +213,10 @@ export async function deleteAdminRule(id: string): Promise<void> {
   }
 }
 
-export function listAdminAuditLogs(filters: { from_time?: string; to_time?: string; user?: string; operation?: string } = {}): Promise<AdminAuditLog[]> {
-  return api<AdminAuditLog[]>(`/admin/audit-logs${queryString(filters)}`)
+export function listAdminAuditLogs(filters: { from_time?: string; to_time?: string; user?: string; operation?: string; includeHttp?: boolean } = {}): Promise<AdminAuditLog[]> {
+  // 接口访问流水默认不返回：一屏全是 GET/200 会把真正的操作记录淹掉。
+  const { includeHttp = false, ...rest } = filters
+  return api<AdminAuditLog[]>(`/admin/audit-logs${queryString({ ...rest, include_http: includeHttp ? 'true' : 'false' })}`)
 }
 
 export type AdminLibrarySeedResult = {

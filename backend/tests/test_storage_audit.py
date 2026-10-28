@@ -59,3 +59,31 @@ def test_admin_samples_and_rules_round_trip() -> None:
     assert store.update_admin_rule(rule["id"], {"action": "放行"})["action"] == "放行"
     assert store.delete_admin_sample(sample["id"]) is True
     assert store.delete_admin_rule(rule["id"]) is True
+
+
+def test_http_request_rows_are_hidden_unless_requested() -> None:
+    """接口流水量级最大，默认不该出现在审计列表里。"""
+    store = BattleStore(":memory:")
+    for index, event_type in enumerate(("http.request", "battle.created"), start=1):
+        store.save_audit_event(
+            {
+                "id": f"audit-{index}",
+                "eventType": event_type,
+                "requestId": f"req-{index}",
+                "battleId": None,
+                "correlationId": None,
+                "actorRole": "http" if event_type == "http.request" else "public",
+                "status": "completed",
+                "createdAt": f"2026-10-18T00:00:0{index}+00:00",
+                "data": {"path": "/admin/samples"},
+            }
+        )
+
+    default_view = store.list_audit_events_filtered(limit=50)
+    with_http = store.list_audit_events_filtered(limit=50, include_http=True)
+
+    assert [item["eventType"] for item in default_view] == ["battle.created"]
+    assert {item["eventType"] for item in with_http} == {
+        "http.request",
+        "battle.created",
+    }

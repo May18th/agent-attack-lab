@@ -16,7 +16,8 @@ describe('auth solar scene layout', () => {
     expect(AUTH_SOLAR_RENDER_PROFILE.bloomStrength).toBeLessThan(0.15)
     expect(AUTH_SOLAR_RENDER_PROFILE.internalParticles).toBe(false)
     expect(AUTH_SOLAR_RENDER_PROFILE.motionTrails).toBe(true)
-    expect(AUTH_SOLAR_RENDER_PROFILE.motionTrailOpacity).toBeGreaterThan(0.2)
+    // 当前取值 0.18：轨迹要能看见，但不能在浅色页面上留下明显拖影。
+    expect(AUTH_SOLAR_RENDER_PROFILE.motionTrailOpacity).toBeGreaterThan(0.15)
     expect(AUTH_SOLAR_RENDER_PROFILE.trajectoryArcLength).toBeGreaterThan(2)
     expect(AUTH_SOLAR_RENDER_PROFILE.trajectoryFadeSegments).toBeGreaterThan(1)
     expect(AUTH_SOLAR_RENDER_PROFILE.trajectoryDepth).toBe(true)

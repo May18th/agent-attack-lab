@@ -9,7 +9,7 @@ import {
   addCustomTheme, loadCustomThemes, removeCustomTheme, type TacticLevel,
 } from './themes'
 import {
-  ACTOR_LABELS, AUDIT_DATA_LABELS, AUDIT_FIELD_HINTS, AUDIT_STATUS_LABELS, EVENT_LABELS, formatDateTime, labelOf,
+  ACTOR_LABELS, AUDIT_DATA_LABELS, AUDIT_FIELD_HINTS, AUDIT_STATUS_LABELS, EVENT_LABELS, VERDICT_LABELS, formatDateTime, labelOf,
 } from './adminLabels'
 
 type ManagementTab = 'create' | 'samples' | 'rules' | 'audit'
@@ -56,6 +56,38 @@ const auditSummary = (log: AdminAuditLog): string => {
     const code = auditValue(data.statusCode) === '—' ? '' : ` → ${auditValue(data.statusCode)}`
     const cost = typeof data.durationMs === 'number' ? ` · ${Math.round(data.durationMs)} ms` : ''
     return `${[method, path].filter(Boolean).join(' ')}${code}${cost}`.trim()
+  }
+  // 业务事件给出「谁 · 做了什么 · 结果」，而不是只回显事件名。
+  if (log.eventType === 'battle.completed') {
+    const code = [data.battleCode, data.battleId].find((value) => typeof value === 'string' && value)
+    const verdict = labelOf(data.verdict, VERDICT_LABELS, '未判定')
+    const detail = [
+      typeof data.compromisedRounds === 'number' ? `沦陷 ${data.compromisedRounds} 轮` : '',
+      typeof data.interceptedRounds === 'number' ? `拦截 ${data.interceptedRounds} 轮` : '',
+    ].filter(Boolean)
+    return `${actor}完成战局${code ? ` ${code}` : ''}：判定${verdict}${detail.length ? `（${detail.join(' / ')}）` : ''}`
+  }
+  if (log.eventType === 'attack.sample.generated') {
+    const sample = (data.sample && typeof data.sample === 'object' ? data.sample : {}) as Record<string, unknown>
+    const round = typeof data.round === 'number' ? `第 ${data.round} 轮` : ''
+    const tactic = typeof sample.tactic === 'string' && sample.tactic ? `战术 ${sample.tactic}` : ''
+    const strength = typeof sample.strengthTier === 'string'
+      ? `强度 ${sample.strengthTier}${typeof sample.strengthScore === 'number' ? `/${sample.strengthScore}` : ''}`
+      : ''
+    const parts = [round, tactic, strength].filter(Boolean)
+    return `${actor}生成攻击样本${parts.length ? `：${parts.join(' · ')}` : ''}`
+  }
+  if (log.eventType === 'round.completed') {
+    const round = typeof data.round === 'number' ? `第 ${data.round} 轮` : ''
+    const caught = Array.isArray(data.caught) ? data.caught.length : null
+    const verdict = typeof data.classification === 'string' ? labelOf(data.classification, VERDICT_LABELS, data.classification) : ''
+    const parts = [round, caught === null ? '' : `命中 ${caught} 条规则`, verdict].filter(Boolean)
+    return `${actor}回合结算${parts.length ? `：${parts.join(' · ')}` : ''}`
+  }
+  if (log.eventType === 'admin.library.seeded') {
+    const created = typeof data.samplesCreated === 'number' ? `新增样本 ${data.samplesCreated} 条` : ''
+    const rules = typeof data.rulesCreated === 'number' ? `规则 ${data.rulesCreated} 条` : ''
+    return `${actor}载入内置示例${[created, rules].filter(Boolean).length ? `：${[created, rules].filter(Boolean).join('、')}` : ''}`
   }
   const event = labelOf(log.eventType, EVENT_LABELS, log.eventType)
   const subject = [data.topic, data.name, data.battleCode].find((value) => typeof value === 'string' && value.trim())
@@ -104,7 +136,7 @@ export function AdminManagementPanel({ battles, onBattleCreated, onError }: Prop
   const [logs, setLogs] = useState<AdminAuditLog[]>([])
   const [sampleQuery, setSampleQuery] = useState('')
   const [ruleQuery, setRuleQuery] = useState('')
-  const [auditFilters, setAuditFilters] = useState({ from_time: '', to_time: '', user: '', operation: '' })
+  const [auditFilters, setAuditFilters] = useState({ from_time: '', to_time: '', user: '', operation: '', includeHttp: false })
   const [dialog, setDialog] = useState<DialogState>(null)
   const [notice, setNotice] = useState('')
   const [surveyBusy, setSurveyBusy] = useState(false)
@@ -113,7 +145,8 @@ export function AdminManagementPanel({ battles, onBattleCreated, onError }: Prop
   const loadRules = useCallback(async (q = ruleQuery) => { try { setRules((await listAdminRules(q)).items) } catch (error) { onError(apiErrorMessage(error)) } }, [onError, ruleQuery])
   const loadAudit = useCallback(async (filters = auditFilters) => {
     try {
-      setLogs(await listAdminAuditLogs({ ...filters, from_time: toUtcIso(filters.from_time), to_time: toUtcIso(filters.to_time) }))
+      const { includeHttp, ...rest } = filters
+      setLogs(await listAdminAuditLogs({ ...rest, includeHttp, from_time: toUtcIso(filters.from_time), to_time: toUtcIso(filters.to_time) }))
     } catch (error) { onError(apiErrorMessage(error)) }
   }, [auditFilters, onError])
   const selectTab = (next: ManagementTab) => { setTab(next); setNotice(''); if (next === 'samples') void loadSamples(); if (next === 'rules') void loadRules() }
@@ -199,6 +232,7 @@ export function AdminManagementPanel({ battles, onBattleCreated, onError }: Prop
         <label>结束时间<input aria-label="审计结束时间" type="datetime-local" value={auditFilters.to_time} onChange={(event) => setAuditFilters({ ...auditFilters, to_time: event.target.value })} /></label>
         <input aria-label="审计用户筛选" placeholder="角色，如 admin" value={auditFilters.user} onChange={(event) => setAuditFilters({ ...auditFilters, user: event.target.value })} />
         <input aria-label="审计操作筛选" placeholder="操作，如 样本 / battle.created" value={auditFilters.operation} onChange={(event) => setAuditFilters({ ...auditFilters, operation: event.target.value })} />
+        <label className="audit-http-toggle"><input aria-label="包含接口调用记录" type="checkbox" checked={auditFilters.includeHttp} onChange={(event) => setAuditFilters({ ...auditFilters, includeHttp: event.target.checked })} />包含接口调用记录</label>
         <button type="button" onClick={() => void loadAudit()}>查询日志</button>
       </div>
       <div className="management-list">

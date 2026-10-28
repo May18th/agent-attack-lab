@@ -151,3 +151,18 @@ describe('admin API', () => {
     await expect(getAdminMetrics()).rejects.toMatchObject({ status: 403, requestId: 'req-1', message: 'denied' })
   })
 })
+
+describe('audit log filters', () => {
+  it('hides interface traffic unless explicitly requested', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => response([]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await listAdminAuditLogs({ operation: 'battle' })
+    await listAdminAuditLogs({ operation: 'battle', includeHttp: true })
+
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]))
+    expect(urls[0]).toContain('include_http=false')
+    expect(urls[1]).toContain('include_http=true')
+    expect(urls[0]).not.toContain('includeHttp')
+  })
+})

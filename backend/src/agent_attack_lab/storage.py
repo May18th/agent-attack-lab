@@ -1249,6 +1249,7 @@ class BattleStore:
         actor_role: str | None = None,
         event_type: str | None = None,
         limit: int = 200,
+        include_http: bool = False,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -1270,6 +1271,10 @@ class BattleStore:
         if event_type and event_type.strip():
             clauses.append(f"event_type LIKE {self._placeholder}")
             params.append(f"%{event_type.strip()}%")
+        if not include_http:
+            # 接口访问流水量级远大于业务事件，默认隐藏，不然后台一屏全是
+            # 「GET /admin/samples → 200」，真正的操作记录被埋掉。
+            clauses.append("event_type <> 'http.request'")
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         params.append(limit)
         with self._lock:
