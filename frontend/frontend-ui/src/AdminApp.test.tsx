@@ -418,8 +418,8 @@ describe('AdminApp', () => {
   const readableRounds = {
     total: 2, requestedRounds: 3,
     rounds: [
-      { round: 1, status: 'completed', sample: { type: '提示注入', severity: 'high' }, caught: [{ ruleId: 'LAB-SQLI-001' }], risks: [], fixed: [], durationMs: 1500, arbiterReview: { verdict: 'undetermined', needsHumanReview: true, agentSource: 'arbiter-rule-fallback', rationale: '无验证证据，需人工复核' } },
-      { round: 2, status: 'completed', sample: { type: 'SQL 注入', severity: 'medium' }, caught: [], risks: [], fixed: [], durationMs: 800, compromised: { targetVerified: true, simulated: true }, arbiterReview: { verdict: 'defender_won', needsHumanReview: false, agentSource: 'arbiter-llm' } },
+      { round: 1, status: 'completed', sample: { type: '提示注入', severity: 'high' }, caught: [{ ruleId: 'LAB-SQLI-001' }], risks: [], fixed: [], durationMs: 1500, strengthTier: 'S2', strengthScore: 40, tactic: '权威冒充', variantOperator: '基线建立', adaptationNote: '首轮建立基线', arbiterReview: { verdict: 'undetermined', needsHumanReview: true, agentSource: 'arbiter-rule-fallback', rationale: '无验证证据，需人工复核' } },
+      { round: 2, status: 'completed', sample: { type: 'SQL 注入', severity: 'medium' }, caught: [], risks: [], fixed: [], durationMs: 800, strengthTier: 'S4', strengthScore: 86, tactic: '编码混淆', variantOperator: '模型改写', adaptationNote: '上一轮被拦下；换载体重投', compromised: { targetVerified: true, simulated: true }, arbiterReview: { verdict: 'defender_won', needsHumanReview: false, agentSource: 'arbiter-llm' } },
     ],
     stats: { attackGenerated: 2, defenderDetected: 1, fixesSuggested: 0, strategyChecks: 2 },
   }
@@ -449,6 +449,9 @@ describe('AdminApp', () => {
     expect(screen.getByText(/未取得验证证据/)).toBeInTheDocument()
     expect(screen.getByText('回合明细（2 轮）')).toBeInTheDocument()
     expect(screen.getByText('请求 3 轮，实际产出 2 轮')).toBeInTheDocument()
+    expect(screen.getByText('攻击强度演进')).toBeInTheDocument()
+    expect(screen.getByText('S2 · 40 分 · 权威冒充')).toBeInTheDocument()
+    expect(screen.getByText('S4 · 86 分 · 编码混淆')).toBeInTheDocument()
     expect(screen.getAllByText(/已拦截/).length).toBeGreaterThan(0)
     expect(screen.getAllByText('穿透（规则推定，目标未验证）').length).toBeGreaterThan(0)
     expect(screen.getAllByText('证据不足').length).toBeGreaterThan(0)
