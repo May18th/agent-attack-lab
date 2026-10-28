@@ -447,7 +447,9 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     "structuredTimelineVersion": "v2.0",
                 },
             )
-            if verification["verified"]:
+            # 只有真正判定攻破时才记 compromised；被拦截（attackSuccess=False）
+            # 同样是"已验证"，但事件语义不同，混在一起会让回放显示成"已攻破"。
+            if verification["verified"] and verification.get("attackSuccess") is True:
                 add_event(
                     "attack.compromised",
                     "completed",

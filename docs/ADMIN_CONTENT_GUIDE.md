@@ -86,11 +86,15 @@ flowchart LR
 
 ## 六、四个常见疑问
 
-**1. 为什么大部分战局显示"结果未判定"？**
-`AGENT_TARGET_VERIFY_MODE` 默认是 `off`；`live` 模式没有真实目标适配器可用。此时 `verify_round` 只返回 `verification_disabled` 或 `no_live_adapter`，`aggregate_verdict` 拿不到证据就返回 `undetermined`。这是正确行为，不是 bug。
+**1. 为什么以前大部分战局显示"结果未判定"？**
+`AGENT_TARGET_VERIFY_MODE` 默认是 `off`，`live` 又没有真实目标适配器，`verify_round` 只返回 `verification_disabled` 或 `no_live_adapter`，`aggregate_verdict` 拿不到证据就是 `undetermined`。这是"没有证据不下结论"的保守默认。
+生产环境现已改为 `simulated`，由内置模拟靶标给出可复核的结论（见下条）；只有样本既没被防守命中、又不构成越权时才继续留在"未判定"。
 
 **2. "模拟验证"是什么意思？**
-`simulated` 模式下，把本地规则命中（`LAB-SQLI-001`、`LAB-PROMPT-001`、`OWASP-LLM*` 等）当作"看起来像被打穿"的证据，并强制打上 `simulated: true`。含义是"本地规则命中了"，**不是**"目标系统真的失守"。
+`simulated` 模式跑的是进程内模拟靶标，判定规则只有两条：
+- 防守报出命中 → 视为**拦截成立**（`simulated_target_blocked`）；
+- 样本同时出现"身份伪装 + 敏感动作 + 绕过流程"三类信号 → 视为**模拟目标接受了越权指令**（`simulated_target_success`），并附样本原文片段作为证据。
+其余情况（例如正常业务咨询）保持未判定、要求人工复核。所有模拟结论都强制带 `simulated: true`，含义是"模拟靶标这么判"，**不是**"真实系统真的失守"；前端会同时标注"真实目标未验证"。
 
 **3. 为什么评分显示"证据不足"而不是 0 分？**
 缺某个角色的 Agent 调用事件时，该角色返回 `score: null` + `status: insufficient_evidence`。把缺证当 0 分会造成"没跑等于做错"的误判，所以刻意返回 `null`。
