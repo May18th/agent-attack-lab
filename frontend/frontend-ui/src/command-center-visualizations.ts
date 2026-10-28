@@ -126,11 +126,12 @@ export function buildBattleVisualizations(rounds: readonly BattleVisualizationRo
 
 export function shouldRenderBattleTimelineEvent(type: string, data: Record<string, unknown> = {}): boolean {
   if (type.startsWith('arbiter.')) return true
+  if (type === 'defense.safe_control') return true
   const stageId = typeof data.stageId === 'string' ? data.stageId.trim().toUpperCase() : ''
   // The primary timeline is a result timeline: one card per logical stage.
   // Started events remain available to the role log and 3D animation stream.
   if (/^A[1-8]$/.test(stageId)) return type === 'attack.stage.completed'
-  if (/^L[0-3]$/.test(stageId)) return type === 'defense.layer.started'
+  if (/^L[0-3]$/.test(stageId)) return false
   if (/^L[0-3]-\d+$/.test(stageId)) {
     return type === 'defense.layer.verdict'
   }

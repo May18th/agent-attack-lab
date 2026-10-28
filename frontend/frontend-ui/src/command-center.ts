@@ -610,6 +610,8 @@ async function startBattle() {
   if (state.starting) return
   const topic = element<HTMLInputElement>('themeInput').value.trim()
   const difficulty = selectedDifficulty()
+  const requestedRounds = Number.parseInt(element<HTMLInputElement>('roundInput').value, 10)
+  const rounds = Number.isFinite(requestedRounds) ? Math.min(10, Math.max(3, requestedRounds)) : 3
   if (!topic || !difficulty) {
     showToast('请先填写主题并选择难度')
     return
@@ -620,11 +622,11 @@ async function startBattle() {
   start.textContent = '正在创建…'
   try {
     const battle = await json<Battle>('/battles?background=true', {
-      method: 'POST', body: JSON.stringify({ topic, difficulty }),
+      method: 'POST', body: JSON.stringify({ topic, difficulty, rounds }),
     })
     element('cfgMask').classList.remove('open')
     beginLiveBattle(battle)
-    showToast(`真实战局 ${battle.id} 已创建；回合数由后端生成样本数决定`)
+    showToast(`真实战局 ${battle.id} 已创建；共 ${rounds} 回合`)
     await followEvents(battle.id)
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) showLogin(error.message)
@@ -654,6 +656,7 @@ function beginLiveBattle(battle: Battle) {
   element('detailTopic').textContent = `实时战局 · ${battle.topic}`
   element('detailMeta').textContent = `${battle.id} · ${difficultyText[battle.difficulty]} · 进行中`
   element('tlContent').innerHTML = '<div class="axis"></div>'
+  element('payloadBody').innerHTML = '<div class="payload-empty">回合 payload 实时输出区</div>'
   element('tlSub').textContent = `主题：${battle.topic} · 难度：${difficultyText[battle.difficulty]} · LIVE 后端事件`
   const status = element('liveStatus')
   status.textContent = '正在连接真实事件流'
@@ -738,6 +741,7 @@ function waitForReconnect(delay: number, signal: AbortSignal) {
 
 function renderLiveEvent(event: BattleEvent) {
   const round = Number(event.data.round || 0)
+  if (event.type === 'attack.sample.generated') appendLivePayload(event, round)
   const entries = liveTimelineProjector.push(event)
   if (event.type.startsWith('agent.call.')) {
     const role = event.data.agentRole === 'defender' ? '防守方' : '攻击方'
@@ -747,7 +751,7 @@ function renderLiveEvent(event: BattleEvent) {
   for (const entry of entries) {
     if (entry.kind === 'round') {
       ensureRound(entry.round)
-      element('liveRounds').textContent = `${entry.round}/—`
+      element('liveRounds').textContent = `${entry.round}/${state.selected?.rounds || '—'}`
       continue
     }
     appendTimeline(
@@ -764,6 +768,25 @@ function renderLiveEvent(event: BattleEvent) {
   if (event.type === 'round.completed') void refreshBattleVisualizations(event.battleId)
 }
 
+function appendLivePayload(event: BattleEvent, round: number) {
+  const body = element<HTMLDivElement>('payloadBody')
+  body.querySelector('.payload-empty')?.remove()
+  const sample = event.data.sample && typeof event.data.sample === 'object'
+    ? event.data.sample as Sample
+    : {}
+  const item = document.createElement('div')
+  item.className = 'live-payload-item'
+  item.style.cssText = 'margin-bottom:10px;padding:8px 10px;border-left:3px solid #ff8f6b;background:#1a2230;border-radius:4px;font-size:12px;color:#c8d0dc;line-height:1.6;overflow-wrap:anywhere;word-break:break-word;min-width:0'
+  const heading = document.createElement('div')
+  heading.style.cssText = 'color:#ff8f6b;font-weight:600;margin-bottom:4px'
+  heading.textContent = `R${round} · Attacker Payload`
+  const content = document.createElement('div')
+  content.textContent = sample.content || '后端未返回样本文本'
+  item.append(heading, content)
+  body.appendChild(item)
+  body.scrollTop = body.scrollHeight
+}
+
 function ensureRound(round: number) {
   if (!round || document.querySelector(`.round[data-live-round="${round}"]`)) return
   const marker = document.createElement('div')
@@ -778,9 +801,9 @@ function eventTiming(event: BattleEvent) {
   const nested = timing && typeof timing === 'object' ? timing as Record<string, unknown> : {}
   const read = (key: string) => event.data[key] ?? nested[key] ?? ''
   return {
-    startedAt: String(read('startedAt') || read('startTime') || ''),
-    endedAt: String(read('endedAt') || read('endTime') || ''),
-    responseMs: Number(read('responseMs') || 0),
+    startedAt: String(read('startedAt') || read('startTime') || event.createdAt),
+    endedAt: String(read('endedAt') || read('endTime') || event.createdAt),
+    responseMs: Number(read('responseMs') || read('durationMs') || 0),
   }
 }
 
@@ -809,7 +832,7 @@ function appendTimeline(
   meta.className = 'meta'
   const start = timing?.startedAt ? formatTime(timing.startedAt) : ''
   const end = timing?.endedAt ? formatTime(timing.endedAt) : ''
-  const response = Number.isFinite(timing?.responseMs) && (timing?.responseMs ?? 0) > 0
+  const response = Number.isFinite(timing?.responseMs) && (timing?.responseMs ?? 0) >= 0
     ? `响应 ${(timing!.responseMs / 1000).toFixed(2)}s`
     : ''
   meta.textContent = start || end || response
@@ -834,6 +857,18 @@ function appendTimeline(
 }
 
 function eventTitle(event: BattleEvent) {
+  const stageId = String(event.data.stageId || '').toUpperCase()
+  const attackStages: Record<string, string> = {
+    A1: '读取战局配置', A2: '选择样本与攻击面', A3: '选择攻击意图与策略',
+    A4: '构建攻击 Payload', A5: '授权与格式自检', A6: '相似度元数据校验',
+    A7: '正式提交', A8: '结果接收与复盘',
+  }
+  if (/^A[1-8]$/.test(stageId)) return `${stageId} · ${attackStages[stageId]}`
+  if (/^L[0-3]-\d+$/.test(stageId)) {
+    const name = String(event.data.checkName || '').trim()
+    return `${stageId}${name ? ` · ${name}` : ''}`
+  }
+  if (event.type === 'arbiter.layer.started') return `${stageId} 层检测开始`
   return ({
     'battle.created': '战局已创建', 'battle.retry': '战局已重新提交', 'attack.started': '攻击阶段开始',
     'attack.sample.generated': '攻击方生成样本', 'attack.completed': '攻击样本生成完成', 'attack.compromised': '目标验证结果',
@@ -842,25 +877,35 @@ function eventTitle(event: BattleEvent) {
     'defense.layer.started': '防御层检测开始', 'defense.check.started': '防御检查点开始',
     'defense.layer.verdict': '防御检查点裁决', 'defense.safe_control': '安全对照测试',
     'defense.completed': '防守分析完成', 'arbiter.similarity.checked': 'A6 · 相似度元数据校验',
-    'arbiter.layer.confirmed': 'Arbiter 确认本层结果', 'arbiter.verdict': 'Arbiter 最终裁决',
+    'arbiter.layer.confirmed': 'Arbiter · 确认本层结果', 'arbiter.verdict': 'Arbiter · 最终分类',
+    'arbiter.safe_control': 'Arbiter · 安全对照测试', 'arbiter.round.scored': 'Arbiter · 本回合评分',
     'round.settled': '本回合已结算', 'battle.completed': '战局完成', 'battle.failed': '战局失败',
   } as Record<string, string>)[event.type] || event.type
 }
 
 function eventDescription(event: BattleEvent) {
   const data = event.data
+  if (event.type === 'arbiter.round.scored') {
+    const scores = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : {}
+    return `Attacker ${text(scores.attacker)} · Defender ${text(scores.defender)}`
+  }
+  if (typeof data.statement === 'string' && data.statement) return data.statement
   if (event.type === 'attack.sample.generated') return `第 ${text(data.round)} 轮样本已生成 · ${sourceLabel(String(data.attackerSource || ''))}`
   if (event.type === 'attack.completed') return `攻击方共生成 ${text(data.sampleCount)} 个样本 · ${sourceLabel(String(data.attackerSource || ''))}`
   if (event.type === 'round.started') return `正在检测第 ${text(data.round)} 轮 · ${sourceLabel(String(data.defenderSource || ''))}`
   if (event.type === 'round.completed') return `命中 ${Array.isArray(data.caught) ? data.caught.length : 0} 条规则，记录 ${Array.isArray(data.risks) ? data.risks.length : 0} 条风险，提出 ${Array.isArray(data.fixed) ? data.fixed.length : 0} 条建议`
   if (event.type === 'defense.layer.started') return `${text(data.layer || data.stageId)} · 开始检查 ${Array.isArray(data.applicableChecks) ? data.applicableChecks.length : 0} 项`
-  if (event.type === 'defense.layer.verdict') return `${text(data.stageId)} · ${statusLabel((event.status || data.status || 'pending') as Battle['status'])}`
+  if (event.type === 'defense.layer.verdict') {
+    const detail = String(data.checkDescription || '')
+    return `${detail}${detail ? ' · ' : ''}${statusLabel((event.status || data.status || 'pending') as Battle['status'])}`
+  }
   if (event.type === 'arbiter.similarity.checked') {
     const similarity = typeof data.similarity === 'number' ? data.similarity.toFixed(3) : 'baseline'
     return `与上一轮 Payload 相似度 ${similarity} · 阈值 0.850 · ${text(data.sourceType || 'unresolved')}`
   }
   if (event.type === 'arbiter.layer.confirmed') return `确认第 ${text(data.layerIndex)} 层证据完整`
   if (event.type === 'arbiter.verdict') return `最终分类：${text(data.classification || event.status)}`
+  if (event.type === 'defense.safe_control') return String(data.statement || `正常样本判定：${text(data.classification || event.status)}`)
   if (event.type === 'attack.compromised') {
     return data.simulated === true
       ? '模拟验证证据；不代表真实目标沦陷'

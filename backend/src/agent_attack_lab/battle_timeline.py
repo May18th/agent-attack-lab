@@ -178,7 +178,9 @@ def emit_defense_and_arbiter_stages(
         "agentRole": "defender",
         "correlationId": correlation_id,
     }
-    for layer in derive_round_layer_trace(topic, defense):
+    trace = derive_round_layer_trace(topic, defense)
+    blocked_check: Mapping[str, Any] | None = None
+    for layer in trace:
         layer_data = {
             **common,
             "stageId": layer["layer"],
@@ -188,11 +190,24 @@ def emit_defense_and_arbiter_stages(
             "applicableChecks": layer["applicableChecks"],
             "evidenceBasis": layer["basis"],
         }
+        add_event(
+            "arbiter.layer.started",
+            "running",
+            {
+                **layer_data,
+                "agentRole": "arbiter",
+                "statement": f"{layer['layer']} 层检测开始。",
+            },
+        )
         add_event("defense.layer.started", "running", layer_data)
         for check in layer["checks"]:
+            if check["status"] == "skipped-by-block":
+                continue
             check_data = {
                 **layer_data,
                 "stageId": check["stageId"],
+                "checkName": check["name"],
+                "checkDescription": check["description"],
                 "status": check["status"],
                 "evidenceIds": check["evidenceIds"],
             }
@@ -202,6 +217,8 @@ def emit_defense_and_arbiter_stages(
                 check["status"],
                 {**check_data, "classification": check["status"]},
             )
+            if check["status"] == "blocked" and blocked_check is None:
+                blocked_check = check
         if layer["confirmedPassed"]:
             add_event(
                 "arbiter.layer.confirmed",
@@ -215,7 +232,25 @@ def emit_defense_and_arbiter_stages(
                 },
             )
 
-    classification = _arbiter_classification(arbiter_review)
+    all_layers_passed = len(trace) == 4 and all(
+        check["status"] == "passed" for layer in trace for check in layer["checks"]
+    )
+    classification = (
+        "blocked"
+        if blocked_check is not None
+        else "full-penetration"
+        if all_layers_passed
+        else _arbiter_classification(arbiter_review)
+    )
+    blocked_at = str(blocked_check.get("stageId")) if blocked_check else None
+    blocked_name = str(blocked_check.get("name")) if blocked_check else None
+    statement = (
+        f"样本在“{blocked_at} · {blocked_name}”被有效阻断，判定 blocked。"
+        if blocked_at and blocked_name
+        else "攻击效果在控制窗口结束后仍存在，判定 full-penetration。"
+        if classification == "full-penetration"
+        else "现有证据不足以完成唯一分类，判定 unresolved。"
+    )
     verdict_data = {
         "round": round_number,
         "stageId": "ARBITER",
@@ -229,31 +264,67 @@ def emit_defense_and_arbiter_stages(
         "needsHumanReview": arbiter_review.get("needsHumanReview"),
         "agentSource": arbiter_review.get("agentSource"),
         "verificationMode": verification.get("mode"),
+        "blockedAt": blocked_at,
+        "blockedCheckName": blocked_name,
+        "statement": statement,
     }
     for key in ("attackSuccess", "defenseSuccess"):
         if isinstance(verification.get(key), bool):
             verdict_data[key] = verification[key]
     add_event("arbiter.verdict", "completed", verdict_data)
 
-    safe_control = defense.get("safeControl")
-    if isinstance(safe_control, Mapping):
-        evidence = safe_control.get("evidence")
-        safe_status = str(safe_control.get("status") or "unresolved")
-        if safe_status == "passed" and (not isinstance(evidence, list) or not evidence):
-            safe_status = "unresolved"
-        safe_data = {
-            **common,
-            "stageId": "SAFE-CONTROL",
-            **dict(safe_control),
-            "status": safe_status,
-        }
-        add_event(
-            "defense.safe_control",
-            safe_status,
-            {**safe_data, "classification": safe_status},
-        )
-
     return classification
+
+
+def emit_post_verdict_stages(
+    add_event: AddEvent,
+    *,
+    round_number: int,
+    defense: Mapping[str, Any],
+    classification: str,
+    correlation_id: str,
+) -> None:
+    """Emit the independent normal-sample control after A8.
+
+    Missing control evidence stays unresolved; the timeline never invents a
+    successful normal-sample release merely to complete the visual sequence.
+    """
+    add_event(
+        "arbiter.safe_control",
+        "completed",
+        {
+            "round": round_number,
+            "stageId": "SAFE-CONTROL",
+            "agentRole": "arbiter",
+            "correlationId": correlation_id,
+            "classification": classification,
+            "statement": "攻击样本最终分类完成，开始独立安全对照测试。",
+        },
+    )
+    safe_control = defense.get("safeControl")
+    control_data = dict(safe_control) if isinstance(safe_control, Mapping) else {}
+    evidence = control_data.get("evidence")
+    safe_status = str(control_data.get("status") or "unresolved")
+    if safe_status == "passed" and (not isinstance(evidence, list) or not evidence):
+        safe_status = "unresolved"
+    add_event(
+        "defense.safe_control",
+        safe_status,
+        {
+            "round": round_number,
+            "stageId": "D-07",
+            "agentRole": "defender",
+            "correlationId": correlation_id,
+            **control_data,
+            "status": safe_status,
+            "classification": safe_status,
+            "statement": (
+                "正常样本已正确放行。"
+                if safe_status == "passed"
+                else "缺少正常样本放行证据，安全对照结果为 unresolved。"
+            ),
+        },
+    )
 
 
 def emit_attack_review(

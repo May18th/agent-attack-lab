@@ -19,6 +19,24 @@ _LAYER_NAMES = (
     "审计监测恢复",
 )
 
+CHECK_DEFINITIONS: dict[str, tuple[str, str]] = {
+    "L0-1": ("格式标准化", "统一编码、空白和结构格式，生成可稳定检查的规范化输入。"),
+    "L0-2": ("基础黑名单拦截", "检查已知高风险关键词和规则特征，命中时立即阻断。"),
+    "L0-3": ("输入边界校验", "检查长度、嵌套结构和输入边界，拒绝畸形或越界内容。"),
+    "L1-1": ("意图识别", "识别请求真实意图以及未授权的信息获取或操作目标。"),
+    "L1-2": ("推理链路约束", "检查请求是否试图突破既定推理边界或改变系统目标。"),
+    "L1-3": ("欺骗 / 越狱语义识别", "识别诱导、欺骗、越狱和指令覆盖等高风险语义。"),
+    "L2-1": ("工具白名单校验", "确认目标工具和动作位于当前授权白名单内。"),
+    "L2-2": ("参数风险检测", "检查注入、路径遍历、SSRF 和其他高风险参数特征。"),
+    "L2-3": ("权限鉴权", "验证当前主体、资源和动作之间的授权关系。"),
+    "L2-4": ("调用时序约束", "检查调用顺序、频率、重放键和批量探测行为。"),
+    "L2-5": ("模拟执行核验", "在隔离环境验证工具效果，不触达未授权真实目标。"),
+    "L3-1": ("全链路审计", "关联 Attacker、Defender、工具和 Arbiter 的完整事件链。"),
+    "L3-2": ("执行结果异常监测", "监测模拟执行结果、状态变化和异常影响。"),
+    "L3-3": ("应急控制与恢复", "在控制窗口内执行隔离、撤销、回滚和恢复验证。"),
+    "L3-4": ("最终分类", "汇总证据并等待 Arbiter 输出唯一最终分类。"),
+}
+
 LAYER_CHECK_IDS: tuple[tuple[str, ...], ...] = (
     ("L0-1", "L0-2", "L0-3"),
     ("L1-1", "L1-2", "L1-3"),
@@ -120,6 +138,7 @@ def derive_round_layer_trace(
             break
         decisions = []
         for check_index, stage_id in enumerate(checks):
+            check_name, check_description = CHECK_DEFINITIONS[stage_id]
             if block_index == layer_index and blocking_check is not None:
                 if check_index < blocking_check:
                     status = "passed"
@@ -132,6 +151,8 @@ def derive_round_layer_trace(
             decisions.append(
                 {
                     "stageId": stage_id,
+                    "name": check_name,
+                    "description": check_description,
                     "status": status,
                     "evidenceIds": evidence_ids if status == "blocked" else [],
                 }

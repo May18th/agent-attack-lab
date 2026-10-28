@@ -715,20 +715,19 @@ def test_background_battle_persists_staged_events() -> None:
         events = live_client.get(f"/battles/{battle_id}/events").json()
         completed_score = state.battle_store.get_score(battle_id)
     expected_types = ["battle.created", "attack.started"]
-    expected_types.extend(["agent.call.started", "agent.call.completed"])
-    expected_types.extend(
-        ["attack.sample.generated"] * len(detail["attackerOut"]["samples"])
-    )
-    expected_types.append("attack.completed")
     for _ in detail["attackerOut"]["samples"]:
         expected_types.extend(
             [
                 "round.started",
                 "agent.call.started",
                 "agent.call.completed",
+                "attack.sample.generated",
+                "agent.call.started",
+                "agent.call.completed",
                 "round.completed",
             ]
         )
+    expected_types.append("attack.completed")
     expected_types.extend(["defense.completed", "battle.completed"])
     legacy_types = set(expected_types)
     assert [
@@ -747,6 +746,34 @@ def test_background_battle_persists_staged_events() -> None:
     assert len(similarity_events) == round_count
     assert all(event["data"]["stageId"] == "A6" for event in similarity_events)
     assert sum(event["type"] == "arbiter.verdict" for event in events) == round_count
+    assert (
+        sum(event["type"] == "arbiter.safe_control" for event in events) == round_count
+    )
+    assert (
+        sum(event["type"] == "defense.safe_control" for event in events) == round_count
+    )
+    assert (
+        sum(event["type"] == "arbiter.round.scored" for event in events) == round_count
+    )
+    for round_number in range(1, round_count + 1):
+        round_events = [
+            event for event in events if event["data"].get("round") == round_number
+        ]
+        event_types = [event["type"] for event in round_events]
+        assert event_types.index("arbiter.similarity.checked") < event_types.index(
+            "attack.stage.completed", event_types.index("arbiter.similarity.checked")
+        )
+        assert event_types.index("arbiter.verdict") < max(
+            index
+            for index, event_type in enumerate(event_types)
+            if event_type == "attack.stage.completed"
+        )
+        assert event_types.index("defense.safe_control") < event_types.index(
+            "arbiter.round.scored"
+        )
+        assert event_types.index("arbiter.round.scored") < event_types.index(
+            "round.settled"
+        )
     assert all(
         {"agentRole", "round", "stageId"}.issubset(event["data"])
         for event in events
