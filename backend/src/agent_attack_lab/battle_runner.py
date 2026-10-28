@@ -42,6 +42,7 @@ from agent_attack_lab.target_verify import (
     configured_verify_mode,
     verify_round_live,
 )
+from agent_attack_lab.targets.controlled_target import describe_result
 
 if TYPE_CHECKING:
     from agent_attack_lab.models import BattleRequest
@@ -357,6 +358,8 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             verification = await verify_round_live(
                 sample, defense, mode=verification_mode
             )
+            if verification.get("mode") == "live":
+                defense["verificationStatus"] = describe_result(verification)
             if isinstance(verification.get("attackSuccess"), bool):
                 defense["attackSuccess"] = verification["attackSuccess"]
             if isinstance(verification.get("defenseSuccess"), bool):

@@ -54,6 +54,7 @@ from agent_attack_lab.target_verify import (
     configured_verify_mode,
     verify_round_live,
 )
+from agent_attack_lab.targets.controlled_target import describe_result
 
 router = APIRouter()
 
@@ -298,6 +299,8 @@ async def create_battle(
             verification = await verify_round_live(
                 sample, defense, mode=verification_mode
             )
+            if verification.get("mode") == "live":
+                defense["verificationStatus"] = describe_result(verification)
             verifications.append(verification)
             for key in ("attackSuccess", "defenseSuccess"):
                 if isinstance(verification.get(key), bool):
