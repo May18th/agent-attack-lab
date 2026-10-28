@@ -518,7 +518,7 @@ function renderRoundScoreDetails(rounds: readonly BattleRoundScore[]) {
     const details = document.createElement('details')
     details.className = 'score-details'
     const summary = document.createElement('summary')
-    summary.textContent = '评分细则（基础 95% + 响应 5%）'
+    summary.textContent = '评分细则（流程 40 + 效果 60 = 总分；响应分为独立诊断指标）'
     details.appendChild(summary)
     const columns = document.createElement('div')
     columns.className = 'score-cols'
@@ -530,9 +530,9 @@ function renderRoundScoreDetails(rounds: readonly BattleRoundScore[]) {
       column.appendChild(heading)
       column.appendChild(scoreRow('流程规范', values.processScore, 40))
       column.appendChild(scoreRow(tone === 'def' ? '实际防御效果' : '分层穿透效果', values.effectScore, 60))
-      column.appendChild(scoreRow('基础攻防分', values.baseScore, 100, 'total'))
-      column.appendChild(scoreRow('响应分', values.responseScore, 100))
-      column.appendChild(scoreRow('综合分', values.finalScore ?? role?.score, 100, 'weighted'))
+      column.appendChild(scoreRow('基础攻防分（流程+效果）', values.baseScore, 100, 'total'))
+      column.appendChild(scoreRow('响应分（不计入总分）', values.responseScore, 100))
+      column.appendChild(scoreRow('总分', values.finalScore ?? role?.score, 100, 'weighted'))
       const toggleLabel = document.createElement('label')
       toggleLabel.className = 'score-detail-check compact'
       const toggle = document.createElement('input')

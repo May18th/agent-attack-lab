@@ -441,11 +441,11 @@ def score_battle(
         },
         {
             "id": "A-RESPONSE",
-            "label": "响应分",
+            "label": "响应分（独立指标）",
             "score": attacker_response,
             "maxScore": 100,
             "group": "response",
-            "basis": "按攻击 Agent 调用平均 durationMs 计算。",
+            "basis": "诊断指标：按攻击 Agent 调用平均 durationMs 计算，不计入 100 分总分。",
         },
     ]
     defender_categories = defender_process + [
@@ -467,11 +467,11 @@ def score_battle(
         },
         {
             "id": "D-RESPONSE",
-            "label": "响应分",
+            "label": "响应分（独立指标）",
             "score": defender_response,
             "maxScore": 100,
             "group": "response",
-            "basis": "按防守 Agent 调用平均 durationMs 计算。",
+            "basis": "诊断指标：按防守 Agent 调用平均 durationMs 计算，不计入 100 分总分。",
         },
     ]
     return {
@@ -618,7 +618,9 @@ def _role_score(
         item["score"] for item in categories if item.get("group") == "response"
     )
     base_score = process_score + effect_score
-    final_score = round(base_score * 0.95 + response_score * 0.05, 2)
+    # v2.0 细则 §4.2 / §6 / §7：正式总分 = clamp(流程分 + 效果分, 0, 100)；
+    # 响应时间是独立诊断指标，单列展示，不得混入总分（旧 0.95/0.05 加权已废止）。
+    final_score = round(min(float(MAX_SCORE), max(0.0, float(base_score))), 2)
     return {
         "status": "scored",
         "score": final_score,
