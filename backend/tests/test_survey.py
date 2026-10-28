@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agent_attack_lab import config, survey
+from agent_attack_lab import config, security, survey
 from agent_attack_lab.routers import survey as survey_router
 
 
@@ -85,6 +85,21 @@ def test_csv_export_has_header_and_rows(client, monkeypatch) -> None:
     text = response.text
     assert text.lstrip("\ufeff").startswith("id,received_at,client_ip,user_agent")
     assert "命中证据 > 攻击样本 > 裁决结果 > 战报" in text
+
+
+def test_csv_export_allows_admin_browser_session(client, monkeypatch) -> None:
+    """后台登录用的是会话 cookie，没配 API Key 时也要能导出。"""
+    monkeypatch.setattr(config, "api_key", "")
+    monkeypatch.setattr(config, "browser_password", "admin-pass")
+    client.post("/api/survey/submit", json=_payload())
+
+    assert client.get("/api/survey/export.csv").status_code == 401
+
+    client.cookies.set(config.browser_cookie_name, security.issue_browser_session())
+    response = client.get("/api/survey/export.csv")
+    assert response.status_code == 200
+    assert response.headers["x-total-count"] == "1"
+    assert response.headers["content-disposition"].endswith('survey-responses.csv"')
 
 
 def test_load_all_skips_broken_lines(tmp_path, monkeypatch) -> None:

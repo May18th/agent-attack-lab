@@ -1,7 +1,8 @@
 """用户调研问卷：页面托管、提交、导出。
 
 页面由本服务托管在 ``/survey``，与提交接口同源，避免 file:// 打开时的跨域问题。
-提交接口公开（问卷要发给人填），但有速率限制与字段长度约束；导出接口需要 API Key。
+提交接口公开（问卷要发给人填），但有速率限制与字段长度约束；
+读取与导出接口要求后台身份：浏览器登录会话或 ``x-api-key`` 二者其一。
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ def submit_survey(payload: SurveySubmission, request: Request) -> dict[str, Any]
 
 @router.get(
     "/api/survey/responses",
-    dependencies=[Depends(security.api_key_dependency)],
+    dependencies=[Depends(security.check_browser_or_api_auth)],
 )
 def list_survey_responses() -> dict[str, Any]:
     rows = survey.load_all()
@@ -98,11 +99,17 @@ def list_survey_responses() -> dict[str, Any]:
 
 @router.get(
     "/api/survey/export.csv",
-    dependencies=[Depends(security.api_key_dependency)],
+    dependencies=[Depends(security.check_browser_or_api_auth)],
 )
 def export_survey_csv() -> PlainTextResponse:
+    rows = survey.load_all()
     return PlainTextResponse(
-        survey.to_csv(),
+        survey.to_csv(rows),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="survey-responses.csv"'},
+        headers={
+            "Content-Disposition": 'attachment; filename="survey-responses.csv"',
+            # 后台导出按钮用它显示份数，不必再拉一次全量数据。
+            "X-Total-Count": str(len(rows)),
+            "Cache-Control": "no-store",
+        },
     )
