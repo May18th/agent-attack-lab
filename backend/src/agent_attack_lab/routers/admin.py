@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from agent_attack_lab import events as events_api
 from agent_attack_lab import security, state
 from agent_attack_lab.agents.rule_discovery import suggest_rule_candidate
+from agent_attack_lab.library_seed import apply_seed
 from agent_attack_lab.models import (
     AdminRuleRequest,
     AdminSampleRequest,
@@ -170,6 +171,28 @@ def delete_admin_rule(rule_id: str, request: Request) -> Response:
         raise HTTPException(status_code=404, detail="防守规则不存在")
     admin_write_audit(request, "admin.rule.deleted", {"ruleId": rule_id})
     return Response(status_code=204)
+
+
+@router.post(
+    "/admin/library/seed",
+    summary="载入内置示例样本与规则",
+    description="幂等补齐内置示例库：已存在的示例 ID 会被跳过，不会覆盖管理员已有条目。",
+    tags=["管理员资源"],
+)
+def seed_admin_library(request: Request) -> dict[str, Any]:
+    security.check_browser_or_api_auth(request)
+    result = apply_seed(state.battle_store)
+    admin_write_audit(
+        request,
+        "admin.library.seeded",
+        {
+            "samplesCreated": result["samples"]["created"],
+            "samplesSkipped": result["samples"]["skipped"],
+            "rulesCreated": result["rules"]["created"],
+            "rulesSkipped": result["rules"]["skipped"],
+        },
+    )
+    return result
 
 
 @router.get("/admin/audit-logs", summary="查询管理员审计日志", tags=["管理员资源"])

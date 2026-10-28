@@ -7,7 +7,7 @@ import { PRESET_THEMES, THEME_STORAGE_KEY } from './themes'
 
 vi.mock('./adminApi', async () => {
   const actual = await vi.importActual<typeof import('./adminApi')>('./adminApi')
-  return { ...actual, getAdminSession: vi.fn(), loginAdminSession: vi.fn(), logoutAdminSession: vi.fn(), getAdminDashboardSummary: vi.fn(), getAdminMetrics: vi.fn(), listAdminBattles: vi.fn(), getAdminExternalCases: vi.fn(), getAdminBattleDetail: vi.fn(), getAdminBattleScore: vi.fn(), getAdminBattleEvents: vi.fn(), getAdminBattleRounds: vi.fn(), getAdminBattleAudit: vi.fn(), getAdminReport: vi.fn(), retryAdminBattle: vi.fn(), cancelAdminBattle: vi.fn(), deleteAdminBattle: vi.fn(), createAdminBattle: vi.fn(), listAdminSamples: vi.fn(), createAdminSample: vi.fn(), updateAdminSample: vi.fn(), deleteAdminSample: vi.fn(), listAdminRules: vi.fn(), createAdminRule: vi.fn(), updateAdminRule: vi.fn(), deleteAdminRule: vi.fn(), listAdminAuditLogs: vi.fn() }
+  return { ...actual, getAdminSession: vi.fn(), loginAdminSession: vi.fn(), logoutAdminSession: vi.fn(), getAdminDashboardSummary: vi.fn(), getAdminMetrics: vi.fn(), listAdminBattles: vi.fn(), getAdminExternalCases: vi.fn(), getAdminBattleDetail: vi.fn(), getAdminBattleScore: vi.fn(), getAdminBattleEvents: vi.fn(), getAdminBattleRounds: vi.fn(), getAdminBattleAudit: vi.fn(), getAdminReport: vi.fn(), retryAdminBattle: vi.fn(), cancelAdminBattle: vi.fn(), deleteAdminBattle: vi.fn(), createAdminBattle: vi.fn(), listAdminSamples: vi.fn(), createAdminSample: vi.fn(), updateAdminSample: vi.fn(), deleteAdminSample: vi.fn(), listAdminRules: vi.fn(), createAdminRule: vi.fn(), updateAdminRule: vi.fn(), deleteAdminRule: vi.fn(), listAdminAuditLogs: vi.fn(), seedAdminLibrary: vi.fn(), exportAdminSurveyCsv: vi.fn() }
 })
 
 const battle = { id: 'b-1', difficulty: 'high' as const, topic: '测试战局', status: 'failed', createdAt: '2026-10-18T00:00:00Z', attackerOut: { samples: [] }, defenderOut: [] }
@@ -536,5 +536,72 @@ describe('AdminApp', () => {
     expect(await screen.findByText('战局 ID')).toBeInTheDocument()
     expect(screen.getByText('战局创建')).toBeInTheDocument() // eventType 走中文映射
     expect(screen.queryByText(/"battleId":/)).not.toBeInTheDocument()
+  })
+
+  it('turns an empty sample library into a guided one-click import', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.listAdminSamples).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.seedAdminLibrary).mockResolvedValue({ samples: { created: 6, skipped: 0 }, rules: { created: 7, skipped: 0 } })
+    render(<AdminApp />)
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
+    fireEvent.click(screen.getByRole('tab', { name: '样本库' }))
+
+    // 空库要说明用途，而不是只丢一句“暂无”
+    expect(await screen.findByText('暂无攻击样本')).toBeInTheDocument()
+    expect(screen.getByText(/样本库是攻击方的弹药/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '载入内置示例样本' }))
+    await waitFor(() => expect(adminApi.seedAdminLibrary).toHaveBeenCalledTimes(1))
+    expect(await screen.findByRole('status')).toHaveTextContent('新增样本 6 条')
+  })
+
+  it('renders each audit row as a readable sentence with Chinese status and role', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.listAdminAuditLogs).mockResolvedValue([
+      { id: 'a-1', createdAt: '2026-10-24T02:00:00Z', actorRole: 'admin', eventType: 'admin.sample.created', status: 'accepted', data: { sampleId: 'sample-1', topic: '提示注入与输入校验' } },
+      { id: 'a-2', createdAt: '2026-10-24T02:01:00Z', actorRole: 'http', eventType: 'http.request', status: 'completed', data: { method: 'GET', path: '/admin/samples', statusCode: 200, durationMs: 12 } },
+    ] as never)
+    render(<AdminApp />)
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
+    fireEvent.click(screen.getByRole('tab', { name: '审计日志' }))
+
+    expect(await screen.findByText('新增攻击样本')).toBeInTheDocument()
+    expect(screen.getByText('管理员')).toBeInTheDocument()
+    expect(screen.getByText('已受理')).toBeInTheDocument()
+    expect(screen.getByText('管理员新增攻击样本：提示注入与输入校验（sample-1）')).toBeInTheDocument()
+    // 接口请求不再显示成裸事件名，而是一行可读的结果串
+    expect(screen.getByText('GET /admin/samples → 200 · 12 ms')).toBeInTheDocument()
+    expect(screen.queryByText('accepted')).not.toBeInTheDocument()
+    expect(screen.queryByText('http.request')).not.toBeInTheDocument()
+  })
+
+  it('exports the survey CSV from the management module and reports how many responses were included', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.exportAdminSurveyCsv).mockResolvedValue({ blob: new Blob(['id,received_at\n']), filename: 'survey-responses.csv', total: 3 })
+    const createObjectURL = vi.fn(() => 'blob:survey')
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+    render(<AdminApp />)
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: '导出调查问卷（CSV）' }))
+
+    await waitFor(() => expect(adminApi.exportAdminSurveyCsv).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText('已导出 3 份问卷：survey-responses.csv')).toBeInTheDocument()
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
   })
 })

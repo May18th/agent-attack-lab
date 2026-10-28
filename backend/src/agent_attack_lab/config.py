@@ -153,3 +153,16 @@ event_data_max_bytes = _env_int("AGENT_EVENT_DATA_MAX_BYTES", 32768, minimum=102
 external_cases_database = Path(
     os.getenv("AGENT_EXTERNAL_CASE_DB", ".data/external_security_cases.sqlite3")
 )
+
+# --- Admin library bootstrap ------------------------------------------------
+# 样本库/规则库建表后是空的，而攻击方/防守方都要读它们拿知识上下文。
+# 默认开启：仅在「首次初始化且两库都为空」时写入内置示例，之后不再干预
+# （管理员删空也不会被重启重填，仍可用管理页的「载入内置示例」手动补齐）。
+admin_library_autoseed = os.getenv(
+    "ADMIN_LIBRARY_AUTOSEED", "1"
+).strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}

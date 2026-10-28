@@ -422,6 +422,34 @@
 @media (max-width: 720px) { .auth-solar-scene { left: 50%; top: 22%; width: min(100vw, 600px); height: min(54vh, 380px); transform: translate(-50%, -50%); opacity: .72; }.auth-solar-caption { left: 50%; bottom: 1%; transform: translateX(-50%); white-space: nowrap; }.auth-solar-caption strong { font-size: 11px; }.auth-solar-readout { left: 15%; top: 12%; font-size: 8px; } }
 @media (prefers-reduced-motion: reduce) { .auth-solar-scene canvas { opacity: .92; } }
 
+/* ===== 样本库/规则库空态引导 ===== */
+.library-empty{display:grid;gap:10px;padding:20px;border:1px dashed rgba(148,178,255,.3);border-radius:10px;background:rgba(6,11,24,.42);color:#b7c7d8}
+.library-empty strong{color:#e9effc;font-size:14px}
+.library-empty p{margin:0;font-size:12px;line-height:1.7;color:#a8bacd}
+.library-empty ul{margin:0;padding-left:18px;font-size:12px;line-height:1.8;color:#8ca0b6}
+.library-empty button{justify-self:start}
+.management-notice{margin:0 0 10px;padding:8px 12px;border:1px solid rgba(77,163,255,.35);border-radius:8px;background:rgba(77,163,255,.12);color:#bcdcff;font-size:12px;line-height:1.6}
+
+/* ===== 审计日志可读性 ===== */
+.audit-hint{margin-bottom:12px;padding:10px 12px;border:1px solid rgba(148,178,255,.18);border-radius:8px;background:rgba(6,11,24,.42);font-size:12px;color:#a8bacd}
+.audit-hint summary{cursor:pointer;color:#9fc4e8;font-weight:600}
+.audit-hint dl{display:grid;gap:4px;margin:10px 0 0}
+.audit-hint dl div{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px}
+.audit-hint dt{color:#7f96ab;font-weight:600}
+.audit-hint dd{margin:0;color:#a8bacd}
+.audit-hint p{margin:10px 0 0;color:#8ca0b6;line-height:1.7}
+.audit-count{margin:0 0 2px;color:#8ca0b6;font-size:11px}
+.audit-row{display:flex!important;flex-direction:column;gap:8px}
+.audit-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0}
+.audit-head time{font-family:"Cascadia Code",Consolas,monospace;font-size:11px;color:#8ba5bd;white-space:nowrap}
+.audit-head strong{color:#dbe8f6;font-size:12px}
+.audit-event{color:#a9c8e6;font-size:12px}
+.audit-status{padding:1px 9px;border-radius:999px;border:1px solid rgba(148,178,255,.24);font-size:11px;color:#a8bacd;line-height:1.7}
+.audit-status-accepted{color:#8fd0ff;border-color:rgba(77,163,255,.4);background:rgba(77,163,255,.12)}
+.audit-status-completed,.audit-status-ok,.audit-status-success{color:#9be3b4;border-color:rgba(98,184,120,.4);background:rgba(98,184,120,.12)}
+.audit-status-failed{color:#ff9ba5;border-color:rgba(255,93,108,.45);background:rgba(255,93,108,.12)}
+.audit-status-running,.audit-status-pending{color:#e1c58d;border-color:rgba(225,197,141,.4);background:rgba(225,197,141,.1)}
+.audit-summary{margin:0!important;color:#cfdcea;font-size:12px;line-height:1.6;white-space:normal!important}
 /* 攻击强度演进：每轮一行，条状长度即强度分（S1-S4） */
 .strength-track{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
 .strength-row{display:grid;grid-template-columns:44px 40px 96px 56px 128px 1fr;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #1d2a36;font-size:12px}

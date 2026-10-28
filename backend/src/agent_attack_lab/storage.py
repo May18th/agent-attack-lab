@@ -37,6 +37,28 @@ def _sanitize_audit_data(value: Any) -> Any:
     return str(value)
 
 
+def _normalize_audit_time(value: str | None) -> str | None:
+    """把审计筛选的时间边界统一成 created_at 的存储格式。
+
+    ``created_at`` 由 ``datetime.now(UTC).isoformat()`` 写入，形如
+    ``2026-10-28T10:53:51.960000+00:00``。前端 ``datetime-local`` 只给
+    ``2026-10-28T18:53`` 这样的本地无时区值，直接做字符串比较会差一个时区；
+    解析失败时退回原串，保证老数据/手工传参仍能查询。
+    """
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+
 class _PooledResult:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
@@ -398,6 +420,13 @@ class BattleStore:
                 )
                 """
             )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_library_meta (
+                    meta_key VARCHAR(191) PRIMARY KEY, meta_value TEXT NOT NULL
+                )
+                """
+            )
         elif self._is_mysql:
             self._connection.execute(
                 """
@@ -417,6 +446,13 @@ class BattleStore:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_library_meta (
+                    meta_key VARCHAR(191) PRIMARY KEY, meta_value TEXT NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
         else:
             self._connection.execute(
                 """
@@ -433,6 +469,13 @@ class BattleStore:
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, condition TEXT NOT NULL,
                     action TEXT NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                )
+                """
+            )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_library_meta (
+                    meta_key TEXT PRIMARY KEY, meta_value TEXT NOT NULL
                 )
                 """
             )
@@ -937,6 +980,47 @@ class BattleStore:
             ).fetchone()
         return int(row["total"])
 
+    def get_admin_library_meta(self, key: str) -> str | None:
+        """Read a bootstrap marker for the admin libraries (e.g. seeded-once)."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT meta_value FROM admin_library_meta WHERE meta_key = "
+                + self._placeholder,
+                (key,),
+            ).fetchone()
+        return str(row["meta_value"]) if row is not None else None
+
+    def delete_admin_library_meta(self, key: str) -> None:
+        """清掉初始化标记，让下次启动重新补齐内置示例（运维/测试用）。"""
+        with self._lock:
+            self._connection.execute(
+                "DELETE FROM admin_library_meta WHERE meta_key = " + self._placeholder,
+                (key,),
+            )
+            self._connection.commit()
+
+    def set_admin_library_meta(self, key: str, value: str) -> None:
+        with self._lock:
+            if self._is_postgres:
+                sql = (
+                    "INSERT INTO admin_library_meta (meta_key, meta_value) "
+                    "VALUES (%s, %s) ON CONFLICT (meta_key) "
+                    "DO UPDATE SET meta_value = EXCLUDED.meta_value"
+                )
+            elif self._is_mysql:
+                sql = (
+                    "INSERT INTO admin_library_meta (meta_key, meta_value) "
+                    "VALUES (%s, %s) ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)"
+                )
+            else:
+                sql = (
+                    "INSERT INTO admin_library_meta (meta_key, meta_value) "
+                    "VALUES (?, ?) ON CONFLICT(meta_key) "
+                    "DO UPDATE SET meta_value = excluded.meta_value"
+                )
+            self._connection.execute(sql, (key, value))
+            self._connection.commit()
+
     @staticmethod
     def _library_record(row: dict[str, Any], kind: str) -> dict[str, Any]:
         if kind == "sample":
@@ -1150,15 +1234,24 @@ class BattleStore:
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
-        for column, value, operator in (
-            ("created_at", from_time, ">="),
-            ("created_at", to_time, "<="),
-            ("actor_role", actor_role, "="),
-            ("event_type", event_type, "="),
-        ):
-            if value:
-                clauses.append(f"{column} {operator} {self._placeholder}")
-                params.append(value)
+        # 时间列存的是 UTC ISO 串（带 +00:00 和微秒），前端 datetime-local 给的是本地
+        # 无时区值；必须先归一化，否则筛选边界会整体偏掉时区差。
+        normalized_from = _normalize_audit_time(from_time)
+        normalized_to = _normalize_audit_time(to_time)
+        if normalized_from:
+            clauses.append(f"created_at >= {self._placeholder}")
+            params.append(normalized_from)
+        if normalized_to:
+            clauses.append(f"created_at <= {self._placeholder}")
+            params.append(normalized_to)
+        # 角色与操作类型按子串匹配：缓存里存的是 admin.sample.created 这类全名，
+        # 精确等值会让「样本」「admin」这类人话输入永远查不到东西。
+        if actor_role and actor_role.strip():
+            clauses.append(f"actor_role LIKE {self._placeholder}")
+            params.append(f"%{actor_role.strip()}%")
+        if event_type and event_type.strip():
+            clauses.append(f"event_type LIKE {self._placeholder}")
+            params.append(f"%{event_type.strip()}%")
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         params.append(limit)
         with self._lock:

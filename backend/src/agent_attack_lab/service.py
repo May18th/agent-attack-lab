@@ -18,6 +18,7 @@ from agent_attack_lab import (
     amp,
     battle_runner,
     config,
+    library_seed,
     routers,
     scoring_glue,
     state,
@@ -56,6 +57,7 @@ app.add_middleware(
         "X-Battle-ID",
         "X-Has-More",
         "X-Next-Sequence",
+        "Content-Disposition",
     ],
 )
 
@@ -161,6 +163,16 @@ async def _lifespan(_app: FastAPI):
     score_backfill = asyncio.create_task(scoring_glue.run_score_backfill())
     state.recovery_tasks.add(score_backfill)
     score_backfill.add_done_callback(state.recovery_tasks.discard)
+    # 首次启动补齐样本库/规则库：空库会让 attack/defend 智能体拿不到知识上下文。
+    # 只写一次，之后由管理页的「载入内置示例」负责（ADMIN_LIBRARY_AUTOSEED=0 可关）。
+    seed_state = library_seed.auto_seed(
+        state.battle_store, enabled=config.admin_library_autoseed
+    )
+    logger.info(
+        "admin_library_autoseed status=%s detail=%s",
+        seed_state.get("status"),
+        {key: seed_state[key] for key in ("samples", "rules") if key in seed_state},
+    )
     # AMP 心跳：让本服务在梧桐平台保持 alive=online（未开启时为空操作）。
     await amp.start_from_env()
     try:

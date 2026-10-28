@@ -41,6 +41,39 @@ export const AUDIT_DATA_LABELS: Record<string, string> = {
   sampleId: '样本 ID', ruleId: '规则 ID', changes: '改动字段', operation: '操作', target: '对象', targetId: '对象 ID',
   reason: '原因', status: '状态', actor: '操作人', actorRole: '角色', source: '来源', count: '数量',
   before: '变更前', after: '变更后', ip: '来源 IP', userAgent: '客户端', requestId: '请求 ID',
+  method: '方法', path: '路径', statusCode: '响应码', durationMs: '耗时(ms)', correlationId: '关联 ID',
+  name: '名称', condition: '匹配条件', action: '动作', useCount: '使用次数', hitCount: '命中次数',
+  agentSource: '生成来源', requiresHumanApproval: '需人工审核',
+  samplesCreated: '新增样本', samplesSkipped: '跳过样本', rulesCreated: '新增规则', rulesSkipped: '跳过规则',
+}
+
+/** 审计日志 status 取值的中文名。 */
+export const AUDIT_STATUS_LABELS: Record<string, string> = {
+  accepted: '已受理', completed: '已完成', failed: '失败', running: '进行中', reused: '幂等复用',
+  ok: '成功', success: '成功', pending: '等待中',
+}
+
+/** 审计日志 actorRole 取值的中文名。 */
+export const ACTOR_LABELS: Record<string, string> = {
+  admin: '管理员', operator: '操作员', public: '前台用户', system: '系统', http: '接口调用',
+}
+
+/** 审计日志字段说明，用于页面顶部的「怎么看」提示。 */
+export const AUDIT_FIELD_HINTS: [string, string][] = [
+  ['时间', '事件落库时间（本地时区）'],
+  ['角色', '谁触发的：管理员 / 操作员 / 前台用户 / 系统 / 接口调用'],
+  ['操作', '事件类型的中文名，冒号后为本次操作的对象'],
+  ['状态', '已受理＝请求已记录；已完成＝动作执行完；失败＝执行出错'],
+  ['附注', '事件附带的结构化字段，例如战局 ID、样本主题、接口耗时'],
+]
+
+/** 把 ISO 时间转成本地可读时间；解析失败时原样返回。 */
+export function formatDateTime(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (input: number) => String(input).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 /** Ordered whitelist for the overview metric grid; anything else renders after these. */
@@ -69,6 +102,16 @@ export const EVENT_LABELS: Record<string, string> = {
   'agent.call.started': '智能体调用开始',
   'agent.call.completed': '智能体调用完成',
   'agent.call.failed': '智能体调用失败',
+  // 管理员后台操作：后端写入的是 admin.* 全名，缺标签时会直接露出英文串。
+  'admin.sample.created': '新增攻击样本',
+  'admin.sample.updated': '编辑攻击样本',
+  'admin.sample.deleted': '删除攻击样本',
+  'admin.rule.created': '新增防守规则',
+  'admin.rule.updated': '编辑防守规则',
+  'admin.rule.deleted': '删除防守规则',
+  'admin.rule.candidate.proposed': '生成规则候选',
+  'admin.library.seeded': '载入内置示例库',
+  'http.request': '接口请求',
 }
 
 export const AUDIT_ISSUE_LABELS: Record<string, string> = {
