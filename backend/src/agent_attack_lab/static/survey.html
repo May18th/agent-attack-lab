@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>智能体攻防实验室 · 用户调研</title>
+<style>
+  /* ===== 设计变量 ===== */
+  :root {
+    --bg-start: #0a0e1a;
+    --bg-end: #111827;
+    --primary: #00d4ff;       /* 科技蓝 */
+    --attack: #ff3b5c;        /* 攻击红 */
+    --defense: #3b82f6;       /* 防御蓝 */
+    --card-bg: rgba(17, 24, 39, 0.72);
+    --card-border: rgba(0, 212, 255, 0.18);
+    --card-glow: rgba(0, 212, 255, 0.08);
+    --text-main: #e6edf3;
+    --text-dim: #8b9bb4;
+    --text-faint: #5a6a82;
+    --option-bg: rgba(255, 255, 255, 0.03);
+    --option-border: rgba(255, 255, 255, 0.08);
+    --option-active-bg: rgba(0, 212, 255, 0.12);
+    --option-active-border: var(--primary);
+    --danger: #ff3b5c;
+    --success: #22c55e;
+    --radius: 14px;
+    --radius-sm: 10px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial,
+      sans-serif;
+    color: var(--text-main);
+    background: linear-gradient(160deg, var(--bg-start) 0%, var(--bg-end) 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== 背景装饰光斑 ===== */
+  body::before, body::after {
+    content: "";
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.18;
+    z-index: 0;
+    pointer-events: none;
+  }
+  body::before {
+    width: 480px; height: 480px;
+    background: var(--primary);
+    top: -160px; left: -120px;
+  }
+  body::after {
+    width: 420px; height: 420px;
+    background: var(--attack);
+    bottom: -140px; right: -100px;
+    opacity: 0.12;
+  }
+
+  /* ===== 布局容器 ===== */
+  .app {
+    position: relative;
+    z-index: 1;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 36px 20px 80px;
+  }
+
+  /* ===== 顶部标题区 ===== */
+  .hero {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .hero .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border: 1px solid var(--card-border);
+    border-radius: 999px;
+    background: rgba(0, 212, 255, 0.06);
+    font-size: 12px;
+    letter-spacing: 1px;
+    color: var(--primary);
+    margin-bottom: 18px;
+  }
+  .hero .badge .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--primary);
+    box-shadow: 0 0 8px var(--primary);
+  }
+  .hero h1 {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: linear-gradient(90deg, var(--primary), #7dd3fc);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 10px;
+  }
+  .hero p.subtitle {
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  /* ===== 进度条 ===== */
+  .progress-wrap {
+    margin: 22px 0 30px;
+  }
+  .progress-bar {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--defense), var(--primary));
+    border-radius: 999px;
+    transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.5);
+  }
+  .progress-text {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-faint);
+  }
+  .progress-text .count { color: var(--primary); font-weight: 600; }
+
+  /* ===== 题目卡片 ===== */
+  .question {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    padding: 24px 22px;
+    margin-bottom: 20px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 0 24px var(--card-glow), 0 8px 32px rgba(0, 0, 0, 0.3);
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  .question.done {
+    border-color: rgba(0, 212, 255, 0.35);
+    box-shadow: 0 0 28px rgba(0, 212, 255, 0.12), 0 8px 32px rgba(0, 0, 0, 0.3);
+  }
+  .q-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .q-num {
+    flex-shrink: 0;
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--defense), var(--primary));
+    color: #06121f;
+    font-weight: 700;
+    font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+  }
+  .q-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-main);
+    padding-top: 3px;
+  }
+  .q-hint {
+    font-size: 12.5px;
+    color: var(--text-faint);
+    margin-top: 4px;
+  }
+  .required-mark {
+    color: var(--attack);
+    margin-left: 4px;
+  }
+
+  /* ===== 选项（单选/多选） ===== */
+  .options { display: flex; flex-direction: column; gap: 10px; }
+  .opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--option-border);
+    border-radius: var(--radius-sm);
+    background: var(--option-bg);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+  }
+  .opt:hover {
+    border-color: rgba(0, 212, 255, 0.4);
+    background: rgba(0, 212, 255, 0.05);
+  }
+  .opt input { display: none; }
+  .opt .indicator {
+    flex-shrink: 0;
+    width: 18px; height: 18px;
+    border: 2px solid var(--text-faint);
+    border-radius: 50%;
+    position: relative;
+    transition: all 0.2s;
+  }
+  .opt.checkbox .indicator { border-radius: 4px; }
+  .opt.active {
+    border-color: var(--option-active-border);
+    background: var(--option-active-bg);
+  }
+  .opt.active .indicator {
+    border-color: var(--primary);
+    background: var(--primary);
+  }
+  .opt.active .indicator::after {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: #06121f;
+  }
+  .opt.checkbox.active .indicator::after {
+    border-radius: 1px;
+    inset: 2px;
+    background: transparent;
+    border-bottom: 2px solid #06121f;
+    border-right: 2px solid #06121f;
+    transform: rotate(45deg) translate(-1px, -1px);
+    width: 8px; height: 4px;
+    left: 3px; top: 4px;
+  }
+  .opt .label { font-size: 14px; color: var(--text-main); }
+
+  /* ===== 文本框 ===== */
+  .field { margin-top: 14px; }
+  .field-label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 7px;
+  }
+  textarea, input[type="text"] {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--option-border);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--text-main);
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  textarea { min-height: 80px; }
+  textarea:focus, input[type="text"]:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.12);
+  }
+  textarea::placeholder, input::placeholder { color: var(--text-faint); }
+
+  .conditional {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 0.35s ease, opacity 0.25s ease, margin-top 0.25s;
+  }
+  .conditional.show {
+    max-height: 320px;
+    opacity: 1;
+    margin-top: 14px;
+  }
+
+  /* ===== 拖拽排序 ===== */
+  .rank-list { display: flex; flex-direction: column; gap: 10px; }
+  .rank-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--option-border);
+    border-radius: var(--radius-sm);
+    background: var(--option-bg);
+    cursor: grab;
+    transition: transform 0.18s, border-color 0.2s, background 0.2s, box-shadow 0.2s;
+  }
+  .rank-item:hover {
+    border-color: rgba(0, 212, 255, 0.35);
+    background: rgba(0, 212, 255, 0.04);
+  }
+  .rank-item.dragging {
+    opacity: 0.45;
+    cursor: grabbing;
+  }
+  .rank-item.drag-over {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.25);
+    transform: scale(1.01);
+  }
+  .rank-handle {
+    color: var(--text-faint);
+    font-size: 18px;
+    line-height: 1;
+    cursor: grab;
+  }
+  .rank-pos {
+    flex-shrink: 0;
+    width: 26px; height: 26px;
+    border-radius: 7px;
+    background: rgba(0, 212, 255, 0.1);
+    color: var(--primary);
+    font-size: 13px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .rank-text { font-size: 14px; color: var(--text-main); }
+  .rank-desc { font-size: 12px; color: var(--text-faint); margin-left: 6px; }
+
+  /* ===== 星级评分 ===== */
+  .stars {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .star {
+    width: 40px; height: 40px;
+    cursor: pointer;
+    color: var(--text-faint);
+    transition: color 0.15s, transform 0.15s;
+  }
+  .star svg { width: 100%; height: 100%; }
+  .star:hover { transform: scale(1.12); }
+  .star.active { color: #fbbf24; filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.5)); }
+  .score-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    font-size: 11.5px;
+    color: var(--text-faint);
+  }
+
+  /* ===== 提交按钮 ===== */
+  .submit-wrap { margin-top: 30px; text-align: center; }
+  .btn-submit {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 44px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #06121f;
+    background: linear-gradient(90deg, var(--defense), var(--primary));
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.35);
+  }
+  .btn-submit:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 0 28px rgba(0, 212, 255, 0.55);
+  }
+  .btn-submit:disabled {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-faint);
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .btn-submit .spinner {
+    display: none;
+    width: 16px; height: 16px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  .btn-submit.loading .spinner { display: inline-block; }
+  .btn-submit.loading .btn-text { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ===== 错误提示 ===== */
+  .error-box {
+    display: none;
+    margin-top: 18px;
+    padding: 12px 16px;
+    border: 1px solid var(--danger);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 59, 92, 0.1);
+    color: #ffb3c0;
+    font-size: 13px;
+    text-align: center;
+  }
+  .error-box.show { display: block; }
+
+  /* ===== 感谢页 ===== */
+  .thanks {
+    display: none;
+    text-align: center;
+    padding: 60px 20px;
+    animation: fadeIn 0.6s ease;
+  }
+  .thanks.show { display: block; }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .thanks .check {
+    width: 76px; height: 76px;
+    margin: 0 auto 24px;
+    border-radius: 50%;
+    background: rgba(34, 197, 94, 0.12);
+    border: 2px solid var(--success);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 24px rgba(34, 197, 94, 0.3);
+  }
+  .thanks .check svg { width: 38px; height: 38px; color: var(--success); }
+  .thanks h2 {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    background: linear-gradient(90deg, var(--primary), #7dd3fc);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .thanks p { color: var(--text-dim); font-size: 14px; margin-bottom: 30px; }
+  .btn-platform {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 32px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--primary);
+    background: rgba(0, 212, 255, 0.08);
+    border: 1px solid var(--primary);
+    border-radius: 999px;
+    text-decoration: none;
+    transition: all 0.25s;
+  }
+  .btn-platform:hover {
+    background: rgba(0, 212, 255, 0.16);
+    box-shadow: 0 0 18px rgba(0, 212, 255, 0.35);
+  }
+
+  /* ===== 响应式 ===== */
+  @media (max-width: 600px) {
+    .app { padding: 24px 14px 60px; }
+    .hero h1 { font-size: 21px; }
+    .question { padding: 18px 16px; }
+    .q-title { font-size: 15px; }
+    .opt { padding: 11px 12px; }
+    .star { width: 34px; height: 34px; }
+    .btn-submit { padding: 13px 36px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===== 问卷主体 ===== -->
+  <div id="survey-app">
+    <header class="hero">
+      <span class="badge"><span class="dot"></span>AGENT RED-TEAM LAB</span>
+      <h1>智能体攻防实验室 · 用户调研</h1>
+      <p class="subtitle">智弈破局 — 你的实战反馈，驱动下一版迭代</p>
+    </header>
+
+    <!-- 进度条 -->
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-text">
+        <span>完成进度</span>
+        <span><span class="count" id="progressCount">0</span> / 6</span>
+      </div>
+    </div>
+
+    <!-- Q1 角色背景 -->
+    <section class="question" id="q1" data-q="1">
+      <div class="q-head">
+        <div class="q-num">1</div>
+        <div>
+          <div class="q-title">你的主要角色是？<span class="required-mark">*</span></div>
+          <div class="q-hint">单选</div>
+        </div>
+      </div>
+      <div class="options" data-type="radio" data-field="q1_role">
+        <label class="opt"><input type="radio" name="q1" value="安全研究员/红队人员"><span class="indicator"></span><span class="label">安全研究员 / 红队人员</span></label>
+        <label class="opt"><input type="radio" name="q1" value="产品经理"><span class="indicator"></span><span class="label">产品经理</span></label>
+        <label class="opt"><input type="radio" name="q1" value="后端开发工程师"><span class="indicator"></span><span class="label">后端开发工程师</span></label>
+        <label class="opt"><input type="radio" name="q1" value="AI/LLM应用开发"><span class="indicator"></span><span class="label">AI / LLM 应用开发</span></label>
+        <label class="opt"><input type="radio" name="q1" value="学生/研究者"><span class="indicator"></span><span class="label">学生 / 研究者</span></label>
+        <label class="opt"><input type="radio" name="q1" value="其他"><span class="indicator"></span><span class="label">其他</span></label>
+      </div>
+    </section>
+
+    <!-- Q2 之前怎么做自查 + 最烦哪一步 -->
+    <section class="question" id="q2" data-q="2">
+      <div class="q-head">
+        <div class="q-num">2</div>
+        <div>
+          <div class="q-title">在用本平台之前，你们怎么做提示注入 / 越权调用的安全自查？<span class="required-mark">*</span></div>
+          <div class="q-hint">先简述方式，再选择最烦的一步</div>
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label">简述你之前的自查方式（没有也行，写"无"）</label>
+        <textarea id="q2_method" placeholder="例如：手动构造几个 prompt 试试，或者用脚本批量跑……"></textarea>
+      </div>
+      <div class="field">
+        <label class="field-label">这个流程里最烦的一步是？</label>
+        <div class="options" data-type="radio" data-field="q2_pain_point">
+          <label class="opt"><input type="radio" name="q2pain" value="构造测试样本太耗时"><span class="indicator"></span><span class="label">构造测试样本太耗时</span></label>
+          <label class="opt"><input type="radio" name="q2pain" value="跑完看不到明确证据"><span class="indicator"></span><span class="label">跑完看不到明确证据</span></label>
+          <label class="opt"><input type="radio" name="q2pain" value="结果难以复现/对账"><span class="indicator"></span><span class="label">结果难以复现 / 对账</span></label>
+          <label class="opt"><input type="radio" name="q2pain" value="缺乏标准化流程"><span class="indicator"></span><span class="label">缺乏标准化流程</span></label>
+          <label class="opt"><input type="radio" name="q2pain" value="没做过这类自查"><span class="indicator"></span><span class="label">没做过这类自查</span></label>
+          <label class="opt"><input type="radio" name="q2pain" value="其他"><span class="indicator"></span><span class="label">其他</span></label>
+        </div>
+        <div class="conditional" id="q2_other_wrap">
+          <label class="field-label">补充说明"其他"</label>
+          <input type="text" id="q2_pain_other" placeholder="请描述你最烦的一步" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Q3 拖拽排序 -->
+    <section class="question" id="q3" data-q="3">
+      <div class="q-head">
+        <div class="q-num">3</div>
+        <div>
+          <div class="q-title">平台目前输出四类结果，按对你的有用程度排序<span class="required-mark">*</span></div>
+          <div class="q-hint">拖拽排序，最有用在最上面</div>
+        </div>
+      </div>
+      <div class="rank-list" id="rankList">
+        <div class="rank-item" draggable="true" data-value="攻击样本">
+          <span class="rank-handle">⠿</span><span class="rank-pos">1</span>
+          <span class="rank-text">攻击样本<span class="rank-desc">生成的对抗 Payload</span></span>
+        </div>
+        <div class="rank-item" draggable="true" data-value="命中证据">
+          <span class="rank-handle">⠿</span><span class="rank-pos">2</span>
+          <span class="rank-text">命中证据<span class="rank-desc">Defender 拦截命中的规则与位置</span></span>
+        </div>
+        <div class="rank-item" draggable="true" data-value="裁决结果">
+          <span class="rank-handle">⠿</span><span class="rank-pos">3</span>
+          <span class="rank-text">裁决结果<span class="rank-desc">Arbiter 判定攻击成功 / 被拦截 / 未定</span></span>
+        </div>
+        <div class="rank-item" draggable="true" data-value="战报">
+          <span class="rank-handle">⠿</span><span class="rank-pos">4</span>
+          <span class="rank-text">战报<span class="rank-desc">Markdown 复盘报告</span></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Q4 结论可信度 -->
+    <section class="question" id="q4" data-q="4">
+      <div class="q-head">
+        <div class="q-num">4</div>
+        <div>
+          <div class="q-title">你能判断平台给出的攻防结论靠不靠谱吗？<span class="required-mark">*</span></div>
+          <div class="q-hint">先选判断能力，再选不敢信的部分</div>
+        </div>
+      </div>
+      <div class="options" data-type="radio" data-field="q4_can_judge">
+        <label class="opt"><input type="radio" name="q4judge" value="能，证据链清晰"><span class="indicator"></span><span class="label">能，证据链清晰</span></label>
+        <label class="opt"><input type="radio" name="q4judge" value="部分能，有些地方看不懂"><span class="indicator"></span><span class="label">部分能，有些地方看不懂</span></label>
+        <label class="opt"><input type="radio" name="q4judge" value="不能，缺乏判断依据"><span class="indicator"></span><span class="label">不能，缺乏判断依据</span></label>
+        <label class="opt"><input type="radio" name="q4judge" value="还没仔细看过"><span class="indicator"></span><span class="label">还没仔细看过</span></label>
+      </div>
+      <div class="conditional" id="q4_distrust_wrap">
+        <label class="field-label">以下哪些部分你最不敢信？（可多选）</label>
+        <div class="options" data-type="checkbox" data-field="q4_distrust_areas">
+          <label class="opt checkbox"><input type="checkbox" value="攻击样本的多样性"><span class="indicator"></span><span class="label">攻击样本的多样性</span></label>
+          <label class="opt checkbox"><input type="checkbox" value="Defender 命中证据的准确性"><span class="indicator"></span><span class="label">Defender 命中证据的准确性</span></label>
+          <label class="opt checkbox"><input type="checkbox" value="Arbiter 裁决标准"><span class="indicator"></span><span class="label">Arbiter 裁决标准</span></label>
+          <label class="opt checkbox"><input type="checkbox" value="评分公式的合理性"><span class="indicator"></span><span class="label">评分公式的合理性</span></label>
+          <label class="opt checkbox"><input type="checkbox" value="模拟验证 vs 真实验证的区分"><span class="indicator"></span><span class="label">模拟验证 vs 真实验证的区分</span></label>
+          <label class="opt checkbox"><input type="checkbox" value="其他"><span class="indicator"></span><span class="label">其他</span></label>
+        </div>
+        <div class="conditional" id="q4_other_wrap">
+          <label class="field-label">补充说明"其他"</label>
+          <input type="text" id="q4_distrust_other" placeholder="请描述你不信任的部分" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Q5 真实系统使用意愿 -->
+    <section class="question" id="q5" data-q="5">
+      <div class="q-head">
+        <div class="q-num">5</div>
+        <div>
+          <div class="q-title">你敢不敢把平台的测试结论直接用于真实系统？<span class="required-mark">*</span></div>
+          <div class="q-hint">选择意愿并说明顾虑</div>
+        </div>
+      </div>
+      <div class="options" data-type="radio" data-field="q5_willingness">
+        <label class="opt"><input type="radio" name="q5will" value="敢，有授权就敢用"><span class="indicator"></span><span class="label">敢，有授权就敢用</span></label>
+        <label class="opt"><input type="radio" name="q5will" value="有条件敢用（需补充验证）"><span class="indicator"></span><span class="label">有条件敢用（需补充验证）</span></label>
+        <label class="opt"><input type="radio" name="q5will" value="不敢，只能当参考"><span class="indicator"></span><span class="label">不敢，只能当参考</span></label>
+        <label class="opt"><input type="radio" name="q5will" value="完全不会用"><span class="indicator"></span><span class="label">完全不会用</span></label>
+      </div>
+      <div class="field">
+        <label class="field-label">你的主要顾虑是什么？</label>
+        <textarea id="q5_concern" placeholder="例如：怕漏报、怕误报导致误判、合规风险……"></textarea>
+      </div>
+    </section>
+
+    <!-- Q6 复用意愿 + 必改点 -->
+    <section class="question" id="q6" data-q="6">
+      <div class="q-head">
+        <div class="q-num">6</div>
+        <div>
+          <div class="q-title">如果下一版改进，你愿意继续使用这个平台吗？<span class="required-mark">*</span></div>
+          <div class="q-hint">评分并指出最想改的地方</div>
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label">复用意愿评分</label>
+        <div class="stars" id="stars">
+          <div class="star" data-val="1"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
+          <div class="star" data-val="2"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
+          <div class="star" data-val="3"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
+          <div class="star" data-val="4"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
+          <div class="star" data-val="5"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
+        </div>
+        <div class="score-labels"><span>1 · 完全不想用</span><span>5 · 一定会用</span></div>
+      </div>
+      <div class="field">
+        <label class="field-label">如果只能改一个地方，你最想改什么？</label>
+        <textarea id="q6_must_fix" placeholder="例如：增加自定义攻击样本导入、战报导出 PDF……"></textarea>
+      </div>
+    </section>
+
+    <!-- 提交 -->
+    <div class="submit-wrap">
+      <button class="btn-submit" id="btnSubmit" disabled>
+        <span class="spinner"></span>
+        <span class="btn-text">提交问卷</span>
+      </button>
+      <div class="error-box" id="errorBox"></div>
+    </div>
+  </div>
+
+  <!-- ===== 感谢页 ===== -->
+  <div class="thanks" id="thanks">
+    <div class="check">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+    </div>
+    <h2>感谢你的反馈！</h2>
+    <p>你的实战经验已记录，将直接驱动"智弈破局"下一版迭代。<br/>期待与你再次交锋。</p>
+    <a class="btn-platform" href="https://www.yuanyiagentzhandui.cn/" target="_blank" rel="noopener">
+      查看平台 →
+    </a>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // 后端接口基础地址：同源时留空；前后端分离部署时改为后端地址（如 http://localhost:8000）
+  var API_BASE = "";
+
+  // ===== 状态 =====
+  var state = {
+    q1_role: "",
+    q2_method: "",
+    q2_pain_point: "",
+    q2_pain_other: "",
+    q3_ranking: ["攻击样本", "命中证据", "裁决结果", "战报"],
+    q4_can_judge: "",
+    q4_distrust_areas: [],
+    q4_distrust_other: "",
+    q5_willingness: "",
+    q5_concern: "",
+    q6_reuse_score: 0,
+    q6_must_fix: ""
+  };
+
+  var $ = function (sel) { return document.querySelector(sel); };
+  var $$ = function (sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); };
+
+  // ===== 选项组绑定（单选 / 多选） =====
+  function bindOptionGroup(group) {
+    var type = group.getAttribute("data-type");
+    var field = group.getAttribute("data-field");
+    var opts = $$(group.querySelectorAll(".opt"));
+
+    opts.forEach(function (opt) {
+      opt.addEventListener("click", function (e) {
+        if (e.target.tagName === "INPUT") return;
+        var input = opt.querySelector("input");
+        var val = input.value;
+
+        if (type === "radio") {
+          opts.forEach(function (o) { o.classList.remove("active"); o.querySelector("input").checked = false; });
+          opt.classList.add("active");
+          input.checked = true;
+          state[field] = val;
+        } else {
+          opt.classList.toggle("active");
+          input.checked = opt.classList.contains("active");
+          if (input.checked) {
+            if (state[field].indexOf(val) === -1) state[field].push(val);
+          } else {
+            state[field] = state[field].filter(function (v) { return v !== val; });
+          }
+        }
+
+        onFieldChange(field);
+      });
+    });
+  }
+
+  // ===== 字段变更联动 =====
+  function onFieldChange(field) {
+    // Q2：选"其他"显示补充框
+    if (field === "q2_pain_point") {
+      toggleConditional("#q2_other_wrap", state.q2_pain_point === "其他");
+      if (state.q2_pain_point !== "其他") state.q2_pain_other = "";
+    }
+    // Q4：单选联动多选区
+    if (field === "q4_can_judge") {
+      var showDistrust = state.q4_can_judge && state.q4_can_judge !== "还没仔细看过";
+      toggleConditional("#q4_distrust_wrap", showDistrust);
+      if (!showDistrust) {
+        state.q4_distrust_areas = [];
+        state.q4_distrust_other = "";
+        $$("#q4_distrust_wrap .opt").forEach(function (o) { o.classList.remove("active"); o.querySelector("input").checked = false; });
+        $("#q4_distrust_other").value = "";
+        hideConditional("#q4_other_wrap");
+      }
+    }
+    // Q4 多选：选"其他"显示补充框
+    if (field === "q4_distrust_areas") {
+      var hasOther = state.q4_distrust_areas.indexOf("其他") !== -1;
+      toggleConditional("#q4_other_wrap", hasOther);
+      if (!hasOther) state.q4_distrust_other = "";
+    }
+    updateProgress();
+  }
+
+  function toggleConditional(sel, show) {
+    var el = $(sel);
+    if (!el) return;
+    if (show) el.classList.add("show"); else el.classList.remove("show");
+  }
+  function hideConditional(sel) { toggleConditional(sel, false); }
+
+  // ===== 文本框绑定 =====
+  function bindText(id, field) {
+    var el = $("#" + id);
+    el.addEventListener("input", function () {
+      state[field] = el.value.trim();
+      updateProgress();
+    });
+  }
+
+  // ===== 拖拽排序 =====
+  var rankList = $("#rankList");
+  var dragSrc = null;
+
+  function initDrag() {
+    var items = $$(rankList.querySelectorAll(".rank-item"));
+    items.forEach(function (item) {
+      item.addEventListener("dragstart", function (e) {
+        dragSrc = item;
+        item.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", ""); } catch (err) {}
+      });
+      item.addEventListener("dragend", function () {
+        item.classList.remove("dragging");
+        items.forEach(function (i) { i.classList.remove("drag-over"); });
+        syncRanking();
+      });
+      item.addEventListener("dragover", function (e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (item !== dragSrc) item.classList.add("drag-over");
+      });
+      item.addEventListener("dragleave", function () {
+        item.classList.remove("drag-over");
+      });
+      item.addEventListener("drop", function (e) {
+        e.preventDefault();
+        item.classList.remove("drag-over");
+        if (dragSrc && dragSrc !== item) {
+          var all = $$(rankList.querySelectorAll(".rank-item"));
+          var srcIdx = all.indexOf(dragSrc);
+          var tgtIdx = all.indexOf(item);
+          if (srcIdx < tgtIdx) {
+            rankList.insertBefore(dragSrc, item.nextSibling);
+          } else {
+            rankList.insertBefore(dragSrc, item);
+          }
+          syncRanking();
+        }
+      });
+    });
+  }
+
+  function syncRanking() {
+    var items = $$(rankList.querySelectorAll(".rank-item"));
+    state.q3_ranking = items.map(function (it) { return it.getAttribute("data-value"); });
+    items.forEach(function (it, idx) {
+      it.querySelector(".rank-pos").textContent = idx + 1;
+    });
+    updateProgress();
+  }
+
+  // ===== 星级评分 =====
+  function initStars() {
+    var stars = $$("#stars .star");
+    stars.forEach(function (s) {
+      s.addEventListener("click", function () {
+        var val = parseInt(s.getAttribute("data-val"), 10);
+        state.q6_reuse_score = val;
+        stars.forEach(function (st) {
+          var sv = parseInt(st.getAttribute("data-val"), 10);
+          st.classList.toggle("active", sv <= val);
+        });
+        updateProgress();
+      });
+      s.addEventListener("mouseenter", function () {
+        var val = parseInt(s.getAttribute("data-val"), 10);
+        stars.forEach(function (st) {
+          var sv = parseInt(st.getAttribute("data-val"), 10);
+          st.classList.toggle("active", sv <= val);
+        });
+      });
+    });
+    $("#stars").addEventListener("mouseleave", function () {
+      stars.forEach(function (st) {
+        var sv = parseInt(st.getAttribute("data-val"), 10);
+        st.classList.toggle("active", sv <= state.q6_reuse_score);
+      });
+    });
+  }
+
+  // ===== 完成判定 =====
+  function isQ1Done() { return !!state.q1_role; }
+  function isQ2Done() {
+    if (!state.q2_method) return false;
+    if (!state.q2_pain_point) return false;
+    if (state.q2_pain_point === "其他" && !state.q2_pain_other) return false;
+    return true;
+  }
+  function isQ3Done() { return state.q3_ranking.length === 4; }
+  function isQ4Done() {
+    if (!state.q4_can_judge) return false;
+    if (state.q4_can_judge === "还没仔细看过") return true;
+    if (!state.q4_distrust_areas || state.q4_distrust_areas.length === 0) return false;
+    if (state.q4_distrust_areas.indexOf("其他") !== -1 && !state.q4_distrust_other) return false;
+    return true;
+  }
+  function isQ5Done() { return !!state.q5_willingness && !!state.q5_concern; }
+  function isQ6Done() { return state.q6_reuse_score >= 1 && state.q6_reuse_score <= 5 && !!state.q6_must_fix; }
+
+  var checks = [isQ1Done, isQ2Done, isQ3Done, isQ4Done, isQ5Done, isQ6Done];
+
+  // ===== 进度更新 =====
+  function updateProgress() {
+    var done = 0;
+    checks.forEach(function (fn, idx) {
+      var ok = fn();
+      var card = $("#q" + (idx + 1));
+      if (ok) { card.classList.add("done"); done++; } else { card.classList.remove("done"); }
+    });
+    var pct = Math.round((done / 6) * 100);
+    $("#progressFill").style.width = pct + "%";
+    $("#progressCount").textContent = done;
+    $("#btnSubmit").disabled = done < 6;
+  }
+
+  // ===== 提交 =====
+  var btnSubmit = $("#btnSubmit");
+  var errorBox = $("#errorBox");
+
+  function showError(msg) {
+    errorBox.textContent = msg;
+    errorBox.classList.add("show");
+  }
+  function hideError() { errorBox.classList.remove("show"); }
+
+  btnSubmit.addEventListener("click", function () {
+    if (btnSubmit.disabled) return;
+    hideError();
+    btnSubmit.classList.add("loading");
+    btnSubmit.disabled = true;
+
+    var payload = {
+      q1_role: state.q1_role,
+      q2_method: state.q2_method,
+      q2_pain_point: state.q2_pain_point,
+      q2_pain_other: state.q2_pain_point === "其他" ? state.q2_pain_other : null,
+      q3_ranking: state.q3_ranking,
+      q4_can_judge: state.q4_can_judge,
+      q4_distrust_areas: (state.q4_can_judge && state.q4_can_judge !== "还没仔细看过") ? state.q4_distrust_areas : null,
+      q4_distrust_other: (state.q4_distrust_areas && state.q4_distrust_areas.indexOf("其他") !== -1) ? state.q4_distrust_other : null,
+      q5_willingness: state.q5_willingness,
+      q5_concern: state.q5_concern,
+      q6_reuse_score: state.q6_reuse_score,
+      q6_must_fix: state.q6_must_fix
+    };
+
+    fetch(API_BASE + "/api/survey/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function (data) {
+        btnSubmit.classList.remove("loading");
+        if (data && data.success) {
+          showThanks();
+        } else {
+          showError((data && data.detail) || "提交失败，请重试");
+          btnSubmit.disabled = false;
+        }
+      })
+      .catch(function (err) {
+        btnSubmit.classList.remove("loading");
+        showError("网络异常，提交失败：" + err.message + "。请检查网络后重试。");
+        btnSubmit.disabled = false;
+      });
+  });
+
+  function showThanks() {
+    var app = $("#survey-app");
+    var thanks = $("#thanks");
+    app.style.transition = "opacity 0.4s ease";
+    app.style.opacity = "0";
+    setTimeout(function () {
+      app.style.display = "none";
+      thanks.classList.add("show");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }, 400);
+  }
+
+  // ===== 初始化 =====
+  $$(".options").forEach(bindOptionGroup);
+  bindText("q2_method", "q2_method");
+  bindText("q2_pain_other", "q2_pain_other");
+  bindText("q4_distrust_other", "q4_distrust_other");
+  bindText("q5_concern", "q5_concern");
+  bindText("q6_must_fix", "q6_must_fix");
+  initDrag();
+  initStars();
+  updateProgress();
+})();
+</script>
+</body>
+</html>
