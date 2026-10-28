@@ -52,7 +52,14 @@
 
   /* ===== 主布局 ===== */
   .layout{display:grid;grid-template-columns:1fr;gap:14px}
-  @media(min-width:1100px){.layout{grid-template-columns:1fr 360px}}
+  @media(min-width:1100px){
+    .layout{grid-template-columns:1fr 360px;align-items:stretch}
+    .col-main{min-height:620px}
+    .col-main .battle-visual-panel{height:100%;min-height:620px}
+    .side-right{display:flex;flex-direction:column;min-height:620px}
+    .side-right>div[style*="margin-top:14px"]{display:flex;flex:1;min-height:0;margin-top:14px!important}
+    .side-right .timeline{height:auto;min-height:420px;flex:1}
+  }
   .layout>div:last-child{align-self:start}
   .col-main{display:grid;grid-template-columns:1fr;gap:14px}
   .panel{background:linear-gradient(165deg,rgba(26,34,58,.78),rgba(14,19,33,.72));border:1px solid #2b3b58;border-radius:14px;padding:16px;box-shadow:inset 0 1px 0 rgba(130,180,255,.09),0 10px 34px rgba(2,4,12,.5);backdrop-filter:blur(3px)}
@@ -171,7 +178,7 @@
   .tip-q{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid #4a5568;color:#8892a0;font-size:10px;line-height:1;cursor:help;margin-left:5px;vertical-align:middle;position:relative;top:-1px}
   .tip-wrap{position:relative;display:inline-flex;align-items:center}
   .tip-wrap .tip-pop{display:none;position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#0c1420;border:1px solid #2a3648;border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.6;color:#c6cfda;width:240px;z-index:50;box-shadow:0 6px 20px rgba(0,0,0,.5)}
-  .tip-q:hover + .tip-pop{display:block}
+  .tip-q:hover + .tip-pop,.tip-q:focus + .tip-pop,.tip-wrap:focus-within .tip-pop{display:block}
   .chart-box{background:#0c1119;border:1px solid #1d2735;border-radius:8px;padding:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;min-height:278px}
   .chart-title{width:100%;font-size:11.5px;color:var(--mut);margin-bottom:6px;text-align:center}
   .charts{display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px}
@@ -305,7 +312,7 @@
   .memory-help:last-child .memory-help-pop{left:auto;right:0;transform:translateY(4px)}.memory-help:last-child:hover .memory-help-pop,.memory-help:last-child:focus-within .memory-help-pop{transform:translateY(0)}
 
   /* ===== 实时时间线 div（固定尺寸位置）===== */
-  .timeline{height:380px;width:100%;min-width:0;background:radial-gradient(circle at 0 65%,rgba(255,73,45,.12),transparent 42%),radial-gradient(circle at 100% 35%,rgba(44,126,255,.13),transparent 42%),#101720;border:1px solid #263545;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;position:relative}
+  .timeline{height:420px;width:100%;min-width:0;background:radial-gradient(circle at 0 65%,rgba(255,73,45,.12),transparent 42%),radial-gradient(circle at 100% 35%,rgba(44,126,255,.13),transparent 42%),#101720;border:1px solid #263545;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;position:relative}
   .tl-head{min-height:58px;flex:none;border-bottom:1px solid #253443;padding:8px 14px;display:grid;grid-template-columns:minmax(0,1fr) max-content;align-items:start;gap:8px}
   .title{font-size:14px;font-weight:800;min-width:0}.title-main{display:flex;align-items:center;gap:6px}.title small{display:block;color:var(--mut);font-size:10.5px;font-weight:400;line-height:1.35;margin-top:3px;white-space:normal;overflow-wrap:anywhere}
   .live{font-size:10.5px;color:var(--dim);white-space:nowrap;flex:none;padding-top:2px}.live.run{color:var(--green)}.live.run::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:4px;box-shadow:0 0 8px var(--green)}
@@ -561,18 +568,18 @@
     <div class="score-data-row">
       <div class="metric-col">
         <div class="metric">
-          <div class="metric-head"><span class="tip-wrap">payload 更新率<span class="tip-q">?</span><span class="tip-pop">真实战局当前未记录 Payload 同源 / 新源判定，无法计算此值；仅在具备该数据的模拟回放中展示。</span></span><b id="ratePayload">—</b></div>
+          <div class="metric-head"><span class="tip-wrap">payload 更新率<span class="tip-q" tabindex="0" role="button" aria-label="查看 payload 更新率说明">?</span><span class="tip-pop">本局新增载荷里，全新攻击范式（不同源样本）占本局全部新增 Payload 的比例，反映攻击方创新能力。</span></span><b id="ratePayload">0%</b></div>
           <div class="bar"><div class="bar-fill att" id="barPayload" style="width:0%"></div></div>
         </div>
         <div class="metric">
-          <div class="metric-head"><span class="tip-wrap">defender 有效拦截率<span class="tip-q">?</span><span class="tip-pop">只统计有后端命中证据或真实目标验证的已完成回合；模拟验证和未验证回合不会被当作真实逃逸。</span></span><b id="rateDefender">—</b></div>
+          <div class="metric-head"><span class="tip-wrap">defender 有效拦截率<span class="tip-q" tabindex="0" role="button" aria-label="查看 defender 有效拦截率说明">?</span><span class="tip-pop">获得 D-06 正确拦截 45 分的有效回合占比；完整穿透或无有效拦截证据不计入。</span></span><b id="rateDefender">0%</b></div>
           <div class="bar"><div class="bar-fill def" id="barDefender" style="width:0%"></div></div>
         </div>
         <div class="metric">
-          <div class="metric-head"><span class="tip-wrap">defender 平均响应时长<span class="tip-q">?</span><span class="tip-pop">已完成真实回合的平均耗时，依据后端 rounds 接口返回的 durationMs 计算。</span></span><b id="avgResp">—</b></div>
+          <div class="metric-head"><span class="tip-wrap">defender 平均响应时长<span class="tip-q" tabindex="0" role="button" aria-label="查看 defender 平均响应时长说明">?</span><span class="tip-pop">攻击样本与安全对照的有效决策耗时均值；错误结果的响应分为 0，但耗时仍保留审计。</span></span><b id="avgResp">0.00 s</b></div>
         </div>
       </div>
-      <div class="chart-box"><div class="chart-title"><span class="tip-wrap">拦截 / 逃逸分布<span class="tip-q">?</span><span class="tip-pop"><b>成功拦截：</b>只计入后端记录到 caught 证据的回合。<br><b>攻击逃逸：</b>只计入明确标记为真实目标验证的回合；模拟验证、未验证结果不计入。</span></span></div><div class="chart-canvas" id="pieChart" style="height:170px"></div></div>
+      <div class="chart-box"><div class="chart-title"><span class="tip-wrap">拦截 / 逃逸分布<span class="tip-q" tabindex="0" role="button" aria-label="查看拦截与逃逸分布说明">?</span><span class="tip-pop"><b>成功拦截：</b>Defender 判定攻击载荷非法，成功阻断本次攻击。<br><b>攻击逃逸：</b>Payload 绕过当前防御规则，防御判定放行，攻击达成目标。</span></span></div><div class="chart-canvas" id="pieChart" style="height:170px"></div></div>
       <div class="chart-box"><div class="chart-title">综合分（每回合，0–100）</div><div class="chart-canvas" id="lineChart" style="height:220px"></div></div>
       <div class="chart-box"><div class="chart-title">响应分均值（0–100，占综合分 5%）</div><div class="chart-canvas" id="barChart" style="height:220px"></div></div>
     </div>
@@ -2453,18 +2460,18 @@ var battle3d=(function(){
 
   function setLiveVisualizationState(detail){
     if(!detail||detail.status==='loading'){
-      document.getElementById('ratePayload').textContent='—';
-      document.getElementById('rateDefender').textContent='—';
-      document.getElementById('avgResp').textContent='—';
+      document.getElementById('ratePayload').textContent='0%';
+      document.getElementById('rateDefender').textContent='0%';
+      document.getElementById('avgResp').textContent='0.00 s';
       pie.setOption(pieOption(0,0,'等待回合结果'));
       line.setOption({graphic:emptyChartGraphic('line-empty','等待回合评分',true),xAxis:{data:[]},series:[{data:[]},{data:[]}]});
       bar.setOption({graphic:emptyChartGraphic('bar-empty','等待回合评分',true),series:[{data:[{value:null,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},{value:null,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}]}]});
       return;
     }
     if(detail.status!=='ready'){
-      document.getElementById('ratePayload').textContent='—';
-      document.getElementById('rateDefender').textContent='—';
-      document.getElementById('avgResp').textContent='—';
+      document.getElementById('ratePayload').textContent='0%';
+      document.getElementById('rateDefender').textContent='0%';
+      document.getElementById('avgResp').textContent='0.00 s';
       pie.setOption(pieOption(0,0,'读取结果失败'));
       line.setOption({graphic:emptyChartGraphic('line-empty','评分数据暂不可用',true),xAxis:{data:[]},series:[{data:[]},{data:[]}]});
       bar.setOption({graphic:emptyChartGraphic('bar-empty','评分数据暂不可用',true),series:[{data:[{value:null},{value:null}]}]});
@@ -2481,9 +2488,9 @@ var battle3d=(function(){
     var defenderResponse=typeof detail.averageResponseScore?.defender==='number'?detail.averageResponseScore.defender:null;
     var hasResponse=attackerResponse!==null||defenderResponse!==null;
     bar.setOption({graphic:emptyChartGraphic('bar-empty','暂无响应评分证据',!hasResponse),series:[{data:[{value:attackerResponse,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},{value:defenderResponse,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}]}]});
-    document.getElementById('ratePayload').textContent='—';
-    document.getElementById('rateDefender').textContent=typeof detail.effectiveInterceptionRate==='number'?detail.effectiveInterceptionRate.toFixed(0)+'%':'—';
-    document.getElementById('avgResp').textContent=typeof detail.averageResponseMs==='number'?(detail.averageResponseMs/1000).toFixed(2)+' s':'—';
+    document.getElementById('ratePayload').textContent='0%';
+    document.getElementById('rateDefender').textContent=typeof detail.effectiveInterceptionRate==='number'?detail.effectiveInterceptionRate.toFixed(0)+'%':'0%';
+    document.getElementById('avgResp').textContent=typeof detail.averageResponseMs==='number'?(detail.averageResponseMs/1000).toFixed(2)+' s':'0.00 s';
   }
   window.addEventListener('battle-visualizations:update',function(event){setLiveVisualizationState(event.detail||{});});
 
@@ -3409,9 +3416,9 @@ var battle3d=(function(){
     demoStarted=false;userPinned=false;pending=0;newEvents.classList.remove('show');
     liveStatus.classList.remove('run');liveStatus.textContent='等待攻防事件';
     document.getElementById('tlSub').textContent='ATTACKER ↔ DEFENDER · 实时事件流';
-    document.getElementById('ratePayload').textContent='—';
-    document.getElementById('rateDefender').textContent='—';
-    document.getElementById('avgResp').textContent='—';
+    document.getElementById('ratePayload').textContent='0%';
+    document.getElementById('rateDefender').textContent='0%';
+    document.getElementById('avgResp').textContent='0.00 s';
     document.getElementById('barPayload').style.width='0%';
     document.getElementById('barDefender').style.width='0%';
     setScoreboard(null,null,'等待第 1 回合结算');
