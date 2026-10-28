@@ -1,5 +1,21 @@
 # 部署说明
 
+## 运行环境要求
+
+| 组件 | 要求 | 说明 |
+|---|---|---|
+| Python | **≥ 3.14** | 硬性要求，不是建议 |
+| MySQL | ≥ 8.0 | 生产主库；8.0 以下不支持窗口函数 |
+| Redis | 可选 | 外部用例查询缓存，缺失时功能正常但每次都查库 |
+
+Python 版本是**硬性**的：代码使用了 Python 3.14 的 PEP 758 语法（`except TypeError, ValueError:` 省略括号），全库有 10 处。在 3.13 及更早版本上，这些模块在 `import` 阶段就会 `SyntaxError`，表现为服务整体启动失败，而不是某个功能降级。版本约束同时写在 `backend/pyproject.toml` 的 `requires-python` 里。
+
+部署前确认目标机版本：
+
+```bash
+python3 --version   # 必须 >= 3.14
+```
+
 ## 本地服务
 
 后端默认监听 `http://127.0.0.1:8787`：
@@ -78,6 +94,52 @@ uv run alembic upgrade head
 
 数据库连接串不提交到仓库。未设置 `AGENT_BATTLE_DATABASE_URL` 时继续使用 `.data/battles.sqlite3`。
 
+## 外部用例库（独立文件，需单独分发）
+
+外部安全用例库**不在主数据库里**，是一个独立的只读 SQLite 文件，由 `AGENT_EXTERNAL_CASE_DB` 指定路径：
+
+```text
+AGENT_EXTERNAL_CASE_DB=/opt/agent-attack-lab/.data/preview_external_security_cases.sqlite3
+```
+
+**这个文件必须随发布单独上传。** `.gitignore` 排除了 `.data/`（含 `**/.data/`），所以 `git pull` 不会带上它，`uv sync` 也不会生成它。新机器仅部署代码时，该文件缺失。
+
+数据来源是离线导入命令，不是运行时生成：
+
+```bash
+cd /opt/agent-attack-lab/backend
+uv run python scripts/import_external_cases.py --help
+```
+
+部署后校验文件完整性（只读检查，不联网、不修改）：
+
+```bash
+uv run python scripts/import_external_cases.py \
+  --database .data/preview_external_security_cases.sqlite3 --validate
+```
+
+正常输出形如 `{"records": 3484, "valid": true, "issues": []}`。`records` 是原始行数；`/external-cases` 接口按 CVE 去重后的条数会小于它（2026-10-18 数据为 3484 行 → 1745 条）。
+
+缺失与异常的可观测方式：
+
+- `GET /external-cases` 返回 `available: false`、`reason: database_missing`、空列表，**不返回错误码**
+- `GET /health` 的 `externalCases.status` 为 `missing`（文件缺失）、`error`（文件损坏或不可读）、`empty`（表为空），并在 `warnings` 里追加 `external_cases_missing` 等条目
+- `/health` 顶层 `status` 不会因此变成 `degraded`，避免探活在仅缺参考数据时摘掉流量
+
+部署后核对一条命令即可：
+
+```bash
+curl -s http://127.0.0.1:8787/health | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['externalCases'])"
+```
+
+`records` 应为去重后的 CVE 条数（截至 2026-10-18 的 CISA KEV 为 1745），`sources` 为来源数。
+
+该库是**只读数据**，服务端用 `mode=ro` 打开，不会写入。运维侧建议额外给文件设置只读属性，避免导入脚本误改生产文件：
+
+```bash
+chmod 444 /opt/agent-attack-lab/.data/preview_external_security_cases.sqlite3
+```
+
 ## 限流和备份
 
 写入接口默认按客户端地址限制为每分钟 60 次，可用环境变量调整：
@@ -88,15 +150,23 @@ $env:AGENT_RATE_LIMIT_PER_MINUTE = "60"
 
 如果设置了 `AGENT_API_KEY`，内部指标接口 `GET /metrics` 也需要携带 `X-API-Key`。SQLite 开发库会自动启用 WAL、忙等待和常用筛选索引；生产多实例部署仍建议使用 PostgreSQL。
 
-SQLite 开发库可以使用脚本备份。恢复前先停止后端，恢复脚本默认拒绝覆盖已有文件：
+SQLite 开发库和 MySQL 生产库都可以用脚本备份。脚本会读取 `backend\.env` 中的 `AGENT_BATTLE_DATABASE_URL` 自动判断后端类型，无需额外参数。恢复前先停止后端。
 
 ```powershell
 cd "D:\梧桐\backend"
+
+# SQLite：文件快照，默认拒绝覆盖已有文件
 .\backup.ps1
 .\restore.ps1 -BackupPath ".data\backups\你的备份文件.sqlite3" -Force
+
+# MySQL：逻辑备份，产出 .sql；恢复前会自动生成 pre-restore 快照，失败自动回滚
+.\backup.ps1
+.\restore.ps1 -BackupPath ".data\backups\你的备份文件.sql"
 ```
 
-上述脚本仅适用于 SQLite。使用 PostgreSQL 时请使用 `pg_dump`/`pg_restore`，不要把 PostgreSQL 连接串当作 SQLite 路径传给脚本。
+MySQL 恢复不执行 `DROP`：业务账号通常只有 `SELECT/INSERT/UPDATE/DELETE/CREATE`，脚本采用「保留现有表结构 + `DELETE` 清空 + 回灌」，备份中新增的表按备份 DDL 创建；清空与回灌在同一事务内，中途失败整表回滚。实现见 `backend/scripts/db_backup_mysql.py`，只依赖 `sqlalchemy` + `pymysql`，目标机不需要 `mysqldump`。
+
+使用 PostgreSQL 时仍请使用 `pg_dump`/`pg_restore`——脚本遇到 PostgreSQL 连接串会直接报错，不会误当作 SQLite 路径处理。
 
 ## 读接口访问保护和事件限制
 
