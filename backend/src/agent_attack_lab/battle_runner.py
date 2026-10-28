@@ -356,12 +356,20 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 stage_id="DEFENSE",
             )
             verification = await verify_round_live(
-                sample, defense, mode=verification_mode
+                sample,
+                defense,
+                mode=verification_mode,
+                difficulty=payload.difficulty,
             )
             if verification.get("mode") == "live":
                 defense["verificationStatus"] = describe_result(verification)
                 defense["verificationMode"] = "live"
                 defense["verificationTarget"] = verification.get("targetAssetId")
+                defense["targetProfile"] = verification.get("targetProfile")
+                if isinstance(verification.get("baselineAttackSuccess"), bool):
+                    defense["baselineAttackSuccess"] = verification[
+                        "baselineAttackSuccess"
+                    ]
                 excerpts = [
                     item
                     for item in verification.get("evidence") or []

@@ -197,11 +197,25 @@ def verify_round(
     reason_text = reason if isinstance(reason, str) and reason else None
     evidence = explicit.get("evidence")
     evidence_list = evidence if isinstance(evidence, list) else []
+    # 靶标侧的执行明细（回复原文、基线对照）原样带回，便于取证与公平性核对。
+    extras = {
+        key: explicit[key]
+        for key in (
+            "targetProfile",
+            "targetResponse",
+            "baselineAttackSuccess",
+            "baselineResponse",
+            "model",
+            "elapsedMs",
+        )
+        if key in explicit
+    }
     if attack_success is True:
         if not evidence_list:
             return {**base, "reason": "missing_target_success_evidence"}
         return {
             **base,
+            **extras,
             "verified": True,
             "evidence": evidence_list,
             "reason": reason_text or "target_success",
@@ -210,6 +224,7 @@ def verify_round(
         # 目标明确拒绝 = 已实际执行过一次验证，只是结果是被拦下。
         return {
             **base,
+            **extras,
             "verified": True,
             "evidence": evidence_list,
             "reason": reason_text or "target_blocked",
@@ -217,7 +232,7 @@ def verify_round(
     fallback = (
         "no_live_adapter" if selected_mode == "live" else "no_simulated_target_adapter"
     )
-    return {**base, "reason": reason_text or fallback}
+    return {**base, **extras, "reason": reason_text or fallback}
 
 
 def aggregate_verdict(
@@ -247,10 +262,17 @@ async def verify_round_live(
     defense: dict[str, Any],
     *,
     mode: VerifyMode | None = None,
+    difficulty: str | None = None,
 ) -> dict[str, Any]:
-    """Run verification for one round, calling the controlled target in live mode."""
+    """Run verification for one round, calling the controlled target in live mode.
+
+    Difficulty decides how strong the target is, so the same attack family can be
+    evaluated against a baseline, a weak and a hardened deployment.
+    """
     selected_mode = mode or configured_verify_mode()
     if selected_mode != "live":
         return verify_round(sample, defense, mode=selected_mode)
-    probe = await probe_target(sample)
+    from agent_attack_lab.targets.controlled_target import profile_for_difficulty
+
+    probe = await probe_target(sample, profile_for_difficulty(difficulty))
     return verify_round(sample, defense, mode="live", config=probe)
