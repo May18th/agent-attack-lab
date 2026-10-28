@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from agent_attack_lab import battle_timeline, config, scoring_glue, state
+from agent_attack_lab import battle_timeline, config, library_store, scoring_glue, state
 from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
@@ -134,10 +134,16 @@ async def battle_attack(
     if previous_round:
         # 上一回合的实测结论要进到攻击方上下文里，否则每轮都是独立开盲盒。
         agent_payload["_previousRound"] = previous_round
-    knowledge = build_attacker_knowledge(
-        state.battle_store.list_admin_samples(limit=200, offset=0),
-        topic=payload.topic,
+    seeded = library_store.agent_context(
+        "attacker", topic=payload.topic, difficulty=payload.difficulty
     )
+    # Formal six-theme catalogs supersede the legacy admin seed rows for that
+    # topic.  Mixing both sources would send duplicate samples/rules to the
+    # agent; legacy/custom topics continue to use the admin tables unchanged.
+    source_records = seeded["records"] or state.battle_store.list_admin_samples(
+        limit=200, offset=0
+    )
+    knowledge = build_attacker_knowledge(source_records, topic=payload.topic)
     if knowledge["records"]:
         agent_payload["_knowledgeContext"] = knowledge
     result = await call_attacker(agent_payload, correlation_id=correlation_id)
@@ -164,10 +170,13 @@ async def battle_defend(
     sample: dict[str, Any], *, correlation_id: str
 ) -> tuple[dict[str, Any], str]:
     topic = str(sample.get("topic") or "")
-    knowledge = build_defender_knowledge(
-        state.battle_store.list_admin_rules(limit=200, offset=0),
-        topic=topic,
+    seeded = library_store.agent_context(
+        "defender", topic=topic, difficulty=str(sample.get("difficulty") or "mid")
     )
+    source_rules = seeded["records"] or state.battle_store.list_admin_rules(
+        limit=200, offset=0
+    )
+    knowledge = build_defender_knowledge(source_rules, topic=topic)
     agent_payload: dict[str, Any] = {"sample": sample}
     if knowledge["records"]:
         agent_payload["_knowledgeContext"] = knowledge

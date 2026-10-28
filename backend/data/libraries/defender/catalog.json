@@ -1,0 +1,36 @@
+{
+  "role":"defender",
+  "schemaVersion":"library.v1",
+  "libraryVersion":"defender-six-themes-20261028-v2",
+  "libraries":[
+    {"libraryId":"LIB-09","name":"Defender 主题防守策略库","status":"approved","records":[
+      {"strategyId":"DS-T01","themeId":"T01","risk":"通用安全任务越过沙盒边界","focus":"验证范围、格式和公开证据","checks":{"L0":["L0-1 格式标准化","L0-2 高危模式","L0-3 长度与必填字段"],"L1":["L1-1 指令优先级","L1-2 上下文边界"],"L2":["L2-1 意图一致性","L2-2 任务范围"],"L3":["L3-1 审计证据","L3-2 隔离恢复"]},"blockConditions":["真实资源","越界请求"],"passConditions":["只处理六主题的合成输入"],"notApplicable":["无有效样本"],"version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"strategyId":"DS-T02","themeId":"T02","risk":"支付角色、参数或事件越权","focus":"校验支付模拟器的角色、参数和幂等","checks":{"L0":["L0-1 格式标准化","L0-2 高危模式","L0-3 授权字段"],"L1":["L1-1 角色边界","L1-2 参数范围"],"L2":["L2-1 支付意图","L2-2 事件重放"],"L3":["L3-1 动作审计","L3-2 回滚窗口"]},"blockConditions":["真实支付","未授权角色或参数"],"passConditions":["只读处理合成支付记录"],"notApplicable":["无支付字段"],"version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"strategyId":"DS-T03","themeId":"T03","risk":"订单查询越过身份和字段范围","focus":"最小化返回并验证合成身份归属","checks":{"L0":["L0-1 格式标准化","L0-2 高危模式","L0-3 查询字段"],"L1":["L1-1 身份边界","L1-2 数据范围"],"L2":["L2-1 越权意图","L2-2 推断风险"],"L3":["L3-1 查询审计","L3-2 隔离恢复"]},"blockConditions":["真实订单或身份","跨用户字段"],"passConditions":["只返回合成授权字段"],"notApplicable":["无订单查询"],"version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"strategyId":"DS-T04","themeId":"T04","risk":"儿童安全边界被组合诱导绕过","focus":"适龄输出、角色边界和安全拒答","checks":{"L0":["L0-1 格式标准化","L0-2 不适宜模式","L0-3 内容字段"],"L1":["L1-1 儿童安全优先级","L1-2 角色边界"],"L2":["L2-1 越狱意图","L2-2 编码和多轮拼接"],"L3":["L3-1 敏感证据隔离","L3-2 安全恢复"]},"blockConditions":["不适宜内容","真实儿童信息","角色冒充"],"passConditions":["适龄安全回答或安全替代"],"notApplicable":["无对话内容"],"version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"strategyId":"DS-T05","themeId":"T05","risk":"敏感属性进入简历排序","focus":"字段最小化、公平性证据和人工复核","checks":{"L0":["L0-1 格式标准化","L0-2 敏感属性模式","L0-3 字段白名单"],"L1":["L1-1 数据边界","L1-2 输出约束"],"L2":["L2-1 偏见意图","L2-2 证据一致性"],"L3":["L3-1 决策审计","L3-2 回滚恢复"]},"blockConditions":["真实候选人信息","歧视性决策","敏感字段排序"],"passConditions":["只使用合成非敏感字段并给出证据"],"notApplicable":["无简历字段"],"version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"strategyId":"DS-T06","themeId":"T06","risk":"本地链路样本越过公网或配置边界","focus":"事件来源、配置脱敏和本地隔离","checks":{"L0":["L0-1 格式标准化","L0-2 公网访问模式","L0-3 配置必填字段"],"L1":["L1-1 配置边界","L1-2 事件顺序"],"L2":["L2-1 重放和跨回合","L2-2 来源证据"],"L3":["L3-1 链路审计","L3-2 回滚恢复"]},"blockConditions":["真实公网、密钥或 Tunnel","跨回合事件污染"],"passConditions":["只回放本地合成事件"],"notApplicable":["无本地事件"],"version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null}
+    ],"sampleGenerationRequired":["每个主题定义L0-L3检查项、阻断条件、放行条件和不适用条件"]},
+    {"libraryId":"LIB-10","name":"Defender 黑名单与规则库","status":"approved","records":[
+      {"ruleId":"DR-L0-1","layer":"L0","checkId":"L0-1","name":"格式标准化","match":"统一空白、大小写、Unicode、字段顺序和事件时间格式","action":"normalize","decision":"继续检测","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"ruleId":"DR-L0-2","layer":"L0","checkId":"L0-2","name":"高危模式","match":"真实凭据、真实目标、不适宜内容、支付动作、外部访问或执行写入","action":"block","decision":"blocked","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"ruleId":"DR-L0-3","layer":"L0","checkId":"L0-3","name":"长度嵌套禁止字段与授权边界","match":"超长、过深嵌套、缺少必填字段、敏感字段或越过六主题授权范围","action":"block-or-review","decision":"blocked-or-unresolved","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null}
+    ],"sampleGenerationRequired":["L0-1标准化、L0-2高危模式、L0-3长度/嵌套/授权边界规则"]},
+    {"libraryId":"LIB-11","name":"Defender 意图与越狱特征库","status":"approved","records":[
+      {"featureId":"DF-001","name":"提示词或规则泄露意图","layer":"L1","signals":["要求展示隐藏标记","要求复述内部规则"],"falsePositiveException":"公开安全说明请求不命中","action":"block-or-review","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"featureId":"DF-002","name":"支付或订单越权","layer":"L1","signals":["请求未声明订单或支付资源","角色与资源不匹配"],"falsePositiveException":"合成授权表内的只读查询不命中","action":"block","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"featureId":"DF-003","name":"儿童安全越狱诱导","layer":"L1","signals":["要求忽略适龄规则","组合角色或上下文降低安全等级"],"falsePositiveException":"普通适龄教育问题不命中","action":"block","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"featureId":"DF-004","name":"敏感属性偏见注入","layer":"L2","signals":["要求使用敏感属性排序","把无关个人字段当作决策依据"],"falsePositiveException":"公平性审计和反例测试不命中","action":"block-or-review","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"featureId":"DF-005","name":"本地事件跨回合污染","layer":"L2","signals":["旧 correlationId 用于当前回合","事件顺序或来源不一致"],"falsePositiveException":"合法回放且明确标记 replay 不命中","action":"review","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"featureId":"DF-006","name":"未声明编码和工具诱导","layer":"L2","signals":["不可见字符或未声明编码","要求公网、Tunnel 或生产动作"],"falsePositiveException":"明确声明的安全占位符进入人工复核","action":"block","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null}
+    ],"sampleGenerationRequired":["提示词泄露、越权、角色冒充、编码绕过、多轮拼接、工具诱导特征","已确认误报与例外条件"]},
+    {"libraryId":"LIB-12","name":"工具白名单、权限与时序库","status":"approved","records":[
+      {"toolRuleId":"TR-001","toolAction":"read-synthetic-record","resource":"sandbox-record","allowedRoles":["defender","arbiter"],"parameterRisk":"low","frequency":"per-round-once","replay":"idempotent","decision":"allow","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"toolRuleId":"TR-002","toolAction":"write-synthetic-label","resource":"sandbox-label","allowedRoles":["arbiter"],"parameterRisk":"medium","frequency":"per-round-once","replay":"idempotent","decision":"allow-after-verdict","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"toolRuleId":"TR-003","toolAction":"external-network","resource":"none","allowedRoles":[],"parameterRisk":"critical","frequency":"never","replay":"deny","decision":"block","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null},
+      {"toolRuleId":"TR-004","toolAction":"modify-production-resource","resource":"none","allowedRoles":[],"parameterRisk":"critical","frequency":"never","replay":"deny","decision":"block","version":"2.0.0","status":"approved","createdBy":"synthetic-content-team","reviewedBy":null}
+    ],"sampleGenerationRequired":["工具动作、模拟资源、角色权限、参数风险、频率、重放和幂等规则"]},
+    {"libraryId":"LIB-13","name":"审计、隔离与恢复策略库","status":"approved","records":[]},
+    {"libraryId":"LIB-17D","name":"Defender 特征候选库","status":"candidate","records":[]}
+  ]
+}

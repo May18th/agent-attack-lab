@@ -14,6 +14,7 @@ from agent_attack_lab.agents.attack_evolve import (
 from agent_attack_lab.agents.common import create_agent_app
 from agent_attack_lab.agents.knowledge import trusted_attacker_context
 from agent_attack_lab.agents.llm_runtime import LLMError, complete_json, is_configured
+from agent_attack_lab.library_store import agent_context as library_agent_context
 
 logger = logging.getLogger("agent_attack_lab.attacker")
 _TEST_VARIATIONS = {
@@ -187,6 +188,13 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
         knowledge = trusted_attacker_context(
             payload.get("_knowledgeContext"), topic=request.topic
         )
+        if knowledge is None:
+            knowledge = trusted_attacker_context(
+                library_agent_context(
+                    "attacker", topic=request.topic, difficulty=request.difficulty
+                ),
+                topic=request.topic,
+            )
         if knowledge is not None:
             user_payload["knowledgeContext"] = knowledge
         response = await complete_json(prompt, user_payload, role="attacker")
