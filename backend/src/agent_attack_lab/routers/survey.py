@@ -59,6 +59,7 @@ class SurveySubmission(BaseModel):
     q5_concern: str = Field(default="", max_length=2000)
     q6_reuse_score: int = Field(ge=1, le=5)
     q6_must_fix: str = Field(default="", max_length=2000)
+    q6_callback: Literal["愿意", "不愿意"] | None = None
 
 
 @router.get("/survey", response_class=HTMLResponse, include_in_schema=False)

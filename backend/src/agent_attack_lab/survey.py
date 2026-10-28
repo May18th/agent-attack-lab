@@ -41,6 +41,7 @@ CSV_COLUMNS = [
     "q5_concern",
     "q6_reuse_score",
     "q6_must_fix",
+    "q6_callback",
 ]
 
 
