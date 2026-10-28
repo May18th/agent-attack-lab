@@ -1,0 +1,91 @@
+name: 采集 RPC 访问日志
+
+# 只读采集：清点 nginx 访问日志，统计 /rpc 的调用来源与状态码。
+# 目的：判断平台侧（梧桐 AIP）是否真的调用过本项目三只智能体。
+# 不写任何文件、不 reload、不打印密钥。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    name: 访问日志统计
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    steps:
+      - name: 日志位置与格式
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "== access_log 指令 =="
+          sudo -n nginx -T 2>/dev/null | grep -E "^\s*access_log" | head -20 || echo "NO_ACCESS_LOG_DIRECTIVE"
+          echo "== log_format 定义 =="
+          sudo -n nginx -T 2>/dev/null | grep -E "^\s*log_format" | head -20 || echo "NO_LOG_FORMAT"
+          echo "== 日志文件清点 =="
+          sudo -n ls -la /var/log/nginx 2>/dev/null | head -40 || echo "NO_LOG_DIR"
+
+      - name: 体积与时间范围
+        shell: bash
+        run: |
+          set -uo pipefail
+          for f in /var/log/nginx/*.log; do
+            [ -f "$f" ] || continue
+            echo "--- $f"
+            sudo -n wc -l "$f" 2>/dev/null | awk '{print "  lines:", $1}'
+            sudo -n head -1 "$f" 2>/dev/null | awk '{print "  first:", $4, $5}'
+            sudo -n tail -1 "$f" 2>/dev/null | awk '{print "  last :", $4, $5}'
+          done
+
+      - name: /rpc 请求总量与状态码
+        shell: bash
+        run: |
+          set -uo pipefail
+          for f in /var/log/nginx/*.log; do
+            [ -f "$f" ] || continue
+            echo "--- $f"
+            sudo -n awk 'index($0," /rpc")>0 {n++; st[$9]++} END {print "  /rpc total:", n+0; for (s in st) print "  status", s":", st[s]}' "$f" 2>/dev/null
+          done
+
+      - name: 按日统计 /rpc
+        shell: bash
+        run: |
+          set -uo pipefail
+          for f in /var/log/nginx/*.log; do
+            [ -f "$f" ] || continue
+            echo "--- $f"
+            sudo -n awk 'index($0," /rpc")>0 {split($4,d,":"); c[d[1]]++} END {for (k in c) print "  ", k, c[k]}' "$f" 2>/dev/null | sort -k2
+          done
+
+      - name: /rpc 来源分布（IP 与状态）
+        shell: bash
+        run: |
+          set -uo pipefail
+          for f in /var/log/nginx/*.log; do
+            [ -f "$f" ] || continue
+            echo "--- $f  TOP 客户端"
+            sudo -n awk 'index($0," /rpc")>0 {c[$1" "$9]++} END {for (k in c) print "  ", k, c[k]}' "$f" 2>/dev/null | sort -k3 -nr | head -20
+          done
+
+      - name: /rpc 样本行（看字段含不含客户端证书）
+        shell: bash
+        run: |
+          set -uo pipefail
+          for f in /var/log/nginx/*.log; do
+            [ -f "$f" ] || continue
+            n=$(sudo -n grep -c " /rpc" "$f" 2>/dev/null || echo 0)
+            echo "--- $f  (/rpc 行数: $n)"
+            sudo -n grep " /rpc" "$f" 2>/dev/null | tail -5
+          done
+
+      - name: 非 /rpc 的对外可见性请求统计
+        shell: bash
+        run: |
+          set -uo pipefail
+          for f in /var/log/nginx/*.log; do
+            [ -f "$f" ] || continue
+            echo "--- $f  TOP 路径"
+            sudo -n awk '{split($7,p,"?"); c[p[1]" "$9]++} END {for (k in c) print "  ", k, c[k]}' "$f" 2>/dev/null | sort -k3 -nr | head -15
+          done
