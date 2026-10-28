@@ -112,6 +112,15 @@
     color: var(--text-dim);
     font-size: 14px;
   }
+  .hero p.notice {
+    color: var(--text-faint);
+    font-size: 12px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-sm);
+    display: inline-block;
+  }
 
   /* ===== 进度条 ===== */
   .progress-wrap {
@@ -326,6 +335,18 @@
     font-weight: 700;
     display: flex; align-items: center; justify-content: center;
   }
+  .rank-item .rank-handle { order: 1; }
+  .rank-item .rank-pos { order: 2; }
+  .rank-item .rank-text { order: 3; flex: 1; }
+  .rank-move { order: 4; display: inline-flex; gap: 4px; margin-left: 8px; }
+  .rank-move .mv {
+    width: 26px; height: 26px; line-height: 1;
+    border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--option-border);
+    background: var(--option-bg);
+    color: var(--text-dim); font-size: 13px;
+  }
+  .rank-move .mv:hover { border-color: var(--primary); color: var(--primary); }
   .rank-text { font-size: 14px; color: var(--text-main); }
   .rank-desc { font-size: 12px; color: var(--text-faint); margin-left: 6px; }
 
@@ -476,7 +497,8 @@
     <header class="hero">
       <span class="badge"><span class="dot"></span>AGENT RED-TEAM LAB</span>
       <h1>智能体攻防实验室 · 用户调研</h1>
-      <p class="subtitle">智弈破局 — 你的实战反馈，驱动下一版迭代</p>
+      <p class="subtitle">6 道题 · 约 3 分钟</p>
+      <p class="notice">回答用于产品改进与参赛材料整理，按匿名统计，不对外披露个人信息。</p>
     </header>
 
     <!-- 进度条 -->
@@ -543,25 +565,33 @@
         <div class="q-num">3</div>
         <div>
           <div class="q-title">平台目前输出四类结果，按对你的有用程度排序<span class="required-mark">*</span></div>
-          <div class="q-hint">拖拽排序，最有用在最上面</div>
+          <div class="q-hint">最有用排最上面；电脑端可拖拽，手机端点右侧 ↑ ↓ 调整</div>
         </div>
+      </div>
+      <div class="q-hint" style="margin-bottom:10px">
+        术语说明：攻击样本＝用来试探系统的"坏话术"；命中证据＝防守方指出哪句话有问题、命中哪条规则；
+        裁决结果＝第三方判定这局算不算被打穿；战报＝整局的复盘报告。
       </div>
       <div class="rank-list" id="rankList">
         <div class="rank-item" draggable="true" data-value="攻击样本">
           <span class="rank-handle">⠿</span><span class="rank-pos">1</span>
-          <span class="rank-text">攻击样本<span class="rank-desc">生成的对抗 Payload</span></span>
+          <span class="rank-move"><button type="button" class="mv" data-dir="up" aria-label="上移">↑</button><button type="button" class="mv" data-dir="down" aria-label="下移">↓</button></span>
+          <span class="rank-text">攻击样本<span class="rank-desc">用来试探系统的"坏话术"</span></span>
         </div>
         <div class="rank-item" draggable="true" data-value="命中证据">
           <span class="rank-handle">⠿</span><span class="rank-pos">2</span>
-          <span class="rank-text">命中证据<span class="rank-desc">Defender 拦截命中的规则与位置</span></span>
+          <span class="rank-move"><button type="button" class="mv" data-dir="up" aria-label="上移">↑</button><button type="button" class="mv" data-dir="down" aria-label="下移">↓</button></span>
+          <span class="rank-text">命中证据<span class="rank-desc">防守方指出哪句话有问题、命中哪条规则</span></span>
         </div>
         <div class="rank-item" draggable="true" data-value="裁决结果">
           <span class="rank-handle">⠿</span><span class="rank-pos">3</span>
-          <span class="rank-text">裁决结果<span class="rank-desc">Arbiter 判定攻击成功 / 被拦截 / 未定</span></span>
+          <span class="rank-move"><button type="button" class="mv" data-dir="up" aria-label="上移">↑</button><button type="button" class="mv" data-dir="down" aria-label="下移">↓</button></span>
+          <span class="rank-text">裁决结果<span class="rank-desc">第三方判定这局算不算被打穿</span></span>
         </div>
         <div class="rank-item" draggable="true" data-value="战报">
           <span class="rank-handle">⠿</span><span class="rank-pos">4</span>
-          <span class="rank-text">战报<span class="rank-desc">Markdown 复盘报告</span></span>
+          <span class="rank-move"><button type="button" class="mv" data-dir="up" aria-label="上移">↑</button><button type="button" class="mv" data-dir="down" aria-label="下移">↓</button></span>
+          <span class="rank-text">战报<span class="rank-desc">整局的复盘报告</span></span>
         </div>
       </div>
     </section>
@@ -587,7 +617,6 @@
           <label class="opt checkbox"><input type="checkbox" value="攻击样本的多样性"><span class="indicator"></span><span class="label">攻击样本的多样性</span></label>
           <label class="opt checkbox"><input type="checkbox" value="Defender 命中证据的准确性"><span class="indicator"></span><span class="label">Defender 命中证据的准确性</span></label>
           <label class="opt checkbox"><input type="checkbox" value="Arbiter 裁决标准"><span class="indicator"></span><span class="label">Arbiter 裁决标准</span></label>
-          <label class="opt checkbox"><input type="checkbox" value="评分公式的合理性"><span class="indicator"></span><span class="label">评分公式的合理性</span></label>
           <label class="opt checkbox"><input type="checkbox" value="模拟验证 vs 真实验证的区分"><span class="indicator"></span><span class="label">模拟验证 vs 真实验证的区分</span></label>
           <label class="opt checkbox"><input type="checkbox" value="其他"><span class="indicator"></span><span class="label">其他</span></label>
         </div>
@@ -608,10 +637,10 @@
         </div>
       </div>
       <div class="options" data-type="radio" data-field="q5_willingness">
-        <label class="opt"><input type="radio" name="q5will" value="敢，有授权就敢用"><span class="indicator"></span><span class="label">敢，有授权就敢用</span></label>
-        <label class="opt"><input type="radio" name="q5will" value="有条件敢用（需补充验证）"><span class="indicator"></span><span class="label">有条件敢用（需补充验证）</span></label>
-        <label class="opt"><input type="radio" name="q5will" value="不敢，只能当参考"><span class="indicator"></span><span class="label">不敢，只能当参考</span></label>
         <label class="opt"><input type="radio" name="q5will" value="完全不会用"><span class="indicator"></span><span class="label">完全不会用</span></label>
+        <label class="opt"><input type="radio" name="q5will" value="不敢，只能当参考"><span class="indicator"></span><span class="label">不敢，只能当参考</span></label>
+        <label class="opt"><input type="radio" name="q5will" value="有条件敢用（需补充验证）"><span class="indicator"></span><span class="label">有条件敢用（需补充验证）</span></label>
+        <label class="opt"><input type="radio" name="q5will" value="敢，有授权就敢用"><span class="indicator"></span><span class="label">敢，有授权就敢用</span></label>
       </div>
       <div class="field">
         <label class="field-label">你的主要顾虑是什么？</label>
@@ -643,6 +672,13 @@
         <label class="field-label">如果只能改一个地方，你最想改什么？</label>
         <textarea id="q6_must_fix" placeholder="例如：增加自定义攻击样本导入、战报导出 PDF……"></textarea>
       </div>
+      <div class="field">
+        <label class="field-label">是否愿意接受 5 分钟回访？（可选）</label>
+        <div class="options" data-type="radio" data-field="q6_callback">
+          <label class="opt"><input type="radio" name="q6cb" value="愿意"><span class="indicator"></span><span class="label">愿意</span></label>
+          <label class="opt"><input type="radio" name="q6cb" value="不愿意"><span class="indicator"></span><span class="label">不愿意</span></label>
+        </div>
+      </div>
     </section>
 
     <!-- 提交 -->
@@ -661,7 +697,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
     </div>
     <h2>感谢你的反馈！</h2>
-    <p>你的实战经验已记录，将直接驱动"智弈破局"下一版迭代。<br/>期待与你再次交锋。</p>
+    <p>反馈已收到，会用于改进产品与整理参赛材料。<br/>感谢你的时间。</p>
     <a class="btn-platform" href="https://www.yuanyiagentzhandui.cn/" target="_blank" rel="noopener">
       查看平台 →
     </a>
@@ -689,7 +725,8 @@
     q5_willingness: "",
     q5_concern: "",
     q6_reuse_score: 0,
-    q6_must_fix: ""
+    q6_must_fix: "",
+    q6_callback: ""
   };
 
   var $ = function (sel) { return document.querySelector(sel); };
@@ -776,6 +813,21 @@
   var dragSrc = null;
 
   function initDrag() {
+    // 手机端兜底：点 ↑ ↓ 调整顺序，不依赖拖拽
+    rankList.addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest(".mv") : null;
+      if (!btn) return;
+      e.preventDefault();
+      var item = btn.closest(".rank-item");
+      if (!item) return;
+      var dir = btn.getAttribute("data-dir");
+      if (dir === "up" && item.previousElementSibling) {
+        rankList.insertBefore(item, item.previousElementSibling);
+      } else if (dir === "down" && item.nextElementSibling) {
+        rankList.insertBefore(item.nextElementSibling, item);
+      }
+      syncRanking();
+    });
     var items = $$(rankList.querySelectorAll(".rank-item"));
     items.forEach(function (item) {
       item.addEventListener("dragstart", function (e) {
@@ -916,7 +968,8 @@
       q5_willingness: state.q5_willingness,
       q5_concern: state.q5_concern,
       q6_reuse_score: state.q6_reuse_score,
-      q6_must_fix: state.q6_must_fix
+      q6_must_fix: state.q6_must_fix,
+      q6_callback: state.q6_callback || null
     };
 
     fetch(API_BASE + "/api/survey/submit", {
