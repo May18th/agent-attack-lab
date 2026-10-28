@@ -2442,10 +2442,13 @@ var battle3d=(function(){
     var total=block+escape;
     var blockPct=total?block/total*100:0;
     var escapePct=total?escape/total*100:0;
+    // 无数据时仍保留截图中的红绿对照环；中心百分比继续反映真实数据 0.00%。
+    var displayBlock=total?block:1;
+    var displayEscape=total?escape:1;
     var centerText='{block|拦截 '+blockPct.toFixed(2)+'%}\n{escape|逃逸 '+escapePct.toFixed(2)+'%}';
-    return {backgroundColor:'transparent',tooltip:{trigger:'item',formatter:'{b}: {d}%'},graphic:[{type:'text',left:'center',top:'middle',silent:true,style:{text:centerText,textAlign:'center',textVerticalAlign:'middle',fontSize:12,fontWeight:700,lineHeight:21,rich:{block:{fill:'#7fd49b',align:'center'},escape:{fill:'#ff6b6b',align:'center'}}}}],series:[{type:'pie',radius:['56%','84%'],center:['50%','53%'],showEmptyCircle:true,emptyCircleStyle:{color:'#253140'},avoidLabelOverlap:true,label:{show:false},labelLine:{show:false},itemStyle:{borderColor:'#1a2230',borderWidth:2},data:[
-      {value:block,name:'拦截',itemStyle:{color:'#7fd49b'}},
-      {value:escape,name:'逃逸',itemStyle:{color:'#ff6b6b'}}
+    return {backgroundColor:'transparent',tooltip:{trigger:'item',formatter:function(params){return params.name+': '+(total?Number(params.percent||0).toFixed(2):'0.00')+'%';}},graphic:[{type:'text',left:'center',top:'middle',silent:true,style:{text:centerText,textAlign:'center',textVerticalAlign:'middle',fontSize:12,fontWeight:700,lineHeight:21,rich:{block:{fill:'#7fd49b',align:'center'},escape:{fill:'#ff6b6b',align:'center'}}}}],series:[{type:'pie',radius:['56%','84%'],center:['50%','53%'],showEmptyCircle:true,emptyCircleStyle:{color:'#253140'},avoidLabelOverlap:true,label:{show:false},labelLine:{show:false},itemStyle:{borderColor:'#1a2230',borderWidth:2},data:[
+      {value:displayBlock,name:'拦截',itemStyle:{color:'#7fd49b'}},
+      {value:displayEscape,name:'逃逸',itemStyle:{color:'#ff6b6b'}}
     ]}]} ;
   }
   pie.setOption(pieOption(0,0));
