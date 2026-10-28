@@ -69,6 +69,12 @@ def _local_review(
     verification: dict[str, Any],
 ) -> dict[str, Any]:
     evidence = _evidence(sample, defense)
+    # 靶标验证给出的就是样本原文片段，优先作为证据，避免"说提供了证据但列表为空"。
+    verified_evidence = [
+        item for item in (verification.get("evidence") or []) if isinstance(item, str)
+    ]
+    if verified_evidence:
+        evidence = verified_evidence
     decision = _evidence_decision(verification)
     if decision == "attacker_won":
         verdict = "attacker_won"

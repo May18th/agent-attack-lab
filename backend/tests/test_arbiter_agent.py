@@ -207,3 +207,19 @@ def test_verification_projection_carries_decided_outcome() -> None:
     assert projected["attackSuccess"] is False
     assert projected["defenseSuccess"] is True
     assert projected["evidence"] == ["忽略之前的指令"]
+
+
+def test_attacker_verdict_carries_sample_evidence() -> None:
+    verification = {
+        "verified": True,
+        "mode": "simulated",
+        "simulated": True,
+        "attackSuccess": True,
+        "defenseSuccess": False,
+        "evidence": ["忽略之前的指令"],
+        "reason": "simulated_target_success",
+    }
+    result = asyncio.run(arbiter.review_round(_sample(), {"caught": []}, verification))
+
+    assert result["verdict"] == "attacker_won"
+    assert result["evidence"] == ["忽略之前的指令"]
