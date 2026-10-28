@@ -201,6 +201,7 @@
   /* ===== 选项（单选/多选） ===== */
   .options { display: flex; flex-direction: column; gap: 10px; }
   .opt {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -216,7 +217,13 @@
     border-color: rgba(0, 212, 255, 0.4);
     background: rgba(0, 212, 255, 0.05);
   }
-  .opt input { display: none; }
+    .opt input {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: 0; padding: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
   .opt .indicator {
     flex-shrink: 0;
     width: 18px; height: 18px;
@@ -730,37 +737,40 @@
   };
 
   var $ = function (sel) { return document.querySelector(sel); };
-  var $$ = function (sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); };
+  var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
 
   // ===== 选项组绑定（单选 / 多选） =====
+  // 视觉与状态统一由原生 change 驱动：点击 label → 浏览器切换 input → change → 同步样式与状态。
+  // 不在 click 里手工改 checked，否则会与 label 的原生切换叠加，导致勾选被抵消。
   function bindOptionGroup(group) {
     var type = group.getAttribute("data-type");
     var field = group.getAttribute("data-field");
-    var opts = $$(group.querySelectorAll(".opt"));
+    var opts = $$(".opt", group);
 
-    opts.forEach(function (opt) {
-      opt.addEventListener("click", function (e) {
-        if (e.target.tagName === "INPUT") return;
-        var input = opt.querySelector("input");
-        var val = input.value;
+    group.addEventListener("change", function (e) {
+      var input = e.target;
+      if (!input || input.tagName !== "INPUT") return;
+      var val = input.value;
 
-        if (type === "radio") {
-          opts.forEach(function (o) { o.classList.remove("active"); o.querySelector("input").checked = false; });
-          opt.classList.add("active");
-          input.checked = true;
-          state[field] = val;
-        } else {
-          opt.classList.toggle("active");
-          input.checked = opt.classList.contains("active");
-          if (input.checked) {
-            if (state[field].indexOf(val) === -1) state[field].push(val);
-          } else {
-            state[field] = state[field].filter(function (v) { return v !== val; });
-          }
+      if (type === "radio") {
+        opts.forEach(function (o) {
+          o.classList.toggle("active", o.querySelector("input").checked);
+        });
+        state[field] = val;
+      } else {
+        var opt = input.parentNode;
+        while (opt && opt !== group && !(opt.classList && opt.classList.contains("opt"))) {
+          opt = opt.parentNode;
         }
+        if (opt && opt !== group) opt.classList.toggle("active", input.checked);
+        if (input.checked) {
+          if (state[field].indexOf(val) === -1) state[field].push(val);
+        } else {
+          state[field] = state[field].filter(function (v) { return v !== val; });
+        }
+      }
 
-        onFieldChange(field);
-      });
+      onFieldChange(field);
     });
   }
 
@@ -828,7 +838,7 @@
       }
       syncRanking();
     });
-    var items = $$(rankList.querySelectorAll(".rank-item"));
+    var items = $$(".rank-item", rankList);
     items.forEach(function (item) {
       item.addEventListener("dragstart", function (e) {
         dragSrc = item;
@@ -853,7 +863,7 @@
         e.preventDefault();
         item.classList.remove("drag-over");
         if (dragSrc && dragSrc !== item) {
-          var all = $$(rankList.querySelectorAll(".rank-item"));
+          var all = $$(".rank-item", rankList);
           var srcIdx = all.indexOf(dragSrc);
           var tgtIdx = all.indexOf(item);
           if (srcIdx < tgtIdx) {
@@ -868,7 +878,7 @@
   }
 
   function syncRanking() {
-    var items = $$(rankList.querySelectorAll(".rank-item"));
+    var items = $$(".rank-item", rankList);
     state.q3_ranking = items.map(function (it) { return it.getAttribute("data-value"); });
     items.forEach(function (it, idx) {
       it.querySelector(".rank-pos").textContent = idx + 1;
@@ -1010,15 +1020,26 @@
   }
 
   // ===== 初始化 =====
-  $$(".options").forEach(bindOptionGroup);
-  bindText("q2_method", "q2_method");
-  bindText("q2_pain_other", "q2_pain_other");
-  bindText("q4_distrust_other", "q4_distrust_other");
-  bindText("q5_concern", "q5_concern");
-  bindText("q6_must_fix", "q6_must_fix");
-  initDrag();
-  initStars();
-  updateProgress();
+  // 每块独立容错：某一题结构变化只影响该题，不会让整页交互失效
+  function safe(fn, label) {
+    try {
+      fn();
+    } catch (err) {
+      if (window.console && console.error) console.error("[survey] " + label + " 初始化失败:", err);
+    }
+  }
+
+  $$(".options").forEach(function (g) {
+    safe(function () { bindOptionGroup(g); }, "选项组 " + (g.getAttribute("data-field") || "?"));
+  });
+  safe(function () { bindText("q2_method", "q2_method"); }, "q2_method");
+  safe(function () { bindText("q2_pain_other", "q2_pain_other"); }, "q2_pain_other");
+  safe(function () { bindText("q4_distrust_other", "q4_distrust_other"); }, "q4_distrust_other");
+  safe(function () { bindText("q5_concern", "q5_concern"); }, "q5_concern");
+  safe(function () { bindText("q6_must_fix", "q6_must_fix"); }, "q6_must_fix");
+  safe(initDrag, "initDrag");
+  safe(initStars, "initStars");
+  safe(updateProgress, "updateProgress");
 })();
 </script>
 </body>
