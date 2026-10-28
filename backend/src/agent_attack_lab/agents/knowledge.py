@@ -130,7 +130,10 @@ def build_attacker_knowledge(
         if score <= 0:
             continue
         item: dict[str, str] = {}
-        for key in ("id", "topic", "content"):
+        for key in (
+            "id", "topic", "content", "selectionKind", "sampleId",
+            "strategyId", "intent", "difficulty", "variationMethod",
+        ):
             value = _text(record.get(key), limit=200 if key != "content" else _MAX_TEXT)
             if value is not None:
                 item[key] = value

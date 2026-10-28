@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from agent_attack_lab import battle_timeline, config, scoring_glue, state
+from agent_attack_lab import battle_timeline, config, library_store, scoring_glue, state
 from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
@@ -134,8 +134,11 @@ async def battle_attack(
     if previous_round:
         # 上一回合的实测结论要进到攻击方上下文里，否则每轮都是独立开盲盒。
         agent_payload["_previousRound"] = previous_round
+    seeded = library_store.agent_context(
+        "attacker", topic=payload.topic, difficulty=payload.difficulty
+    )
     knowledge = build_attacker_knowledge(
-        state.battle_store.list_admin_samples(limit=200, offset=0),
+        [*seeded["records"], *state.battle_store.list_admin_samples(limit=200, offset=0)],
         topic=payload.topic,
     )
     if knowledge["records"]:
@@ -164,8 +167,11 @@ async def battle_defend(
     sample: dict[str, Any], *, correlation_id: str
 ) -> tuple[dict[str, Any], str]:
     topic = str(sample.get("topic") or "")
+    seeded = library_store.agent_context(
+        "defender", topic=topic, difficulty=str(sample.get("difficulty") or "mid")
+    )
     knowledge = build_defender_knowledge(
-        state.battle_store.list_admin_rules(limit=200, offset=0),
+        [*seeded["records"], *state.battle_store.list_admin_rules(limit=200, offset=0)],
         topic=topic,
     )
     agent_payload: dict[str, Any] = {"sample": sample}
