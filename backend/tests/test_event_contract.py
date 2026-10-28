@@ -82,16 +82,23 @@ def test_similarity_check_is_an_arbiter_event_between_a5_and_a7() -> None:
         difficulty="mid",
         topic="提示注入",
         sample={"sampleId": "current", "content": "ignore previous instructions"},
-        previous_sample={"sampleId": "previous", "content": "ignore prior instructions"},
+        previous_sample={
+            "sampleId": "previous",
+            "content": "ignore prior instructions",
+        },
         correlation_id="call-2",
     )
 
-    similarity = next(item for item in emitted if item[0] == "arbiter.similarity.checked")
+    similarity = next(
+        item for item in emitted if item[0] == "arbiter.similarity.checked"
+    )
     assert similarity[2]["stageId"] == "A6"
     assert similarity[2]["agentRole"] == "arbiter"
     assert similarity[2]["similarityThreshold"] == 0.85
     assert isinstance(similarity[2]["similarity"], float)
     assert similarity[2]["sourceType"] in {"same-source", "new-source"}
-    assert [item[2]["stageId"] for item in emitted if item[0].endswith("completed") or item[0] == "arbiter.similarity.checked"] == [
-        "A1", "A2", "A3", "A4", "A5", "A6", "A7"
-    ]
+    assert [
+        item[2]["stageId"]
+        for item in emitted
+        if item[0].endswith("completed") or item[0] == "arbiter.similarity.checked"
+    ] == ["A1", "A2", "A3", "A4", "A5", "A6", "A7"]
