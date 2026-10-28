@@ -32,6 +32,10 @@
   .topbar h1{margin:0;font-size:32px;line-height:1.12;font-weight:850;letter-spacing:1.5px;background:linear-gradient(92deg,#a9e1ff 0%,#87bfff 38%,#b69aff 72%,#f09bff 100%);-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 24px rgba(120,150,255,.28)}
   .topbar h1 em{font-style:normal;background:linear-gradient(92deg,#ffb08a,#ff8f6b);-webkit-background-clip:text;background-clip:text;color:transparent}
   .topbar .sub{margin:0;padding-left:18px;border-left:1px solid #33465e;color:#aebdce;font-size:13px;line-height:1.35;letter-spacing:.2px;white-space:nowrap}
+  .topbar-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
+  .topbar-tool{display:inline-flex;align-items:center;justify-content:center;border:1px solid #35475d;border-radius:6px;background:rgba(16,23,34,.88);color:#9fb0c2;padding:7px 11px;font-size:12px;line-height:1.2;white-space:nowrap;text-decoration:none;cursor:pointer;transition:border-color .16s,color .16s,background .16s}
+  .topbar-tool:hover{border-color:#59738f;color:#fff;background:#172332}
+  .topbar-tool:focus-visible{outline:2px solid #78bfff;outline-offset:2px}
   @media(max-width:720px){.brand-line{gap:7px 14px}.topbar h1{font-size:27px}.topbar .sub{width:100%;padding-left:0;border-left:0;white-space:normal}}
   .status{display:inline-flex;align-items:center;gap:7px;background:rgba(15,30,22,.6);border:1px solid #1e5c38;color:var(--green);border-radius:999px;padding:7px 16px;font-size:12.5px;cursor:pointer;line-height:1}
   .status .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 1.6s ease-in-out infinite}
@@ -456,6 +460,10 @@
         <p class="sub">后端联调控制台 · 实时战局 · 风险复盘</p>
       </div>
     </div>
+    <nav class="topbar-tools" id="topbarTools" aria-label="快捷入口">
+      <a class="topbar-tool" href="https://www.yuanyiagentzhandui.cn/admin" title="打开后台管理">后台管理</a>
+      <a class="topbar-tool" href="https://api.yuanyiagentzhandui.cn/survey" target="_blank" rel="noopener noreferrer" title="打开问卷反馈">问卷反馈</a>
+    </nav>
     <button class="status" id="healthBtn"><span class="dot"></span>服务运行正常（Service healthy）</button>
   </header>
 
