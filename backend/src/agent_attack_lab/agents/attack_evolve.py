@@ -348,7 +348,11 @@ def _apply_operator(
     if operator == "split":
         return (*_apply_split(content), "分段投递")
     if operator == "escalate":
-        return (*_apply_escalate(content), "明确索取")
+        text, note = _apply_escalate(content)
+        if text == content:
+            # 已经要求过明确结果就没得加了，换载体，别让这一轮白跑。
+            return (*_apply_carrier(content, round_index, tactic), "载体替换")
+        return text, note, "明确索取"
     if operator == "carrier":
         return (*_apply_carrier(content, round_index, tactic), "载体替换")
     return content, "首轮建立基线", "基线建立"

@@ -471,15 +471,20 @@ def test_battle_records_independent_agent_sources(monkeypatch) -> None:
     monkeypatch.setattr(battle_runner, "call_attacker", remote_attack)
     monkeypatch.setattr(battle_runner, "call_defender", local_defend)
 
+    # 逐轮交替后每轮各调一次攻/防，这里固定 1 轮只看来源标注。
     response = client.post(
-        "/battles", json={"difficulty": "low", "topic": "agent source test"}
+        "/battles",
+        json={"difficulty": "low", "topic": "agent source test", "rounds": 1},
     )
 
     assert response.status_code == 201
     battle = response.json()
     assert battle["attackerOut"]["agentSource"] == "acp-llm"
     assert battle["defenderOut"][0]["agentSource"] == "local-rule"
-    events = client.get(f"/battles/{battle['id']}/events").json()
+    # 逐轮交替后事件数超过默认 200 条，这里取全量再断言。
+    events = client.get(
+        f"/battles/{battle['id']}/events", params={"limit": 1000}
+    ).json()
     attack_completed = next(
         item for item in events if item["type"] == "attack.completed"
     )
@@ -577,7 +582,8 @@ def test_battle_injects_role_scoped_knowledge_into_remote_agents(monkeypatch) ->
         },
     }
     assert captured["defend"] == {
-        "sample": {"type": "defect", "content": "remote sample"},
+        # 逐轮生成后样本带上轮次，防守方据此对齐回放。
+        "sample": {"type": "defect", "content": "remote sample", "round": 1},
         "_knowledgeContext": {
             "role": "defender",
             "records": [
@@ -632,7 +638,9 @@ def test_battle_persists_independent_arbiter_review(monkeypatch) -> None:
     review = response.json()["defenderOut"][0]["arbiterReview"]
     assert review["verdict"] == "undetermined"
     assert review["agentSource"] == "arbiter-rule-fallback"
-    events = client.get(f"/battles/{response.json()['id']}/events").json()
+    events = client.get(
+        f"/battles/{response.json()['id']}/events", params={"limit": 1000}
+    ).json()
     round_event = next(item for item in events if item["type"] == "round.completed")
     assert round_event["data"]["arbiterReview"]["verdict"] == "undetermined"
 

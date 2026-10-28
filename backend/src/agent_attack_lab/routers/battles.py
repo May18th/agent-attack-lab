@@ -45,6 +45,7 @@ from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import ACPAgentError
 from agent_attack_lab.acp_agents import is_configured as acp_agent_configured
 from agent_attack_lab.agents.arbiter import review_round
+from agent_attack_lab.agents.attack_evolve import summarize_escalation
 from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from agent_attack_lab.models import BattleEvent, BattleRecord, BattleRequest
@@ -219,43 +220,11 @@ async def create_battle(
     defense_results: list[dict[str, Any]] = []
     verification_mode = configured_verify_mode()
     verifications: list[dict[str, Any]] = []
+    attacker_sources: list[str] = []
+    # 逐轮交替：上一轮的靶标结论要回到攻击方手里，样本才会针对防守变化。
+    previous_round: dict[str, Any] | None = None
     try:
-        (
-            attack_result,
-            attacker_source,
-            attack_call_id,
-        ) = await battle_runner.tracked_agent_call(
-            battle_id=battle_id,
-            role="attacker",
-            invoke=lambda correlation_id: battle_runner.battle_attack(
-                payload, correlation_id=correlation_id
-            ),
-            add_event=add_event,
-            round_number=0,
-            stage_id="A2",
-        )
-        for index, sample in enumerate(attack_result["samples"], start=1):
-            add_event(
-                "attack.sample.generated",
-                "completed",
-                {
-                    "round": index,
-                    "sample": sample,
-                    "attackerSource": attacker_source,
-                    "correlationId": attack_call_id,
-                },
-            )
-        add_event(
-            "attack.completed",
-            "completed",
-            {
-                "sampleCount": len(attack_result["samples"]),
-                "rounds": payload.rounds,
-                "attackerSource": attacker_source,
-                "correlationId": attack_call_id,
-            },
-        )
-        for index, sample in enumerate(attack_result["samples"], start=1):
+        for index in range(1, payload.rounds + 1):
             add_event(
                 "round.started",
                 "running",
@@ -266,6 +235,51 @@ async def create_battle(
                     "defenderSource": "acp-pending"
                     if acp_agent_configured("defender")
                     else "local-rule",
+                },
+            )
+            round_payload = payload.model_copy(update={"rounds": 1})
+            (
+                generated,
+                attacker_source,
+                attack_call_id,
+            ) = await battle_runner.tracked_agent_call(
+                battle_id=battle_id,
+                role="attacker",
+                # 回调可能被重试逻辑延后调用：用默认参数把当轮的值固定下来（B023）。
+                invoke=lambda correlation_id, current_payload=round_payload, current_round=index, previous=previous_round: (
+                    battle_runner.battle_attack(
+                        current_payload,
+                        correlation_id=correlation_id,
+                        round_index=current_round,
+                        total_rounds=payload.rounds,
+                        previous_round=previous,
+                    )
+                ),
+                add_event=add_event,
+                round_number=index,
+                stage_id="A1",
+            )
+            generated_samples = generated.get("samples")
+            if not isinstance(generated_samples, list) or len(generated_samples) != 1:
+                raise ValueError("attacker must generate exactly one sample per round")
+            sample = dict(generated_samples[0])
+            sample["round"] = index
+            original_sample_id = sample.get("testCaseId") or sample.get("sampleId")
+            if original_sample_id and payload.rounds > 1:
+                sample["testCaseId"] = f"{original_sample_id}-R{index:02d}"
+            attack_result["samples"].append(sample)
+            attacker_sources.append(attacker_source)
+            attack_result["agentSource"] = (
+                attacker_sources[0] if len(set(attacker_sources)) == 1 else "mixed"
+            )
+            add_event(
+                "attack.sample.generated",
+                "completed",
+                {
+                    "round": index,
+                    "sample": sample,
+                    "attackerSource": attacker_source,
+                    "correlationId": attack_call_id,
                 },
             )
             battle_timeline.emit_attack_stages(
@@ -365,6 +379,11 @@ async def create_battle(
                 "correlationId": defense_call_id,
                 "classification": classification,
                 "structuredTimelineVersion": "v2.0",
+                "strengthTier": sample.get("strengthTier"),
+                "strengthScore": sample.get("strengthScore"),
+                "tactic": sample.get("tactic"),
+                "variantOperator": sample.get("variantOperator"),
+                "adaptationNote": sample.get("adaptationNote"),
             }
             for key in ("attackSuccess", "defenseSuccess"):
                 if isinstance(defense.get(key), bool):
@@ -389,6 +408,26 @@ async def create_battle(
                         "correlationId": defense_call_id,
                     },
                 )
+            # 下一轮攻击方的输入：本轮样本 + 防守命中 + 靶标结论。
+            previous_round = {
+                "round": index,
+                "sample": sample,
+                "defense": defense,
+                "verification": verification,
+                "classification": classification,
+            }
+        add_event(
+            "attack.completed",
+            "completed",
+            {
+                "sampleCount": len(attack_result["samples"]),
+                "rounds": payload.rounds,
+                "attackerSource": attack_result.get("agentSource"),
+                "escalation": summarize_escalation(attack_result["samples"]),
+                # 指向最后一轮的攻方调用，保持"攻击完成"可回溯到具体调用。
+                "correlationId": attack_call_id,
+            },
+        )
     except Exception as exc:
         message = (
             "独立 ACP Agent 调用失败，请检查服务端配置和日志"
