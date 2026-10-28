@@ -16,11 +16,11 @@
 - Workflow `39125655770` 针对主线提交 `49107974392b4712590d313638a92f11b2a87240` 的重跑已失败，失败步骤为 `Checkout 部署提交`，未执行部署脚本、Alembic、systemd 切换或公网验收。
 - Runner `yuanyi-agent-attack-lab-vps` 在线且已接收 Job，但 `actions/checkout@v4` 访问 GitHub 失败：连接 `github.com:443` 超时，并出现 `GnuTLS recv error (-110)`；Job 总耗时约 6 分 55 秒，进程退出码 128。
 - VPS 网络恢复后立即重跑同一 Workflow，Job `117673383376` 于 2026-10-18 20:19（UTC+8）成功；部署脚本输出 `DEPLOY OK: 49107974392b4712590d313638a92f11b2a87240 (main)`。脚本内置的三项服务 active、release `WorkingDirectory`/`PYTHONPATH`、三个本地健康接口和公网健康接口均通过；部署保留 VPS 既有本地生产修改与备份，没有强制覆盖。
-- 公网只读复验：`/health`、`/openapi.json`、`/dashboard/summary` 均 HTTP 200；OpenAPI 已出现 `/battles/{battle_id}/score` 与 `/internal-scores`。本机到 VPS `47.108.92.113:22` 仍未建立连接，因此没有通过 SSH 追加远程命令。
+- 公网只读复验：`/health`、`/openapi.json`、`/dashboard/summary` 均 HTTP 200；OpenAPI 已出现 `/battles/{battle_id}/score` 与 `/internal-scores`。本机到 VPS `<VPS_IP>:22` 仍未建立连接，因此没有通过 SSH 追加远程命令。
 
 ## 2026-10-18 Partner TLS 客户端差异复核
 
-- `attack.yuanyiagentzhandui.cn`、`defense.yuanyiagentzhandui.cn` 均解析到 `47.108.92.113`，本机 TCP 443 可达。
+- `attack.yuanyiagentzhandui.cn`、`defense.yuanyiagentzhandui.cn` 均解析到 `<VPS_IP>`，本机 TCP 443 可达。
 - Windows Schannel `curl`（即使使用 `-k`）访问两个域名时连接被重置；使用 Python 标准库 TLS 做传输诊断时，两个 `/health` GET 均 HTTP 200，无客户端证书的 `/rpc` POST 均 HTTP 403。由此确认服务端入口仍可用，前者是 Windows TLS 客户端与梧桐私有 CA/握手的差异，不应据此修改 nginx 或证书。
 - 本轮本机未发现可用的 clientAuth 证书材料，因此只记录无证书拒绝和服务健康结果，不把这次诊断描述为新的合法 mTLS AIP 调用验收。
 
@@ -44,12 +44,12 @@
 - GitHub PR #10 已合并到 `main`，合并提交 `e7abe1defa3b78750e8b0ca991d45662b601a911`；GitHub Actions 项目检查通过，当前无开放 PR。本机 `feature/fix-pr9-review-findings` 与 `origin/main` 内容无差异，尚未切换本地分支。
 - 公网只读复验：生产 API `/health`、`/openapi.json`、`/auth/session`、`/dashboard/summary` 均返回 200；正式前端根域返回 200；正式前端来源 CORS 预检返回 200。`/metrics` 无密钥返回 401，`/rpc` 的 GET 返回 405。
 - 生产 OpenAPI 仍缺少 `/battles/{battle_id}/score` 与 `/internal-scores`，说明生产代码尚未对齐当前主线评分版本。不得把主线合并或公网健康 200 表述为评分已部署。
-- SSH `deployer@47.108.92.113:22` 本轮仍超时，未执行任何 VPS 命令、部署、重启、迁移或生产写请求。恢复后先核对远端 HEAD、分支、工作树、systemd 的 `WorkingDirectory`/`ExecStart`、数据库备份和回滚目录，再决定是否发布 `e7abe1d`；不得强制覆盖远端已有修改。
+- SSH `deployer@<VPS_IP>:22` 本轮仍超时，未执行任何 VPS 命令、部署、重启、迁移或生产写请求。恢复后先核对远端 HEAD、分支、工作树、systemd 的 `WorkingDirectory`/`ExecStart`、数据库备份和回滚目录，再决定是否发布 `e7abe1d`；不得强制覆盖远端已有修改。
 
 ## 2026-10-15 主线与生产差异、前端本地变更复核
 
 - 本机 `main` 与 `origin/main` 均为 `3d9109e`；PR #7 和 #8 已在主线。公网 API `/health=200`，但 `/openapi.json` 尚无 `/battles/{battle_id}/score` 与 `/internal-scores`，生产尚未对齐当前主线。
-- 本轮从本机连接 `deployer@47.108.92.113:22` 超时，TCP 22 检查失败。没有执行任何 VPS 命令；VPS 当前 HEAD、工作树状态、备份与回滚条件均无法确认，因此没有部署或重启服务。恢复 SSH 后，先检查远端工作树和备份，保留已有 `start-service.sh` 修改，再执行文件级发布。
+- 本轮从本机连接 `deployer@<VPS_IP>:22` 超时，TCP 22 检查失败。没有执行任何 VPS 命令；VPS 当前 HEAD、工作树状态、备份与回滚条件均无法确认，因此没有部署或重启服务。恢复 SSH 后，先检查远端工作树和备份，保留已有 `start-service.sh` 修改，再执行文件级发布。
 - 正式外部案例 API 本轮返回 `available=true`、1,739 条、来源数 1；样本为 CISA `external_fact`、`synthetic=false`。NVD 官方 CVE API 可读取权威 CVE 内容，但当前存储按来源快照记录，同一 CVE 可跨来源重复。没有导入第二来源；先完成去重和快照更新策略，再扩充数据库。
 - 前端 6 个本地改动文件已审阅；Vitest 23 项、构建环境测试 4 项、Lint、Build 全通过。另修复战局切换时旧评分响应覆盖当前评分的竞态。改动尚未部署，真实浏览器渲染、控制台和交互仍未验收。
 - 禁止据此宣称生产已更新；不要把 NVD/CISA 外部事实记作本项目真实战局，不要将长期记忆、`.env`、密钥、证书、数据库或私有发行物提交到 Git。
@@ -134,7 +134,7 @@
 
 ## 2026-10-12 公网 Partner mTLS 与 AIP 复测
 
-- 本机 DNS 将 `attack.yuanyiagentzhandui.cn`、`defense.yuanyiagentzhandui.cn` 均解析至 `47.108.92.113`，TCP 443 可达。Windows 自带 curl（Schannel）直连两域名的 `/health`、`/rpc` 均在 TLS 阶段以连接重置结束；PowerShell 同样收到 TLS EOF。该结果只描述此 Windows TLS 客户端探测，不足以判定源站或 Partner 服务异常。
+- 本机 DNS 将 `attack.yuanyiagentzhandui.cn`、`defense.yuanyiagentzhandui.cn` 均解析至 `<VPS_IP>`，TCP 443 可达。Windows 自带 curl（Schannel）直连两域名的 `/health`、`/rpc` 均在 TLS 阶段以连接重置结束；PowerShell 同样收到 TLS EOF。该结果只描述此 Windows TLS 客户端探测，不足以判定源站或 Partner 服务异常。
 - 通过 SSH 只读检查，VPS nginx active、`nginx -t` 成功；两个 server block 均为 `ssl_verify_client optional`。VPS 本机回环访问两个 `/health` 均为 200，VPS 访问自身公网 attack `/health` 为 200；近 15 分钟 nginx journal/error log 未见握手错误，UFW、firewalld、fail2ban 均 inactive。
 - 改用 Python/OpenSSL 3.5.8 和 Leader clientAuth：信任 `trust-bundle.pem` 时，无客户端证书访问两个 `/health` 均为 HTTP 200、`/rpc` 均为 HTTP 403；加载 Leader certificate/key 后，`/rpc` GET 均完成服务端证书链与 TLS/mTLS 校验，返回 405（GET 方法不适用）。
 - 进一步通过同一证书发送 AIP JSON-RPC Start：攻击、防守均 HTTP 200，攻击返回 1 个 low 合成样本，防守返回 1 条检测结果；两边 `agentMode=local-rule`。随后对两个内存 task 发送 Complete，均 HTTP 200 且状态 `completed`。没有调用 Leader `/battles`，未写入生产战局数据库，也未调用外部模型。
@@ -642,7 +642,7 @@ Invoke-RestMethod https://api.yuanyiagentzhandui.cn/health
 队友操作：
 
 1. 审核并合并 PR #2，部署前确认 VPS 使用的官方 SDK 确实支持所需服务端身份绑定参数。
-2. 恢复 `47.108.92.113:22` 后拉取本提交，在 `/opt/agent-attack-lab` 执行
+2. 恢复 `<VPS_IP>:22` 后拉取本提交，在 `/opt/agent-attack-lab` 执行
    `backend/scripts/verify-vps-runtime.sh`。
 3. 完成一次 VPS 重启并再次执行脚本；只有两次均全部 `PASS` 才确认常驻验收完成。
 
@@ -689,7 +689,7 @@ mTLS 尚未具备。禁止提交或发送 `.env`、API Key、浏览器密码、T
    `up_until_ready()`，避免创建重复身份。
 
 验收标准：预检报告 `acps-sdk 2.2.0`、`wit-framework 2.1.0`，API 检查通过，且 Registry 中
-没有新增重复 AIC。已知问题：`47.108.92.113:22` 仍为 TCP 连接超时，尚不能在 VPS 复验；
+没有新增重复 AIC。已知问题：`<VPS_IP>:22` 仍为 TCP 连接超时，尚不能在 VPS 复验；
 serverAuth、稳定 Direct endpoint 和真实端到端 mTLS 仍未完成。禁止提交或发送 Registry 凭据、
 Token、EAB、私钥、证书正文、Tunnel Token、数据库或私有发行物。
 
@@ -755,7 +755,7 @@ bash backend/scripts/find-wit-workspaces.sh
 
 ### 固定 Partner 域名与鉴权已落地（2026-10-11）
 
-本机已通过密钥 `id_aliyun_deploy` 恢复登录 `47.108.92.113`；目标机主机名为
+本机已通过密钥 `<SSH_KEY>` 恢复登录 `<VPS_IP>`；目标机主机名为
 `iZ2vcics71o84b4g71yhivZ`。三个用户级 systemd 服务均已正常运行：API `8787`、攻击 `8788`、
 防守 `8789`，Cloudflare 命名隧道保持 healthy。
 
@@ -813,7 +813,7 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 ### mTLS 部署阻塞解除（2026-10-11）
 
-源站 `47.108.92.113` 的 `deployer` 已配置全量免密 sudo，实测 `sudo -n whoami` 返回 `root`；
+源站 `<VPS_IP>` 的 `deployer` 已配置全量免密 sudo，实测 `sudo -n whoami` 返回 `root`；
 三个业务进程仍分别监听 `127.0.0.1:8787/8788/8789`，443 当前尚未监听。可将
 [`mTLS链路异常修复派活单_20261011.md`](../mTLS链路异常修复派活单_20261011.md) 第五部分直接
 转发给部署执行方，由其使用 `deployer` 执行源站 mTLS、/rpc 放行、Cloudflare attack/defense
@@ -839,9 +839,9 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
   Agent CA Intermediate 组成。
 - 源站本机验收：两个 `/health` 均为 200；无客户端证书访问 `/rpc` 均为 403；带客户端证书访问 `/rpc`
   已完成 TLS 握手，当前因 `AGENT_RPC_API_KEY` 仍保留而返回应用层 401。
-- 公网直连 `47.108.92.113:443` 当前超时，本机无 nftables/ufw/iptables 规则，需在阿里云安全组放行 TCP 443。
+- 公网直连 `<VPS_IP>:443` 当前超时，本机无 nftables/ufw/iptables 规则，需在阿里云安全组放行 TCP 443。
 - attack/defense 的 DNS 已恢复为橙云 Tunnel，避免在源站未开放前中断现有入口。放行 443 后应将记录改为
-  `A -> 47.108.92.113`、DNS only；不能把现有 `CNAME -> cfargotunnel.com` 直接改灰云后当作源站直连。
+  `A -> <VPS_IP>`、DNS only；不能把现有 `CNAME -> cfargotunnel.com` 直接改灰云后当作源站直连。
 
 ### 生产 Partner mTLS 已完成（2026-10-11）
 
@@ -849,7 +849,7 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 
 1. nginx 443 双域名 listener 已启用；两个 `/health` 免客户端证书，两个 `/rpc` 无证书均返回
    403，带合法 clientAuth 证书均完成 TLS 握手。
-2. Cloudflare `attack`、`defense` 均为 `A -> 47.108.92.113`、DNS only；主 API 的命名隧道
+2. Cloudflare `attack`、`defense` 均为 `A -> <VPS_IP>`、DNS only；主 API 的命名隧道
    未停止，仍用于 `api.yuanyiagentzhandui.cn`。
 3. Partner 应用层 `AGENT_RPC_API_KEY` 已移除，Leader API 自身的浏览器/API 鉴权未改；Leader
    已配置两个固定 RPC endpoint、clientAuth 证书和 trust bundle。由于 nginx 终止 TLS，未启用
@@ -891,7 +891,7 @@ Discovery 同步，再做 low/mid/high 全链路验收。旧 AIC/RPC 记录需�
 - PR #2 已于 `2026-10-11T15:16:01Z` 合并，合并提交 `ae959fb6a11bbe398e914dd9b2bb5f0c606f24a7`，PR head `47d5916e59dd2433aa7a70ac10ed224f39bd3ec9`。后端测试、前端检查、Cloudflare Pages、Workers Builds 四项 CI 均成功。
 - 正式前端 `https://yuanyiagentzhandui.cn` 与 `https://www.yuanyiagentzhandui.cn` 本轮只读请求均为 HTTP 200，首页加载 `/assets/index-BzFvd3kT.js`。检查该 JS bundle 未发现密码输入表单、`/auth/session` 调用或管理员登录文案；大众前端免密码，后台保护仍由 API 鉴权承担。
 - 正式 API 本轮只读结果：`/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1` 均为 HTTP 200；`/openapi.json` 已包含 `DELETE /battles/{battle_id}`。未登录请求 `/dashboard` 和战局回放返回 401，符合后台鉴权边界。
-- Partner mTLS 本轮进行了只读复核：attack/defense DNS 均解析至 `47.108.92.113`；VPS nginx、443 listener 和 API/攻击/防守 systemd 用户服务均 active，nginx 配置检查通过。使用本机梧桐 trust bundle，无客户端证书访问两个 `/health` 均为 200、`/rpc` 均为 403；使用 Leader clientAuth 证书访问时 `/health` 均为 200，`/rpc` TLS 握手成功（GET 返回 405，仅说明 GET 方法不适用于 RPC，不代表完成 AIP 调用）。因此较早资料里的 525/不可达与本轮结果不一致；私有 CA 客户端需显式使用梧桐 trust bundle。本轮未调用 Registry/Discovery，也未创建或删除生产战局。
+- Partner mTLS 本轮进行了只读复核：attack/defense DNS 均解析至 `<VPS_IP>`；VPS nginx、443 listener 和 API/攻击/防守 systemd 用户服务均 active，nginx 配置检查通过。使用本机梧桐 trust bundle，无客户端证书访问两个 `/health` 均为 200、`/rpc` 均为 403；使用 Leader clientAuth 证书访问时 `/health` 均为 200，`/rpc` TLS 握手成功（GET 返回 405，仅说明 GET 方法不适用于 RPC，不代表完成 AIP 调用）。因此较早资料里的 525/不可达与本轮结果不一致；私有 CA 客户端需显式使用梧桐 trust bundle。本轮未调用 Registry/Discovery，也未创建或删除生产战局。
 - 本轮未重新执行 topic 422、battle create/delete 204/409 写接口验收，也未重跑生产 low/mid/high 和桌面/移动全链路；这些结论仍引用本文件前文历史记录。
 - PR #3 文档同步分支 `feature/deployment-status-sync` 的后端测试、前端构建检查、Cloudflare Pages 均通过；Workers Builds 失败。Cloudflare build 记录显示 checkout 后在根目录 `/` 运行 `npx wrangler preview`，未找到前端子目录中的 `frontend/frontend-ui/wrangler.jsonc` 并报缺少 `previews` 配置。仓库中的该配置已有空 `previews` block；需队友确认 Workers Builds 的 root directory/preview command 配置。未修改 Cloudflare 构建设置；启用 Preview 前要确认预览公开性及是否绑定生产资源。
 - 本轮没有创建、修改或删除生产战局，没有操作数据库、VPS 配置、Cloudflare 配置、Registry 或 Discovery。生产只读请求未改变服务状态。

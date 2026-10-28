@@ -20,7 +20,7 @@
 - 本地新增 `battle_scores` 评分快照表（SQLite/PostgreSQL/MySQL 及 Alembic `20261015_0002`）：终态战局保存 `internal-agent-v2` 评分，评分接口优先读快照，历史战局无快照时实时回退；重试和删除会清理旧评分。尚未部署生产。
 - 本机 `main` 与 `origin/main` 均为 `3d9109e`。PR #7 Pages Preview API 隔离修复及 PR #8 后端低风险性能优化均已进入主线；PR #8 合并提交为 `0b967d2`。
 - 公网只读复核：API `/health=200`；外部案例接口 `available=true`、1,739 条、来源数 1，样本记录为 CISA `external_fact` 且 `synthetic=false`。
-- 公网 `/openapi.json` 暂未包含 `/battles/{battle_id}/score` 与 `/internal-scores`；生产 API 与当前主线仍有版本差异。SSH `deployer@47.108.92.113:22` 本轮连接超时，无法查看 VPS HEAD、工作树、备份和回滚条件，因此没有部署或重启生产服务。
+- 公网 `/openapi.json` 暂未包含 `/battles/{battle_id}/score` 与 `/internal-scores`；生产 API 与当前主线仍有版本差异。SSH `deployer@<VPS_IP>:22` 本轮连接超时，无法查看 VPS HEAD、工作树、备份和回滚条件，因此没有部署或重启生产服务。
 - 前端当前有 6 个本地改动文件，包含评分展示、失败重试、完成战局删除及异步评分状态保护。Vitest 23 项、构建环境 Node tests 4 项、Lint 和生产构建均通过；尚未部署，也未完成真实浏览器视觉/控制台/点击验收。
 - NVD 官方 API 能返回 CVE 记录；但当前导入模型以来源快照保存，同一 CVE 跨来源或跨版本可能重复展示。尚未导入第二来源，也未把 NVD 数据当作本项目实战/观测事件。扩源前需先实现跨来源去重及可审计更新策略。
 - 生产发布的下一步是恢复 SSH 可达后只读核对 VPS 状态与备份，再按文件级部署和回滚流程发布主线版本；不得整仓库强制切换或覆盖 VPS 既有本地改动。
@@ -90,7 +90,7 @@
 - 前端正式域名 `https://yuanyiagentzhandui.cn` 与 `https://www.yuanyiagentzhandui.cn` 本轮只读请求均返回 200，首页引用 bundle `index-BzFvd3kT.js`。检查该 bundle 未发现密码表单、`/auth/session` 调用或管理员登录文案；公开前端不设浏览器密码。
 - API 正式地址 `https://api.yuanyiagentzhandui.cn`：本轮 `/health`、`/dashboard/summary`、`/battles?limit=1`、`/external-cases?limit=1` 均返回 200；OpenAPI 包含 `DELETE /battles/{battle_id}`。
 - 后台 `/dashboard` 和战局回放接口未登录均返回 401，后台鉴权仍保留。此次未对生产发送创建、更新或删除请求。
-- Partner mTLS 本轮只读复测：attack/defense DNS 均解析至 `47.108.92.113`；VPS nginx、443 listener、API/攻击/防守服务均 active，nginx 配置检查通过。使用本机梧桐 trust bundle，无客户端证书访问两个 `/health` 均为 200、`/rpc` 均为 403；使用 Leader clientAuth 证书时两个 `/health` 为 200，`/rpc` TLS 握手成功（GET 返回 405，仅证明 HTTP 方法不适用，不等于完成 AIP 调用）。本轮未运行生产战局或 Discovery 查询。
+- Partner mTLS 本轮只读复测：attack/defense DNS 均解析至 `<VPS_IP>`；VPS nginx、443 listener、API/攻击/防守服务均 active，nginx 配置检查通过。使用本机梧桐 trust bundle，无客户端证书访问两个 `/health` 均为 200、`/rpc` 均为 403；使用 Leader clientAuth 证书时两个 `/health` 为 200，`/rpc` TLS 握手成功（GET 返回 405，仅证明 HTTP 方法不适用，不等于完成 AIP 调用）。本轮未运行生产战局或 Discovery 查询。
 
 ## 生产边界与后续
 

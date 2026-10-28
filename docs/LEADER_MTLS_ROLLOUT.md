@@ -14,7 +14,7 @@
 | serverAuth 证书 | **已随注册流程签发**，`.data/acps-registration-v4-leader-mtls/leader/acps/server/` |
 | clientAuth 证书 | **同上，已签发**，同目录 `client/` |
 | 注册脚本参数化 | `--version/--endpoint/--workspace` 已入库，可复现 |
-| DNS 记录 | `leader-mtls` → A → `47.108.92.113`，**仅 DNS（灰云）**，已用阿里公共 DNS 与系统解析双向确认 |
+| DNS 记录 | `leader-mtls` → A → `<VPS_IP>`，**仅 DNS（灰云）**，已用阿里公共 DNS 与系统解析双向确认 |
 | nginx 模板 | `backend/deploy/nginx/leader-mtls.conf.template`，与现网逐行对齐 |
 | 证书落盘到 VPS | **已完成**，经 Secret 中转，指纹与私钥配对均校验通过 |
 | nginx server block | **已上线并 reload**，`nginx -t` 无冲突 |
