@@ -10,18 +10,18 @@
 |---|---|---|---|
 | 1 | 开源项目/SDK/示例名称、仓库链接、版本或 commit；复用与自研边界 | 已有 | `01-open-source-baseline.md`（含两个私有包文件名 + SHA256；**无公开仓库**，已如实标注） |
 | 2 | 改造前后对照：文件/函数/字段、原因、效果、测试依据 | 已有 | `JUDGE_OPENSOURCE_REWORK.md`、`MATERIAL_OPENSOURCE_REWORK.md`、`git log` |
-| 3 | 平台后台 Agent 注册状态及能力声明截图 | **缺口** | 需梧桐平台后台（`wt.ioa.pub`）账号，与本站后台不是同一套 |
+| 3 | 平台后台 Agent 注册状态及能力声明截图 | 已有 | `09-platform-registration.md`；截图 17/18/19（3 个智能体均「已通过」+ ACS 能力声明 + 审核意见原文） |
 | 4 | Discovery 自动发现响应日志 | 已有 | `raw/discovery-response.json`（2026-10-28 实测 200，7.5 KB） |
 | 5 | AIP Start/Complete 请求与响应记录 | 部分 | 战局事件里的 `agent.call.started/completed` + `correlationId` + `battleId` 构成调用链；**缺**平台发起的原始 AIP 报文 |
 | 6 | 跨智能体双向调用真实记录 | 部分 | `03-battle-chain.md`：同一 `battleId` 下攻/防/裁决三路来源可查；**平台→我们的入站调用从未发生**（mTLS 建连前失败） |
-| 7 | 平台后台访问量/频次排行榜截图 | **缺口** | 实测平台侧访问量为 0，见 `PLATFORM_ACCESS_DATA_20261028.md`、`raw/rankings.json` |
+| 7 | 平台后台访问量/频次排行榜截图 | 已有（结论为 0） | 截图 20（统计窗口 10-21 22:00 — 10-28 22:00）+ `raw/platform-rankings-20261028.json`：我方 AIC 前缀 caller/callee 均 0 命中 |
 | 8 | 规则模式无外部模型 API Key 的完整演示 | 已有 | `08-rule-mode-demo.md` + `raw/rule-mode-20261028.json` + `backend/scripts/rule_mode_demo.py` |
 | 9 | 局部测试结果、范围、命令与日期 | 已有 | `05-test-evidence.md`（后端 281 passed / 前端 213 passed） |
 | 10 | off / simulated / live 边界测试 | 已有 | `04-mode-boundary.md`（含 A-133 三轮靶标原文） |
 | 11 | 3D 回放与持久化事件对应的截图 | 已有 | `screenshots/14-replay-3d.png`、`09/10/16-*` |
 | 12 | 源码包部署说明、依赖、配置示例、启动步骤、脱敏说明 | 已有 | `06-deploy-and-redaction.md` |
 
-统计：**已有 9 项、部分 2 项、缺口 2 项**。缺口都指向同一件事：平台侧未接通，拿不到平台后台数据。
+统计：**已有 11 项、部分 2 项、缺口 0 项**。第 5、6 项仍是「部分」——原始 AIP 报文与平台→我方的入站调用从未产生，无法补。
 
 ## 二、截图索引（`docs/evidence/screenshots/`）
 
@@ -36,15 +36,17 @@
 | `13-sample-library.png` | 样本库 20 条 | 12 |
 | `14-replay-3d.png` | 3D 回放：网络拓扑、分层、事件流与最终总结 | 11 |
 | `15-rule-library.png` | 规则库 12 条 | 12 |
+| `17-platform-agent-registry.png` | 平台「我的智能体」：3 个智能体均「已通过」，含提交/处理时间 | 3 |
+| `18-platform-agent-detail.png` | 平台智能体详情：AIC、审核状态、审核意见原文 | 3 |
+| `19-platform-capability-acs.png` | 平台智能体详情下半段：能力描述 + ACS 能力声明 | 3 |
+| `20-platform-rankings.png` | 平台调用排行榜（2026-10-21 22:00 — 10-28 22:00），我方未上榜 | 7 |
 
 ## 三、必须由平台方或账号持有人完成的
 
 | 项 | 阻塞点 | 建议动作 |
 |---|---|---|
-| 3 | 平台后台需登录，能力声明在审核后台 | 用平台账号登录后截图 |
 | 5 | AIP 原始报文只存在生产日志，且平台发起的调用为 0 | 保留现有调用链证据，不造报文 |
 | 6 | 平台→我们的入站调用从未成功 | 如实说明"平台侧按固定路径加载证书失败"，只提交内部三路调用链 |
-| 7 | 平台排行榜里我方 0 条 | 无解，除非平台修好调用并产生真实流量 |
 
 ## 四、口径提醒（写材料时别踩）
 
