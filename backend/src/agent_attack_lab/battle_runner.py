@@ -36,7 +36,7 @@ from agent_attack_lab.agents.knowledge import (
     build_defender_knowledge,
 )
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
-from agent_attack_lab.scoring import score_battle_rounds
+from agent_attack_lab.scoring import SCORING_VERSION, score_battle_rounds
 from agent_attack_lab.target_verify import (
     aggregate_verdict,
     configured_verify_mode,
@@ -291,6 +291,8 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     "round": index,
                     "rounds": payload.rounds,
                     "structuredTimelineVersion": "v2.0",
+                    "rulesVersion": SCORING_VERSION,
+                    "responseTimingEligible": True,
                     "defenderSource": "acp-pending"
                     if acp_agent_configured("defender")
                     else "local-rule",
@@ -340,6 +342,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 topic=payload.topic,
                 sample=sample,
                 previous_sample=previous_sample,
+                historical_samples=attack_result["samples"][:-1],
                 correlation_id=attack_call_id,
             )
             previous_sample = sample
@@ -409,44 +412,6 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             if isinstance(defense.get("safeControl"), dict):
                 round_data["safeControl"] = defense["safeControl"]
             add_event("round.completed", "completed", round_data)
-            round_scores = score_battle_rounds(
-                record, state.battle_store.list_events(battle_id)
-            )
-            current_score = next(
-                (item for item in round_scores if item["round"] == index), None
-            )
-            add_event(
-                "arbiter.round.scored",
-                "completed" if current_score is not None else "unresolved",
-                {
-                    "round": index,
-                    "stageId": "ROUND-SCORE",
-                    "agentRole": "arbiter",
-                    "classification": (
-                        "scored" if current_score is not None else "unresolved"
-                    ),
-                    "scores": current_score.get("scores", {}) if current_score else {},
-                    "attacker": current_score.get("attacker")
-                    if current_score
-                    else None,
-                    "defender": current_score.get("defender")
-                    if current_score
-                    else None,
-                    "statement": "本回合全部环节完成，评分已生成。"
-                    if current_score
-                    else "本回合评分证据不足。",
-                },
-            )
-            add_event(
-                "round.settled",
-                "completed",
-                {
-                    "round": index,
-                    "stageId": "FINAL",
-                    "classification": classification,
-                    "structuredTimelineVersion": "v2.0",
-                },
-            )
             if verification["verified"]:
                 add_event(
                     "attack.compromised",
@@ -460,6 +425,67 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                         "attackSuccess": verification.get("attackSuccess"),
                         "evidence": verification["evidence"],
                         "correlationId": defense_call_id,
+                    },
+                )
+            add_event(
+                "round.settled",
+                "completed",
+                {
+                    "round": index,
+                    "stageId": "FINAL",
+                    "classification": classification,
+                    "structuredTimelineVersion": "v2.0",
+                    "rulesVersion": SCORING_VERSION,
+                },
+            )
+            submission_id = battle_timeline.submission_id_for(sample, index)
+            persisted_events = state.battle_store.list_events(battle_id)
+            snapshot_exists = any(
+                event.get("type") == "arbiter.round.scored"
+                and (event.get("data") or {}).get("round") == index
+                and (event.get("data") or {}).get("submissionId") == submission_id
+                and (event.get("data") or {}).get("rulesVersion") == SCORING_VERSION
+                for event in persisted_events
+            )
+            if not snapshot_exists:
+                round_scores = score_battle_rounds(record, persisted_events)
+                current_score = next(
+                    (item for item in round_scores if item["round"] == index), None
+                )
+                score_complete = current_score is not None and all(
+                    current_score[role].get("status") == "scored"
+                    and isinstance(current_score[role].get("score"), (int, float))
+                    for role in ("attacker", "defender")
+                )
+                add_event(
+                    "arbiter.round.scored",
+                    "completed" if score_complete else "unresolved",
+                    {
+                        "round": index,
+                        "stageId": "ROUND-SCORE",
+                        "agentRole": "arbiter",
+                        "submissionId": submission_id,
+                        "rulesVersion": SCORING_VERSION,
+                        "roundValidity": (
+                            "valid"
+                            if score_complete and classification != "unresolved"
+                            else "unresolved"
+                        ),
+                        "classification": (
+                            "scored" if score_complete else "unresolved"
+                        ),
+                        "scores": current_score.get("scores", {})
+                        if current_score
+                        else {},
+                        "attacker": current_score.get("attacker")
+                        if current_score
+                        else None,
+                        "defender": current_score.get("defender")
+                        if current_score
+                        else None,
+                        "statement": "本回合全部环节完成，评分已生成。"
+                        if current_score
+                        else "本回合评分证据不足。",
                     },
                 )
         add_event(

@@ -108,7 +108,9 @@ def _blocking_check(layer_index: int, defense: Mapping[str, Any]) -> int:
 
 
 def derive_round_layer_trace(
-    topic: str, defense: Mapping[str, Any]
+    topic: str,
+    defense: Mapping[str, Any],
+    arbiter_layer_evidence: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Project recorded defense evidence onto the documented L0-L3 checks.
 
@@ -118,7 +120,7 @@ def derive_round_layer_trace(
     """
 
     caught = defense.get("caught") or []
-    evidence_ids = [
+    block_evidence_ids = [
         str(item.get("ruleId"))
         for item in caught
         if isinstance(item, Mapping) and item.get("ruleId")
@@ -133,6 +135,7 @@ def derive_round_layer_trace(
     )
 
     trace: list[dict[str, Any]] = []
+    layer_evidence = arbiter_layer_evidence or {}
     for layer_index, checks in enumerate(LAYER_CHECK_IDS):
         if block_index is not None and layer_index > block_index:
             break
@@ -154,19 +157,26 @@ def derive_round_layer_trace(
                     "name": check_name,
                     "description": check_description,
                     "status": status,
-                    "evidenceIds": evidence_ids if status == "blocked" else [],
+                    "evidenceIds": block_evidence_ids if status == "blocked" else [],
                 }
             )
+        layer_id = f"L{layer_index}"
+        evidence = layer_evidence.get(layer_id)
+        confirmed_evidence_ids = (
+            [str(value) for value in evidence if isinstance(value, str) and value]
+            if isinstance(evidence, list)
+            else []
+        )
+        checks_passed = all(item["status"] == "passed" for item in decisions)
         trace.append(
             {
                 "layerIndex": layer_index,
-                "layer": f"L{layer_index}",
+                "layer": layer_id,
                 "name": _LAYER_NAMES[layer_index],
                 "applicableChecks": list(checks),
                 "checks": decisions,
-                "confirmedPassed": all(
-                    item["status"] == "passed" for item in decisions
-                ),
+                "confirmedPassed": checks_passed and bool(confirmed_evidence_ids),
+                "evidenceIds": confirmed_evidence_ids,
                 "basis": "derived_from_defense_results",
             }
         )

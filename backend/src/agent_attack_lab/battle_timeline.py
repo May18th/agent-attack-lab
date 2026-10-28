@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping
 from math import sqrt
 from typing import Any
@@ -16,27 +17,41 @@ def _sample_id(sample: Mapping[str, Any], round_number: int) -> str:
     return str(value) if value else f"round-{round_number}"
 
 
+def submission_id_for(sample: Mapping[str, Any], round_number: int) -> str:
+    content_hash = hashlib.sha256(
+        str(sample.get("content") or "").encode("utf-8")
+    ).hexdigest()[:16]
+    return f"SUB-R{round_number}-{content_hash}"
+
+
 def _payload_similarity(
     sample: Mapping[str, Any], previous_sample: Mapping[str, Any] | None
 ) -> float | None:
-    """Return a deterministic cosine similarity for consecutive payloads.
+    """Return cosine similarity from a versioned character n-gram vectorizer.
 
     A missing previous sample is intentionally represented as ``None``: the
     first round establishes the baseline and must not be classified as either
-    same-source or new-source.
+    same-source or new-source. Character n-grams provide a deterministic local
+    vector without calling an external embedding service or transmitting data.
     """
     if not previous_sample:
         return None
     current = str(sample.get("content") or "").strip()
     previous = str(previous_sample.get("content") or "").strip()
     if not current or not previous:
-        return 0.0
-    current_counts: dict[str, int] = {}
-    previous_counts: dict[str, int] = {}
-    for token in current:
-        current_counts[token] = current_counts.get(token, 0) + 1
-    for token in previous:
-        previous_counts[token] = previous_counts.get(token, 0) + 1
+        return None
+
+    def vectorize(value: str) -> dict[str, int]:
+        normalized = " ".join(value.casefold().split())
+        counts: dict[str, int] = {}
+        for size in (2, 3, 4):
+            for index in range(max(0, len(normalized) - size + 1)):
+                ngram = normalized[index : index + size]
+                counts[ngram] = counts.get(ngram, 0) + 1
+        return counts
+
+    current_counts = vectorize(current)
+    previous_counts = vectorize(previous)
     vocabulary = set(current_counts) | set(previous_counts)
     dot = sum(
         current_counts.get(token, 0) * previous_counts.get(token, 0)
@@ -59,6 +74,7 @@ def emit_attack_stages(
     sample: Mapping[str, Any],
     previous_sample: Mapping[str, Any] | None = None,
     correlation_id: str,
+    historical_samples: list[Mapping[str, Any]] | None = None,
 ) -> None:
     sample_id = _sample_id(sample, round_number)
     common = {
@@ -111,7 +127,7 @@ def emit_attack_stages(
             "A7",
             {
                 "sampleId": sample_id,
-                "submissionId": f"{correlation_id}-R{round_number}",
+                "submissionId": submission_id_for(sample, round_number),
                 "accepted": True,
             },
             "passed",
@@ -126,24 +142,58 @@ def emit_attack_stages(
             {**data, "classification": classification},
         )
 
-    similarity = _payload_similarity(sample, previous_sample)
+    previous_similarity = _payload_similarity(sample, previous_sample)
+    history = list(historical_samples or [])
+    if previous_sample and all(
+        _sample_id(candidate, 0) != _sample_id(previous_sample, 0)
+        for candidate in history
+    ):
+        history.append(previous_sample)
+    comparisons = [
+        (candidate, _payload_similarity(sample, candidate))
+        for candidate in history
+        if candidate and _sample_id(candidate, 0) != sample_id
+    ]
+    comparable = [
+        (candidate, similarity)
+        for candidate, similarity in comparisons
+        if similarity is not None
+    ]
+    nearest_sample, maximum_similarity = (
+        max(comparable, key=lambda item: item[1]) if comparable else (None, None)
+    )
+    sample_has_content = bool(str(sample.get("content") or "").strip())
+    source_type = (
+        "baseline"
+        if not history and sample_has_content
+        else "same-source"
+        if maximum_similarity is not None and maximum_similarity >= 0.85
+        else "new-source"
+        if maximum_similarity is not None
+        else "unresolved"
+    )
     similarity_data = {
         **common,
         "agentRole": "arbiter",
         "stageId": "A6",
         "sampleId": sample_id,
         "similarityThreshold": 0.85,
-        "similarity": similarity,
-        "sourceType": (
-            "baseline"
-            if similarity is None
-            else "same-source"
-            if similarity >= 0.85
-            else "new-source"
-        ),
-        "comparison": "previous-round-payload" if previous_sample else "baseline",
+        "similarity": maximum_similarity,
+        "similarityToPrevious": previous_similarity,
+        "maxHistoricalSimilarity": maximum_similarity,
+        "nearestSampleId": _sample_id(nearest_sample, 0) if nearest_sample else None,
+        "similarityModel": "char-ngram-cosine-v1",
+        "similarityModelVersion": "1",
+        "sourceType": source_type,
+        "comparison": "battle-history" if history else "baseline",
+        "comparedSampleIds": [
+            _sample_id(candidate, 0)
+            for candidate, value in comparable
+            if value is not None
+        ],
     }
-    add_event("arbiter.similarity.checked", "completed", similarity_data)
+    similarity_status = "completed" if source_type != "unresolved" else "unresolved"
+    add_event("arbiter.similarity.checked", similarity_status, similarity_data)
 
     stage_id, payload, classification = stages[5]
     data = {**common, **payload, "stageId": stage_id}
@@ -159,6 +209,7 @@ def _arbiter_classification(review: Mapping[str, Any]) -> str:
     return {
         "attacker_won": "full-penetration",
         "defender_won": "blocked",
+        "contained": "contained",
         "undetermined": "unresolved",
     }.get(str(review.get("verdict")), "unresolved")
 
@@ -178,7 +229,12 @@ def emit_defense_and_arbiter_stages(
         "agentRole": "defender",
         "correlationId": correlation_id,
     }
-    trace = derive_round_layer_trace(topic, defense)
+    review_layer_evidence = arbiter_review.get("layerEvidence")
+    trace = derive_round_layer_trace(
+        topic,
+        defense,
+        review_layer_evidence if isinstance(review_layer_evidence, Mapping) else None,
+    )
     blocked_check: Mapping[str, Any] | None = None
     for layer in trace:
         layer_data = {
@@ -227,20 +283,31 @@ def emit_defense_and_arbiter_stages(
                     **layer_data,
                     "agentRole": "arbiter",
                     "classification": "passed",
-                    "evidenceIds": layer["applicableChecks"],
+                    "evidenceIds": layer["evidenceIds"],
                     "confirmedBy": "arbiter",
                 },
             )
 
     all_layers_passed = len(trace) == 4 and all(
-        check["status"] == "passed" for layer in trace for check in layer["checks"]
+        layer["confirmedPassed"] for layer in trace
     )
+    arbiter_classification = _arbiter_classification(arbiter_review)
+    has_verified_effect = verification.get("attackSuccess") is True
+    confirmed_layers = {
+        str(layer["layer"]) for layer in trace if layer["confirmedPassed"]
+    }
     classification = (
         "blocked"
         if blocked_check is not None
+        else "contained"
+        if arbiter_classification == "contained"
+        and has_verified_effect
+        and {"L0", "L1", "L2"}.issubset(confirmed_layers)
         else "full-penetration"
-        if all_layers_passed
-        else _arbiter_classification(arbiter_review)
+        if arbiter_classification == "full-penetration"
+        and has_verified_effect
+        and all_layers_passed
+        else "unresolved"
     )
     blocked_at = str(blocked_check.get("stageId")) if blocked_check else None
     blocked_name = str(blocked_check.get("name")) if blocked_check else None
@@ -249,6 +316,8 @@ def emit_defense_and_arbiter_stages(
         if blocked_at and blocked_name
         else "攻击效果在控制窗口结束后仍存在，判定 full-penetration。"
         if classification == "full-penetration"
+        else "L2 已产生效果，且 Arbiter 确认控制窗口内完成隔离恢复，判定 contained。"
+        if classification == "contained"
         else "现有证据不足以完成唯一分类，判定 unresolved。"
     )
     verdict_data = {
@@ -271,6 +340,8 @@ def emit_defense_and_arbiter_stages(
     for key in ("attackSuccess", "defenseSuccess"):
         if isinstance(verification.get(key), bool):
             verdict_data[key] = verification[key]
+    if isinstance(review_layer_evidence, Mapping):
+        verdict_data["layerEvidence"] = dict(review_layer_evidence)
     add_event("arbiter.verdict", "completed", verdict_data)
 
     return classification

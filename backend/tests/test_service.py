@@ -182,6 +182,12 @@ def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_ve
     assert sum(event["type"] == "round.started" for event in battle_events) == 5
     assert sum(event["type"] == "round.completed" for event in battle_events) == 5
     assert sum(event["type"] == "round.settled" for event in battle_events) == 5
+    score_snapshots = [
+        event for event in battle_events if event["type"] == "arbiter.round.scored"
+    ]
+    assert len(score_snapshots) == 5
+    assert {event["data"]["round"] for event in score_snapshots} == set(range(1, 6))
+    assert all(event["data"]["rulesVersion"] == "v2.0" for event in score_snapshots)
     assert sum(event["type"] == "arbiter.verdict" for event in battle_events) == 5
     assert all(
         event["data"]["classification"] in {"blocked", "full-penetration", "unresolved"}
@@ -713,6 +719,7 @@ def test_background_battle_persists_staged_events() -> None:
             time.sleep(0.05)
         assert detail["status"] == "completed"
         events = live_client.get(f"/battles/{battle_id}/events").json()
+        rounds_response = live_client.get(f"/battles/{battle_id}/rounds")
         completed_score = state.battle_store.get_score(battle_id)
     expected_types = ["battle.created", "attack.started"]
     for _ in detail["attackerOut"]["samples"]:
@@ -768,12 +775,49 @@ def test_background_battle_persists_staged_events() -> None:
             for index, event_type in enumerate(event_types)
             if event_type == "attack.stage.completed"
         )
+        assert "arbiter.round.scored" in event_types, (
+            round_number,
+            [
+                (e["type"], e["data"].get("round"), e["data"].get("submissionId"))
+                for e in events
+                if e["type"] == "arbiter.round.scored"
+            ],
+        )
         assert event_types.index("defense.safe_control") < event_types.index(
             "arbiter.round.scored"
         )
-        assert event_types.index("arbiter.round.scored") < event_types.index(
-            "round.settled"
+        assert event_types.index("round.settled") < event_types.index(
+            "arbiter.round.scored"
         )
+        score_event = next(
+            event for event in round_events if event["type"] == "arbiter.round.scored"
+        )
+        assert score_event["data"]["submissionId"].startswith(f"SUB-R{round_number}-")
+        assert score_event["data"]["rulesVersion"] == "v2.0"
+        for role in ("attacker", "defender"):
+            score = score_event["data"][role]
+            assert {
+                "processScore",
+                "effectScore",
+                "baseScore",
+                "responseScore",
+                "finalScore",
+            }.issubset(score["summary"])
+            assert all(
+                {
+                    "itemId",
+                    "rawValue",
+                    "awardedPoints",
+                    "maxPoints",
+                    "evidenceIds",
+                    "verdictVersion",
+                    "adjudicatedAt",
+                    "reviewStatus",
+                }.issubset(category)
+                for category in score["categories"]
+            )
+    assert rounds_response.status_code == 200
+    assert all("scoreSnapshot" in item for item in rounds_response.json()["rounds"])
     assert all(
         {"agentRole", "round", "stageId"}.issubset(event["data"])
         for event in events

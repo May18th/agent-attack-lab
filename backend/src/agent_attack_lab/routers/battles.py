@@ -48,7 +48,7 @@ from agent_attack_lab.agents.arbiter import review_round
 from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
 from agent_attack_lab.models import BattleEvent, BattleRecord, BattleRequest
-from agent_attack_lab.scoring import score_battle_rounds
+from agent_attack_lab.scoring import SCORING_VERSION, score_battle_rounds
 from agent_attack_lab.target_verify import (
     aggregate_verdict,
     configured_verify_mode,
@@ -167,6 +167,7 @@ async def create_battle(
                     "topic": payload.topic,
                     "difficulty": payload.difficulty,
                     "rounds": payload.rounds,
+                    "rulesVersion": SCORING_VERSION,
                     "attackerSource": "acp-pending"
                     if acp_agent_configured("attacker")
                     else "local-rule",
@@ -196,6 +197,7 @@ async def create_battle(
             "topic": payload.topic,
             "difficulty": payload.difficulty,
             "rounds": payload.rounds,
+            "rulesVersion": SCORING_VERSION,
             "attackerSource": "acp-pending"
             if acp_agent_configured("attacker")
             else "local-rule",
@@ -262,6 +264,9 @@ async def create_battle(
                     "round": index,
                     "rounds": payload.rounds,
                     "structuredTimelineVersion": "v2.0",
+                    "rulesVersion": SCORING_VERSION,
+                    "responseTimingEligible": True,
+                    "configReceivedAt": events[1]["createdAt"],
                     "defenderSource": "acp-pending"
                     if acp_agent_configured("defender")
                     else "local-rule",
@@ -278,6 +283,7 @@ async def create_battle(
                 if index > 1
                 else None,
                 correlation_id=attack_call_id,
+                historical_samples=attack_result["samples"][: index - 1],
             )
             (
                 defense,
@@ -319,16 +325,6 @@ async def create_battle(
                 arbiter_review=arbiter_review,
                 correlation_id=attack_call_id,
             )
-            add_event(
-                "round.settled",
-                "completed",
-                {
-                    "round": index,
-                    "stageId": "FINAL",
-                    "classification": classification,
-                    "structuredTimelineVersion": "v2.0",
-                },
-            )
             round_data = {
                 "round": index,
                 "sample": sample,
@@ -363,6 +359,69 @@ async def create_battle(
                         "attackSuccess": verification.get("attackSuccess"),
                         "evidence": verification["evidence"],
                         "correlationId": defense_call_id,
+                    },
+                )
+            add_event(
+                "round.settled",
+                "completed",
+                {
+                    "round": index,
+                    "stageId": "FINAL",
+                    "classification": classification,
+                    "structuredTimelineVersion": "v2.0",
+                    "rulesVersion": SCORING_VERSION,
+                },
+            )
+            submission_id = battle_timeline.submission_id_for(sample, index)
+            if not any(
+                event.get("type") == "arbiter.round.scored"
+                and (event.get("data") or {}).get("round") == index
+                and (event.get("data") or {}).get("submissionId") == submission_id
+                and (event.get("data") or {}).get("rulesVersion") == SCORING_VERSION
+                for event in events
+            ):
+                score_record = {
+                    "status": "running",
+                    "topic": payload.topic,
+                    "attackerOut": attack_result,
+                    "defenderOut": defense_results,
+                }
+                round_scores = score_battle_rounds(score_record, events)
+                current_score = next(
+                    (item for item in round_scores if item["round"] == index), None
+                )
+                score_complete = current_score is not None and all(
+                    current_score[role].get("status") == "scored"
+                    and isinstance(current_score[role].get("score"), (int, float))
+                    for role in ("attacker", "defender")
+                )
+                add_event(
+                    "arbiter.round.scored",
+                    "completed" if score_complete else "unresolved",
+                    {
+                        "round": index,
+                        "stageId": "ROUND-SCORE",
+                        "agentRole": "arbiter",
+                        "submissionId": submission_id,
+                        "rulesVersion": SCORING_VERSION,
+                        "roundValidity": (
+                            "valid"
+                            if score_complete and classification != "unresolved"
+                            else "unresolved"
+                        ),
+                        "classification": "scored" if score_complete else "unresolved",
+                        "scores": current_score.get("scores", {})
+                        if current_score
+                        else {},
+                        "attacker": current_score.get("attacker")
+                        if current_score
+                        else None,
+                        "defender": current_score.get("defender")
+                        if current_score
+                        else None,
+                        "statement": "本回合全部环节完成，评分已生成。"
+                        if current_score
+                        else "本回合评分证据不足。",
                     },
                 )
     except Exception as exc:
@@ -791,6 +850,14 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
             item["durationMs"] = None
 
     round_scores = {item["round"]: item for item in score_battle_rounds(record, events)}
+    settled_rounds = {
+        round_number(event) for event in events if event.get("type") == "round.settled"
+    }
+    score_snapshots: dict[int, dict[str, Any]] = {}
+    for event in events:
+        number = round_number(event)
+        if event.get("type") == "arbiter.round.scored" and number is not None:
+            score_snapshots.setdefault(number, event.get("data") or {})
     for item in grouped.values():
         duration_from_timestamps(item)
         defense = {key: item[key] for key in ("caught", "risks", "fixed")}
@@ -798,7 +865,26 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
             record["topic"], [defense]
         )
         scored_round = round_scores.get(item["round"])
-        if scored_round is None:
+        score_snapshot = score_snapshots.get(item["round"])
+        if score_snapshot is not None:
+            item["attacker"] = (
+                score_snapshot.get("attacker")
+                or scoring_glue.insufficient_internal_score()["attacker"]
+            )
+            item["defender"] = (
+                score_snapshot.get("defender")
+                or scoring_glue.insufficient_internal_score()["defender"]
+            )
+            item["scores"] = score_snapshot.get("scores") or {
+                "attacker": item["attacker"].get("score"),
+                "defender": item["defender"].get("score"),
+            }
+            item["scoreSnapshot"] = {
+                "submissionId": score_snapshot.get("submissionId"),
+                "rulesVersion": score_snapshot.get("rulesVersion"),
+                "classification": score_snapshot.get("classification"),
+            }
+        elif item["round"] in settled_rounds or scored_round is None:
             item["attacker"] = scoring_glue.insufficient_internal_score()["attacker"]
             item["defender"] = scoring_glue.insufficient_internal_score()["defender"]
             item["scores"] = {"attacker": None, "defender": None}
