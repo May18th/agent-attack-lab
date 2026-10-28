@@ -217,7 +217,7 @@
   .history-split>.panel{height:780px;overflow:hidden;display:flex;flex-direction:column}
   .detail-panel{height:780px;overflow:hidden;display:flex;flex-direction:column}
   .detail-fixed{flex-shrink:0}
-  .rounds-scroll{flex:1;overflow-y:auto;padding-right:6px}
+  .rounds-scroll{flex:1;min-width:0;max-width:100%;overflow-y:auto;overflow-x:hidden;padding-right:6px}
   .rounds-scroll::-webkit-scrollbar{width:6px}
   .rounds-scroll::-webkit-scrollbar-thumb{background:#2a3a50;border-radius:3px}
   .detail-actions{display:flex;flex-direction:column;gap:8px}
@@ -280,22 +280,26 @@
   .step .n{grid-column:2;grid-row:1/3;min-width:28px;text-align:right;font-family:ui-monospace,Consolas,monospace;font-weight:800;color:var(--judge);font-size:20px}
   .step b{grid-column:1;display:block;font-size:12.5px;margin-top:0}
   .step small{font-size:11px;color:var(--mut)}
-  .round-card{border:1px solid var(--line);background:var(--panel2);border-radius:12px;padding:14px;margin-bottom:12px}
+  .round-card{width:100%;min-width:0;max-width:100%;overflow:hidden;border:1px solid var(--line);background:var(--panel2);border-radius:12px;padding:14px;margin-bottom:12px}
   .round-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:10px}
   .round-head b{font-size:13.5px}
   .pill{font-size:11px;border-radius:6px;padding:2px 8px;background:#332a10;color:var(--judge)}
   .state{margin-left:auto;font-size:11.5px;color:var(--green)}
-  .round-body{display:grid;grid-template-columns:1fr;gap:12px}
-  @media(min-width:820px){.round-body{grid-template-columns:1fr 1fr}}
+  .round-body{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0;width:100%}
+  @media(min-width:820px){.round-body{grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch}}
+  .round-body>.side{min-width:0;max-width:100%;width:100%;overflow:hidden}
   .side h4{font-size:13px;margin-bottom:8px}
   .side.atk h4{color:var(--att)}
   .side.def h4{color:var(--def)}
-  .code-chip{display:inline-block;font-size:11px;color:var(--dim);background:#0e1319;border:1px solid var(--line);border-radius:6px;padding:3px 8px;margin-bottom:6px;margin-right:6px}
-  .sample{background:#0e1319;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:#c6d0dc;line-height:1.6;margin-top:4px}
+  .round-tags,.def-tags{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px;min-width:0;max-width:100%}
+  .code-chip{display:inline-flex;min-width:0;max-width:100%;font-size:11px;color:var(--dim);background:#0e1319;border:1px solid var(--line);border-radius:6px;padding:3px 8px;margin:0 0 6px;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+  .sample{min-width:0;max-width:100%;overflow:hidden;background:#0e1319;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:#c6d0dc;line-height:1.6;margin-top:4px;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+  .sample-copy{display:block;min-width:0;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
   .sample-label{display:block;font-size:11px;color:var(--dim);margin-bottom:4px}
-  .finding{display:flex;gap:8px;font-size:12px;padding:6px 0;border-top:1px dashed #283543}
-  .finding .k{color:var(--mut);flex:none;width:86px}
-  .finding .v{color:#c6d0dc;line-height:1.5}
+  .finding{display:grid;grid-template-columns:minmax(72px,86px) minmax(0,1fr);gap:8px;min-width:0;max-width:100%;font-size:12px;padding:6px 0;border-top:1px dashed #283543}
+  .finding .k{min-width:0;color:var(--mut)}
+  .finding .v{min-width:0;max-width:100%;color:#c6d0dc;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+  @media(max-width:520px){.finding{grid-template-columns:1fr;gap:3px}.finding .k{font-weight:700}}
 
   /* ===== 右侧战局卡（准备选项卡，尺寸固定）===== */
   .live-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;text-align:center}
@@ -342,6 +346,21 @@
   .actor{font-size:11px;font-weight:800;margin-bottom:2px}.att .actor{color:var(--att)}.def .actor{color:var(--def)}.judge .actor{color:var(--judge)}
   .name{font-size:12px;font-weight:700;line-height:1.4}.desc{font-size:10.5px;color:#a9b5c1;line-height:1.45;margin-top:2px}.meta{font:10px ui-monospace,Consolas,monospace;color:#728294;margin-top:4px;overflow-wrap:anywhere}
   .timing{display:flex;flex-wrap:wrap;gap:4px 14px;border-top:1px solid #283543;margin-top:6px;padding-top:5px;color:#8191a1;font:10px ui-monospace,Consolas,monospace}
+  .event-status{display:inline-flex;align-items:center;gap:5px;border:1px solid #3c4b5a;border-radius:999px;padding:2px 7px;margin-top:6px;font:10px ui-monospace,Consolas,monospace;color:#aebdca;background:#17212b}
+  .event-status::before{content:"";width:6px;height:6px;border-radius:50%;background:#91a0ad;flex:none}
+  .event-status.running,.event-status.pending{color:#f0ce88;border-color:#80692d;background:#211d12}.event-status.running::before,.event-status.pending::before{background:#f0b64c}
+  .event-status.running{animation:timeline-status-pulse 1.15s ease-in-out infinite}
+  .event-status.completed,.event-status.passed,.event-status.confirmed,.event-status.blocked{color:#a9e4bd;border-color:#2d6c47;background:#10251b}.event-status.completed::before,.event-status.passed::before,.event-status.confirmed::before,.event-status.blocked::before{background:#43d889}
+  .event-status.contained{color:#a9d8ff;border-color:#2d6da0;background:#102338}.event-status.contained::before{background:#58b9ff}
+  .event-status.full-penetration,.event-status.failed{color:#ffb6b6;border-color:#874244;background:#2a171b}.event-status.full-penetration::before,.event-status.failed::before{background:#ff646e}
+  .event-status.unresolved,.event-status.system-void{color:#f0ce88;border-color:#80692d;background:#2a2416}.event-status.unresolved::before,.event-status.system-void::before{background:#f0b64c}
+  .event-status.skipped-by-block,.event-status.not-applicable{color:#a4abb3;border-color:#46515b;background:#1a2026}.event-status.skipped-by-block::before,.event-status.not-applicable::before{background:#77838e}
+  .event-audit{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px;color:#728294;font:10px ui-monospace,Consolas,monospace;overflow-wrap:anywhere;word-break:break-word}
+  .event-detail{display:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 10px;border-top:1px solid #283543;margin-top:7px;padding-top:7px;color:#8e9daa;font-size:10px;line-height:1.5;text-align:left}
+  .event-detail span{min-width:0;overflow-wrap:anywhere;word-break:break-word}.event-detail b{color:#c0ccd6;font-weight:700}
+  .event.is-expanded .event-detail{display:grid}.event[role="button"]{cursor:pointer}.event[role="button"]:focus-visible .card{outline:2px solid #69b8ff;outline-offset:2px}
+  @keyframes timeline-status-pulse{0%,100%{opacity:1;box-shadow:0 0 0 rgba(240,182,76,0)}50%{opacity:.55;box-shadow:0 0 10px rgba(240,182,76,.18)}}
+  @media(max-width:520px){.event-detail{grid-template-columns:1fr}}
   .dot{grid-column:2;grid-row:1;justify-self:center;margin-top:10px;width:12px;height:12px;border:3px solid #102033;border-radius:50%;background:var(--att)}.def .dot{background:#72b8ff}.judge .dot{display:none}
   .verdict{font-size:10px;background:#28191a;border:1px solid #773b2d;border-radius:6px;padding:5px 8px;margin-top:5px;color:#ffb9a5}
   .verdict.blocked{color:#9bd8b0;background:#10251b;border-color:#285e3e}
@@ -870,7 +889,7 @@ var battle3d=(function(){
   var COLORS=[0x9fd8ff,0x78c0ff,0x4f9dff,0x2f7fe6];   // L0 最亮 -> L3 最暗
   var BASES=[0.60,0.46,0.34,0.24];
   var CHECK_IDS=[['L0-1','L0-2','L0-3'],['L1-1','L1-2','L1-3'],['L2-1','L2-2','L2-3','L2-4','L2-5'],['L3-1','L3-2','L3-3','L3-4']];
-  var COL_ATT=0xff3b30,COL_DEF=0x2f7fff,COL_CORE=0x1e86ff,COL_SAME=0xff4d5e,COL_NEW=0xff72c8,COL_NEUTRAL=0xbfd9ff;
+  var COL_ATT=0xff3b30,COL_DEF=0x2f7fff,COL_CORE=0x1e86ff,COL_SAME=0xff4d5e,COL_NEW=0xffd24d,COL_PINK=0xff72c8,COL_NEUTRAL=0xbfd9ff;
 
   /* ---- 场景 ---- */
   var scene=new THREE.Scene();
@@ -1102,7 +1121,7 @@ var battle3d=(function(){
     return {battleId:null,phase:'standby',mode:'mock',round:0,total:0,memory:false,
       activeLayer:0,applicable:[[],[],[],[]],checkResult:[[],[],[],[]],checkIndex:0,layerStarted:-1,
       blockedLayer:-1,paused:false,l2Effect:false,coreMode:'blue',sampleId:null,submission:false,
-      sourceType:null,similarity:null,payloadState:'none',newSource:false,classification:null,
+      sourceType:null,similarity:null,payloadState:'none',newSource:false,classification:null,safeVerdict:null,confirmedLayers:[false,false,false,false],
       attackerTarget:1,emitGreen:false,emitPurple:false,lastGreen:0,lastPurple:0,pinkOrigin:null,
       auxGreen:null,auxPurple:null,safe:null,safeLabel:null,l2Label:null,sats:[[],[],[],[]],arbiterDone:false};
   }
@@ -1310,12 +1329,15 @@ var battle3d=(function(){
       var vel=dir.multiplyScalar(.55+Math.random()*1.3).add(new THREE.Vector3((Math.random()-.5)*.5,(Math.random()-.5)*.5,(Math.random()-.5)*.5));
       var spin=new THREE.Vector3(Math.random()-.5,Math.random()-.5,Math.random()-.5).multiplyScalar(4.2);
       fxGroup.add(tri);
-      fx.push({group:tri,t:0,dur:1.6,update:function(k,dt){
-        tri.position.addScaledVector(vel,dt);
-        vel.multiplyScalar(1-dt*1.2);          // 碎片缓慢减速，如真空中飘散
-        tri.rotation.x+=spin.x*dt;tri.rotation.y+=spin.y*dt;tri.rotation.z+=spin.z*dt;
-        mat.opacity=Math.max(0,.8*(1-k*k));     // 先亮后缓灭，像水晶反光
-      }});
+      // 每块碎片保留自己的几何、速度和材质，避免闭包共享最后一次循环变量。
+      (function(fragment,velocity,rotation,material){
+        fx.push({group:fragment,t:0,dur:1.6,update:function(k,dt){
+          fragment.position.addScaledVector(velocity,dt);
+          velocity.multiplyScalar(1-dt*1.2);    // 碎片缓慢减速，如真空中飘散
+          fragment.rotation.x+=rotation.x*dt;fragment.rotation.y+=rotation.y*dt;fragment.rotation.z+=rotation.z*dt;
+          material.opacity=Math.max(0,.8*(1-k*k)); // 先亮后缓灭，像水晶反光
+        }});
+      })(tri,vel,spin,mat);
     }
     /* 中心闪光 + 冲击光环 + 高密度星屑 */
     var flash=new THREE.Sprite(new THREE.SpriteMaterial({map:DOT,color:0xffffff,transparent:true,opacity:1,blending:THREE.AdditiveBlending,depthWrite:false}));
@@ -1488,7 +1510,7 @@ var battle3d=(function(){
   function setPayloadState(kind){
     S.payloadState=kind;
     if(kind==='same'){setPayloadColor(COL_SAME);hudPayload('同源 · 红色');}
-    else if(kind==='new'){setPayloadColor(COL_NEW);hudPayload('不同源 · 粉色');}
+    else if(kind==='new'){setPayloadColor(COL_NEW);hudPayload('不同源 · 黄色');}
     else{setPayloadColor(COL_NEUTRAL);hudPayload('中性占位');}
   }
   function flyPayloadTo(target,dur){
@@ -1555,8 +1577,8 @@ var battle3d=(function(){
       arr[i*3]=origin.x+(Math.random()-.5)*.35;arr[i*3+1]=origin.y+(Math.random()-.5)*.35;arr[i*3+2]=origin.z+(Math.random()-.5)*.35;
     }
     geo.setAttribute('position',new THREE.Float32BufferAttribute(arr,3));
-    pinkCloud=new THREE.Points(geo,pointMat(COL_NEW,.05,.85));pinkCloud.frustumCulled=false;world.add(pinkCloud);
-    if(payload)fadePayload(COL_NEW);
+    pinkCloud=new THREE.Points(geo,pointMat(COL_PINK,.05,.85));pinkCloud.frustumCulled=false;world.add(pinkCloud);
+    if(payload)fadePayload(COL_PINK);
   }
   function flyPinkToDefender(){
     if(!S.newSource)return;
@@ -1565,7 +1587,7 @@ var battle3d=(function(){
     for(var i=0;i<28;i++){
       var start=from.clone().add(new THREE.Vector3((Math.random()-.5)*.5,(Math.random()-.5)*.5,(Math.random()-.5)*.5));
       (function(idx){
-        later(idx*.018,function(){flyParticle(start.clone(),defender.position.clone(),COL_NEW,.032,.78+Math.random()*.25);});
+        later(idx*.018,function(){flyParticle(start.clone(),defender.position.clone(),COL_PINK,.032,.78+Math.random()*.25);});
       })(i);
     }
     later(.9,function(){
@@ -1853,7 +1875,7 @@ var battle3d=(function(){
     S.round=Number(e.round)||S.round+1;S.total=Number(e.payload.total)||S.total;
     S.phase='round';S.activeLayer=0;S.layerStarted=-1;S.checkIndex=0;S.blockedLayer=-1;S.paused=false;
     S.applicable=[[],[],[],[]];S.checkResult=[[],[],[],[]];S.l2Effect=false;S.controlFailed=false;
-    S.classification=null;S.newSource=false;S.sourceType=null;S.similarity=null;S.sampleId=null;S.submission=false;
+    S.classification=null;S.safeVerdict=null;S.confirmedLayers=[false,false,false,false];S.newSource=false;S.sourceType=null;S.similarity=null;S.sampleId=null;S.submission=false;
     S.payloadState='none';S.attackerTarget=1;S.emitGreen=false;S.emitPurple=false;S.pinkOrigin=null;S.arbiterDone=false;
     clearSats();clearSafe();
     if(payload)disposeObj(payload.group);payload=null;payloadBlink=false;
@@ -1962,6 +1984,8 @@ var battle3d=(function(){
   function onLayerStarted(e){
     var p=e.payload||{},li=typeof p.layerIndex==='number'?p.layerIndex:Number(String(p.layer||'').replace(/[^0-3]/g,''));
     if(isNaN(li)||li<0||li>3)return;
+    // 只有 Arbiter 已确认上一层穿透时，下一层事件才允许推进；确认乱序时先暂存。
+    if(li>0&&S.confirmedLayers[li-1]&&!shells[li-1].userData.broken)confirmLayerPenetration(li-1);
     if(li!==S.activeLayer){console.warn('[3D] 层顺序拦截：当前 L'+S.activeLayer+'，收到 L'+li);return;}
     S.layerStarted=li;S.checkIndex=0;
     S.applicable[li]=(p.applicableChecks&&p.applicableChecks.length?p.applicableChecks:CHECK_IDS[li]).slice();
@@ -2021,7 +2045,7 @@ var battle3d=(function(){
           coreBlue();
           status('L3-3 · 规定窗口内控制成功 · Core 恢复蓝色（保留 L2 效果记录）',false);
           hudStage('L3-3 控制成功 · contained 候选');
-          if(payload)fadePayload(0x7fd49b);
+          if(payload&&!S.newSource)fadePayload(0x7fd49b);
         }else{
           coreRed();
           status('L3-3 · 控制失败 / 窗口超时 · Core 变红，L3 玻璃破碎',false);
@@ -2047,6 +2071,7 @@ var battle3d=(function(){
         S.l2Effect=true;showL2Effect();
       }
       status(exprStage(e)+' passed · 水晶屏障扩散 · 当前层 '+passed+'/'+ids.length,true);
+      if(S.confirmedLayers[lc.li]&&allPassed(lc.li))confirmLayerPenetration(lc.li);
     }else if(st==='blocked'){
       S.checkResult[lc.li][exprStage(e)]='blocked';
       S.blockedLayer=lc.li;
@@ -2055,8 +2080,7 @@ var battle3d=(function(){
       consumeSatellite(lc.li,pt,true);
       markRemainingSkipped(lc.li,lc.ci+1);
       if(payload){
-        if(S.newSource)stashPink();
-        else fadePayload();
+        if(!S.newSource)fadePayload();
       }
       hudLayer('L'+lc.li+' · blocked · 后续 skipped-by-block');
       hudPayload('已阻断 · 粒子消散');
@@ -2071,18 +2095,25 @@ var battle3d=(function(){
     hudStage('L2-5 · 隔离模拟效果已发生（L2 事实保留）');
     later(2.4,function(){if(S.l2Label)S.l2Label.material.opacity=.55;});
   }
-  function onArbiterLayerConfirm(e){
-    var li=Number(e.payload.layerIndex);
-    if(isNaN(li)||li!==S.activeLayer)return;
-    if(S.blockedLayer>=0)return;
+  function confirmLayerPenetration(li){
+    if(isNaN(li)||li<0||li>3||li!==S.activeLayer||S.blockedLayer>=0)return false;
     if(!allPassed(li)){
-      console.warn('[3D] 未拿到该层全部 passed 证据，不执行玻璃裂解 L'+li);
-      return;
+      status('Arbiter 已确认 L'+li+' 穿透 · 等待全部 passed 证据后玻璃裂解',true);
+      return false;
     }
+    S.confirmedLayers[li]=false;
     shatterLayer(li);
     if(li<3){movePayloadInward(li+1);S.activeLayer=li+1;setFocus(li+1);}
     status('Arbiter 确认 L'+li+' 整层穿透 · 玻璃裂解'+(li<3?' · 进入 L'+(li+1):''),false);
     hudStage('L'+li+' 穿透确认 · 玻璃裂解');
+    return true;
+  }
+  function onArbiterLayerConfirm(e){
+    var li=Number(e.payload.layerIndex);
+    if(isNaN(li)||li<0||li>3)return;
+    if(S.blockedLayer>=0)return;
+    S.confirmedLayers[li]=true;
+    if(!confirmLayerPenetration(li))console.warn('[3D] Arbiter L'+li+' 穿透确认已暂存，等待全部 passed 证据');
   }
   function onArbiterVerdict(e){
     var c=e.payload&&e.payload.classification;
@@ -2091,13 +2122,13 @@ var battle3d=(function(){
       coreBlue();
       status('Arbiter：contained · Core 恢复蓝色，L2 效果记录保留',false);
       hudStage('Arbiter contained · A-06=45 候选 / D-06 待证据');
-      if(payload)fadePayload(0x7fd49b);
+      if(payload&&!S.newSource)fadePayload(0x7fd49b);
     }else if(c==='full-penetration'){
       coreRed();
       if(shells[3]&&!shells[3].userData.broken)shatterLayer(3);
       status('Arbiter：full-penetration · Core 红色，L3 破碎',false);
       hudStage('Arbiter full-penetration · A-06=60 候选 / D-06=0');
-      if(payload){burst(corePosClone(),0xff3b30,40,1.6,.03,1);fadePayload(COL_SAME);}
+      if(payload&&!S.newSource){burst(corePosClone(),0xff3b30,40,1.6,.03,1);fadePayload(COL_SAME);}
     }else if(c==='unresolved'||c==='system-void'){
       S.paused=true;
       status('Arbiter：'+c+' · 停留待裁决/系统作废，不确认胜负',false);
@@ -2107,21 +2138,36 @@ var battle3d=(function(){
       status('Arbiter：'+(c||'blocked')+' · 有效阻断，最终分类已锁定',false);
       hudStage('Arbiter '+(c||'blocked'));
     }
+    // 安全对照是回合末的独立最终视觉结果，覆盖前面的候选颜色。
+    applySafeCore();
   }
   function onRoundSettled(e){
     // 新源 Payload 无论被哪一层拦截还是全穿透，都在本回合结算后回收给 Defender。
     if(S.newSource){
-      if(payload&&!S.pinkOrigin)stashPink();
+      stashPink();
       flyPinkToDefender();
     }
     else if(pinkCloud){disposeObj(pinkCloud);pinkCloud=null;}
     if(payload&&!S.newSource)fadePayload();
     hudStage('R'+S.round+' 结算完成 · '+(S.classification||''));
   }
+  function applySafeCore(){
+    if(S.safeVerdict==='passed'){
+      coreRed();
+      status('安全对照测试 · 正常样本放行 · full-penetration · Core 红色',false);
+      hudStage('安全对照 · 放行 · 完全侵入');
+    }else if(S.safeVerdict==='blocked'){
+      coreBlue();
+      status('安全对照测试 · 机密流被拦截 · Core 蓝色',false);
+      hudStage('安全对照 · 拦截 · 机密流安全');
+    }
+  }
   function onSafe(e){
     var st=e.status||(e.payload&&e.payload.status)||'pending';
-    if(st==='passed'||st==='blocked')safeControl(st);
+    S.safeVerdict=st==='passed'||st==='blocked'?st:null;
+    if(S.safeVerdict)safeControl(S.safeVerdict);
     else safeControl('pending');
+    applySafeCore();
   }
   function onBattleEnded(e){
     S.phase='ended';
@@ -3134,9 +3180,9 @@ var battle3d=(function(){
       announceActor=document.getElementById('announceActor'),
       announceTitle=document.getElementById('announceTitle'),
       announceDesc=document.getElementById('announceDesc'),announceTimer=null;
-  var userPinned=false,pending=0,demoStarted=false,demoGen=0;
+  var userPinned=false,timelineHovering=false,pending=0,demoStarted=false,demoGen=0;
   function atBottom(){return tlStream.scrollHeight-tlStream.scrollTop-tlStream.clientHeight<24;}
-  function follow(){if(!userPinned){tlStream.scrollTop=tlStream.scrollHeight;}else{pending++;newEvents.classList.add('show');}}
+  function follow(){if(!userPinned&&!timelineHovering){tlStream.scrollTop=tlStream.scrollHeight;}else{pending++;newEvents.classList.add('show');}}
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function announce(side,title,desc){
     if(!battleAnnouncer)return;
@@ -3227,7 +3273,24 @@ var battle3d=(function(){
     el.innerHTML='<div class="card"><div class="actor">'+esc({att:'ATTACKER',def:'DEFENDER',judge:'ARBITER'}[side])+'</div><div class="name">'+esc(name)+'</div><div class="desc">'+esc(desc)+'</div>'+(meta?'<div class="meta">'+esc(meta)+'</div>':'')+verdictHtml+timing+'</div>'+(side==='judge'?'':'<span class="dot"></span>');
     tlContent.appendChild(el);follow();appendRoleLog(side,name,desc,meta,resultText,verdict,tp,runtime);announce(side,name,resultText||desc);
   }
+  // 时间线区域独占鼠标滚轮，避免页面外层滚动抢走事件；滚轮上移时暂停自动跟随。
+  tlStream.addEventListener('pointerenter',function(){timelineHovering=true;userPinned=true;});
+  tlStream.addEventListener('pointerleave',function(){
+    timelineHovering=false;
+    if(atBottom()){userPinned=false;pending=0;newEvents.classList.remove('show');}
+  });
+  tlStream.addEventListener('wheel',function(event){
+    if(!event.deltaY)return;
+    event.preventDefault();
+    event.stopPropagation();
+    tlStream.scrollTop+=event.deltaY;
+    userPinned=!atBottom();
+    if(!userPinned){pending=0;newEvents.classList.remove('show');}
+  },{passive:false});
   tlStream.addEventListener('scroll',function(){userPinned=!atBottom();if(!userPinned){pending=0;newEvents.classList.remove('show');}});
+  // 实时 SSE 事件由 command-center.ts 添加后，统一复用这里的跟随策略。
+  // 不能在 TypeScript 侧直接设置 scrollTop，否则会绕过用户的手动滚动位置。
+  window.addEventListener('battle-timeline:follow',follow);
   newEvents.addEventListener('click',function(){userPinned=false;pending=0;newEvents.classList.remove('show');tlStream.scrollTo({top:tlStream.scrollHeight,behavior:'smooth'});});
 
   /* 四层纵深检测项（示例数据） */
