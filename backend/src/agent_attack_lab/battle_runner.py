@@ -137,10 +137,13 @@ async def battle_attack(
     seeded = library_store.agent_context(
         "attacker", topic=payload.topic, difficulty=payload.difficulty
     )
-    knowledge = build_attacker_knowledge(
-        [*seeded["records"], *state.battle_store.list_admin_samples(limit=200, offset=0)],
-        topic=payload.topic,
+    # Formal six-theme catalogs supersede the legacy admin seed rows for that
+    # topic.  Mixing both sources would send duplicate samples/rules to the
+    # agent; legacy/custom topics continue to use the admin tables unchanged.
+    source_records = seeded["records"] or state.battle_store.list_admin_samples(
+        limit=200, offset=0
     )
+    knowledge = build_attacker_knowledge(source_records, topic=payload.topic)
     if knowledge["records"]:
         agent_payload["_knowledgeContext"] = knowledge
     result = await call_attacker(agent_payload, correlation_id=correlation_id)
@@ -170,10 +173,10 @@ async def battle_defend(
     seeded = library_store.agent_context(
         "defender", topic=topic, difficulty=str(sample.get("difficulty") or "mid")
     )
-    knowledge = build_defender_knowledge(
-        [*seeded["records"], *state.battle_store.list_admin_rules(limit=200, offset=0)],
-        topic=topic,
+    source_rules = seeded["records"] or state.battle_store.list_admin_rules(
+        limit=200, offset=0
     )
+    knowledge = build_defender_knowledge(source_rules, topic=topic)
     agent_payload: dict[str, Any] = {"sample": sample}
     if knowledge["records"]:
         agent_payload["_knowledgeContext"] = knowledge
