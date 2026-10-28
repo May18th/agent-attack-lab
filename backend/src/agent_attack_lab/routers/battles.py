@@ -274,6 +274,9 @@ async def create_battle(
                 difficulty=payload.difficulty,
                 topic=payload.topic,
                 sample=sample,
+                previous_sample=attack_result["samples"][index - 2]
+                if index > 1
+                else None,
                 correlation_id=attack_call_id,
             )
             (

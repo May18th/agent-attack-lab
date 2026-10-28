@@ -334,6 +334,9 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 difficulty=payload.difficulty,
                 topic=payload.topic,
                 sample=sample,
+                previous_sample=attack_result["samples"][index - 2]
+                if index > 1
+                else None,
                 correlation_id=attack_call_id,
             )
             await asyncio.sleep(0.8)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from math import sqrt
 from typing import Any
 
 from agent_attack_lab.layer_interceptions import derive_round_layer_trace
@@ -15,6 +16,39 @@ def _sample_id(sample: Mapping[str, Any], round_number: int) -> str:
     return str(value) if value else f"round-{round_number}"
 
 
+def _payload_similarity(
+    sample: Mapping[str, Any], previous_sample: Mapping[str, Any] | None
+) -> float | None:
+    """Return a deterministic cosine similarity for consecutive payloads.
+
+    A missing previous sample is intentionally represented as ``None``: the
+    first round establishes the baseline and must not be classified as either
+    same-source or new-source.
+    """
+    if not previous_sample:
+        return None
+    current = str(sample.get("content") or "").strip()
+    previous = str(previous_sample.get("content") or "").strip()
+    if not current or not previous:
+        return 0.0
+    current_counts: dict[str, int] = {}
+    previous_counts: dict[str, int] = {}
+    for token in current:
+        current_counts[token] = current_counts.get(token, 0) + 1
+    for token in previous:
+        previous_counts[token] = previous_counts.get(token, 0) + 1
+    vocabulary = set(current_counts) | set(previous_counts)
+    dot = sum(
+        current_counts.get(token, 0) * previous_counts.get(token, 0)
+        for token in vocabulary
+    )
+    current_norm = sqrt(sum(value * value for value in current_counts.values()))
+    previous_norm = sqrt(sum(value * value for value in previous_counts.values()))
+    if not current_norm or not previous_norm:
+        return 0.0
+    return round(dot / (current_norm * previous_norm), 6)
+
+
 def emit_attack_stages(
     add_event: AddEvent,
     *,
@@ -23,6 +57,7 @@ def emit_attack_stages(
     difficulty: str,
     topic: str,
     sample: Mapping[str, Any],
+    previous_sample: Mapping[str, Any] | None = None,
     correlation_id: str,
 ) -> None:
     sample_id = _sample_id(sample, round_number)
@@ -73,15 +108,6 @@ def emit_attack_stages(
             "passed" if str(sample.get("content") or "") else "unresolved",
         ),
         (
-            "A6",
-            {
-                "sampleId": sample_id,
-                "sourceType": "unknown",
-                "reason": "similarity_metadata_unavailable",
-            },
-            "unresolved",
-        ),
-        (
             "A7",
             {
                 "sampleId": sample_id,
@@ -91,7 +117,7 @@ def emit_attack_stages(
             "passed",
         ),
     )
-    for stage_id, payload, classification in stages:
+    for stage_id, payload, classification in stages[:5]:
         data = {**common, **payload, "stageId": stage_id}
         add_event("attack.stage.started", "running", data)
         add_event(
@@ -99,6 +125,34 @@ def emit_attack_stages(
             "completed" if classification == "passed" else classification,
             {**data, "classification": classification},
         )
+
+    similarity = _payload_similarity(sample, previous_sample)
+    similarity_data = {
+        **common,
+        "agentRole": "arbiter",
+        "stageId": "A6",
+        "sampleId": sample_id,
+        "similarityThreshold": 0.85,
+        "similarity": similarity,
+        "sourceType": (
+            "baseline"
+            if similarity is None
+            else "same-source"
+            if similarity >= 0.85
+            else "new-source"
+        ),
+        "comparison": "previous-round-payload" if previous_sample else "baseline",
+    }
+    add_event("arbiter.similarity.checked", "completed", similarity_data)
+
+    stage_id, payload, classification = stages[5]
+    data = {**common, **payload, "stageId": stage_id}
+    add_event("attack.stage.started", "running", data)
+    add_event(
+        "attack.stage.completed",
+        "completed" if classification == "passed" else classification,
+        {**data, "classification": classification},
+    )
 
 
 def _arbiter_classification(review: Mapping[str, Any]) -> str:

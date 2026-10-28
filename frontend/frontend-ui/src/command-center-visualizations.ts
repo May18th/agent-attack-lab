@@ -124,50 +124,37 @@ export function buildBattleVisualizations(rounds: readonly BattleVisualizationRo
   }
 }
 
-export function shouldRenderBattleTimelineEvent(type: string): boolean {
-  return !type.startsWith('agent.call.')
+export function shouldRenderBattleTimelineEvent(type: string, data: Record<string, unknown> = {}): boolean {
+  if (type.startsWith('arbiter.')) return true
+  const stageId = typeof data.stageId === 'string' ? data.stageId.trim().toUpperCase() : ''
+  // The primary timeline is a result timeline: one card per logical stage.
+  // Started events remain available to the role log and 3D animation stream.
+  if (/^A[1-8]$/.test(stageId)) return type === 'attack.stage.completed'
+  if (/^L[0-3]$/.test(stageId)) return type === 'defense.layer.started'
+  if (/^L[0-3]-\d+$/.test(stageId)) {
+    return type === 'defense.layer.verdict'
+  }
+  return false
 }
 
 export class LiveBattleTimelineProjector {
-  private readonly pendingSamples = new Map<number, BattleTimelineEvent>()
   private readonly renderedRounds = new Set<number>()
+  private readonly renderedStages = new Set<string>()
 
   push(event: BattleTimelineEvent): BattleTimelineEntry[] {
     const round = Number(event.data.round || 0)
-    if (event.type === 'attack.sample.generated' && round > 0) {
-      if (this.renderedRounds.has(round)) {
-        return [{ kind: 'event', side: 'att', event }]
-      }
-      this.pendingSamples.set(round, event)
-      return []
-    }
-
     const entries: BattleTimelineEntry[] = []
-    if (event.type === 'battle.completed' || event.type === 'battle.failed') {
-      for (const [sampleRound, sample] of this.pendingSamples) {
-        if (this.renderedRounds.has(sampleRound)) continue
-        this.renderedRounds.add(sampleRound)
-        entries.push({ kind: 'round', round: sampleRound })
-        entries.push({ kind: 'event', side: 'att', event: sample })
-      }
-      this.pendingSamples.clear()
+    if (!shouldRenderBattleTimelineEvent(event.type, event.data)) return entries
+    if (round > 0 && !this.renderedRounds.has(round)) {
+      this.renderedRounds.add(round)
+      entries.push({ kind: 'round', round })
     }
-    if (event.type === 'round.started' || event.type === 'round.completed') {
-      if (round > 0 && !this.renderedRounds.has(round)) {
-        this.renderedRounds.add(round)
-        entries.push({ kind: 'round', round })
-        const sample = this.pendingSamples.get(round)
-        if (sample) {
-          entries.push({ kind: 'event', side: 'att', event: sample })
-          this.pendingSamples.delete(round)
-        }
-      }
-    }
-
-    if (!shouldRenderBattleTimelineEvent(event.type)) return entries
-    const side = event.type === 'attack.compromised' ? 'judge'
-      : event.type.startsWith('attack.') ? 'att'
-        : event.type.startsWith('round.') || event.type.startsWith('defense.') ? 'def' : 'judge'
+    const stageId = String(event.data.stageId || '').trim().toUpperCase()
+    const stageKey = `${event.battleId}:${round}:${stageId}:${event.type.startsWith('arbiter.') ? event.type : 'stage'}`
+    if (stageId && this.renderedStages.has(stageKey)) return entries
+    if (stageId) this.renderedStages.add(stageKey)
+    const side = event.type.startsWith('arbiter.') || stageId === 'A6' ? 'judge'
+      : /^A[1-8]$/.test(stageId) ? 'att' : 'def'
     entries.push({ kind: 'event', side, event })
     return entries
   }
@@ -225,6 +212,9 @@ export class LiveBattleLifecycleProjector {
     }
     if (event.type === 'arbiter.layer.confirmed') {
       return [lifecycleEvent(event, 'arbiter_layer_confirm', event.data, stageId, event.status)]
+    }
+    if (event.type === 'arbiter.similarity.checked') {
+      return [lifecycleEvent(event, 'stage_completed', event.data, 'A6', event.status)]
     }
     if (event.type === 'arbiter.verdict') {
       return [lifecycleEvent(event, 'arbiter_verdict', event.data, stageId, event.status)]

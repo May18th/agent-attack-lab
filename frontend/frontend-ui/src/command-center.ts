@@ -750,7 +750,14 @@ function renderLiveEvent(event: BattleEvent) {
       element('liveRounds').textContent = `${entry.round}/—`
       continue
     }
-    appendTimeline(entry.side, eventTitle(entry.event), eventDescription(entry.event), entry.event.createdAt)
+    appendTimeline(
+      entry.side,
+      eventTitle(entry.event),
+      eventDescription(entry.event),
+      entry.event.createdAt,
+      eventTiming(entry.event),
+      Array.isArray(entry.event.data.evidenceIds) ? entry.event.data.evidenceIds : [],
+    )
     element('liveStatus').textContent = eventTitle(entry.event)
   }
   bridge3dEvent(event, round)
@@ -766,14 +773,32 @@ function ensureRound(round: number) {
   element('tlContent').appendChild(marker)
 }
 
-function appendTimeline(side: 'att' | 'def' | 'judge', title: string, description: string, createdAt: string) {
+function eventTiming(event: BattleEvent) {
+  const timing = event.data.timing
+  const nested = timing && typeof timing === 'object' ? timing as Record<string, unknown> : {}
+  const read = (key: string) => event.data[key] ?? nested[key] ?? ''
+  return {
+    startedAt: String(read('startedAt') || read('startTime') || ''),
+    endedAt: String(read('endedAt') || read('endTime') || ''),
+    responseMs: Number(read('responseMs') || 0),
+  }
+}
+
+function appendTimeline(
+  side: 'att' | 'def' | 'judge',
+  title: string,
+  description: string,
+  createdAt: string,
+  timing?: { startedAt: string; endedAt: string; responseMs: number },
+  evidenceIds: unknown[] = [],
+) {
   const event = document.createElement('div')
   event.className = `event ${side}`
   const card = document.createElement('div')
   card.className = 'card'
   const actor = document.createElement('div')
   actor.className = 'actor'
-  actor.textContent = side === 'att' ? 'ATTACKER' : side === 'def' ? 'DEFENDER' : 'SYSTEM'
+  actor.textContent = side === 'att' ? 'ATTACKER' : side === 'def' ? 'DEFENDER' : 'ARBITER'
   const name = document.createElement('div')
   name.className = 'name'
   name.textContent = title
@@ -782,8 +807,21 @@ function appendTimeline(side: 'att' | 'def' | 'judge', title: string, descriptio
   desc.textContent = description
   const meta = document.createElement('div')
   meta.className = 'meta'
-  meta.textContent = formatTime(createdAt)
+  const start = timing?.startedAt ? formatTime(timing.startedAt) : ''
+  const end = timing?.endedAt ? formatTime(timing.endedAt) : ''
+  const response = Number.isFinite(timing?.responseMs) && (timing?.responseMs ?? 0) > 0
+    ? `响应 ${(timing!.responseMs / 1000).toFixed(2)}s`
+    : ''
+  meta.textContent = start || end || response
+    ? `开始 ${start || '—'} · 结束 ${end || '—'} · ${response || '响应 —'}`
+    : formatTime(createdAt)
   card.append(actor, name, desc, meta)
+  if (evidenceIds.length) {
+    const evidence = document.createElement('div')
+    evidence.className = 'meta'
+    evidence.textContent = `证据：${evidenceIds.map(String).join('、')}`
+    card.appendChild(evidence)
+  }
   event.appendChild(card)
   if (side !== 'judge') {
     const dot = document.createElement('span')
@@ -798,17 +836,31 @@ function appendTimeline(side: 'att' | 'def' | 'judge', title: string, descriptio
 function eventTitle(event: BattleEvent) {
   return ({
     'battle.created': '战局已创建', 'battle.retry': '战局已重新提交', 'attack.started': '攻击阶段开始',
-    'attack.sample.generated': '攻击方提交样本', 'attack.completed': '攻击样本生成完成', 'attack.compromised': '目标验证结果',
+    'attack.sample.generated': '攻击方生成样本', 'attack.completed': '攻击样本生成完成', 'attack.compromised': '目标验证结果',
+    'attack.stage.completed': '攻击阶段完成', 'attack.stage.failed': '攻击阶段失败',
     'round.started': '防守方开始检测', 'round.completed': '本轮检测完成',
-    'defense.completed': '防守分析完成', 'battle.completed': '战局完成', 'battle.failed': '战局失败',
+    'defense.layer.started': '防御层检测开始', 'defense.check.started': '防御检查点开始',
+    'defense.layer.verdict': '防御检查点裁决', 'defense.safe_control': '安全对照测试',
+    'defense.completed': '防守分析完成', 'arbiter.similarity.checked': 'A6 · 相似度元数据校验',
+    'arbiter.layer.confirmed': 'Arbiter 确认本层结果', 'arbiter.verdict': 'Arbiter 最终裁决',
+    'round.settled': '本回合已结算', 'battle.completed': '战局完成', 'battle.failed': '战局失败',
   } as Record<string, string>)[event.type] || event.type
 }
 
 function eventDescription(event: BattleEvent) {
   const data = event.data
   if (event.type === 'attack.sample.generated') return `第 ${text(data.round)} 轮样本已生成 · ${sourceLabel(String(data.attackerSource || ''))}`
+  if (event.type === 'attack.completed') return `攻击方共生成 ${text(data.sampleCount)} 个样本 · ${sourceLabel(String(data.attackerSource || ''))}`
   if (event.type === 'round.started') return `正在检测第 ${text(data.round)} 轮 · ${sourceLabel(String(data.defenderSource || ''))}`
   if (event.type === 'round.completed') return `命中 ${Array.isArray(data.caught) ? data.caught.length : 0} 条规则，记录 ${Array.isArray(data.risks) ? data.risks.length : 0} 条风险，提出 ${Array.isArray(data.fixed) ? data.fixed.length : 0} 条建议`
+  if (event.type === 'defense.layer.started') return `${text(data.layer || data.stageId)} · 开始检查 ${Array.isArray(data.applicableChecks) ? data.applicableChecks.length : 0} 项`
+  if (event.type === 'defense.layer.verdict') return `${text(data.stageId)} · ${statusLabel((event.status || data.status || 'pending') as Battle['status'])}`
+  if (event.type === 'arbiter.similarity.checked') {
+    const similarity = typeof data.similarity === 'number' ? data.similarity.toFixed(3) : 'baseline'
+    return `与上一轮 Payload 相似度 ${similarity} · 阈值 0.850 · ${text(data.sourceType || 'unresolved')}`
+  }
+  if (event.type === 'arbiter.layer.confirmed') return `确认第 ${text(data.layerIndex)} 层证据完整`
+  if (event.type === 'arbiter.verdict') return `最终分类：${text(data.classification || event.status)}`
   if (event.type === 'attack.compromised') {
     return data.simulated === true
       ? '模拟验证证据；不代表真实目标沦陷'

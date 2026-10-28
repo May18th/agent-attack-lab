@@ -90,6 +90,7 @@ _EVENT_STAGE_IDS = {
     "defense.layer.verdict": "DEFENSE",
     "defense.safe_control": "SAFE-CONTROL",
     "arbiter.layer.confirmed": "ARBITER",
+    "arbiter.similarity.checked": "A6",
     "arbiter.verdict": "ARBITER",
     "round.settled": "FINAL",
     "battle.completed": "FINAL",

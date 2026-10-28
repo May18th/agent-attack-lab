@@ -736,11 +736,16 @@ def test_background_battle_persists_staged_events() -> None:
     ] == expected_types
     round_count = len(detail["attackerOut"]["samples"])
     assert sum(event["type"] == "attack.stage.started" for event in events) == (
-        round_count * 8
+        round_count * 7
     )
     assert sum(event["type"] == "attack.stage.completed" for event in events) == (
-        round_count * 8
+        round_count * 7
     )
+    similarity_events = [
+        event for event in events if event["type"] == "arbiter.similarity.checked"
+    ]
+    assert len(similarity_events) == round_count
+    assert all(event["data"]["stageId"] == "A6" for event in similarity_events)
     assert sum(event["type"] == "arbiter.verdict" for event in events) == round_count
     assert all(
         {"agentRole", "round", "stageId"}.issubset(event["data"])
