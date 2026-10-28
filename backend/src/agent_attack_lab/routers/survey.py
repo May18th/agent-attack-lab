@@ -36,8 +36,12 @@ PainPoint = Literal[
     "没做过这类自查",
     "其他",
 ]
-CanJudge = Literal["能，证据链清晰", "部分能，有些地方看不懂", "不能，缺乏判断依据", "还没仔细看过"]
-Willingness = Literal["敢，有授权就敢用", "有条件敢用（需补充验证）", "不敢，只能当参考", "完全不会用"]
+CanJudge = Literal[
+    "能，证据链清晰", "部分能，有些地方看不懂", "不能，缺乏判断依据", "还没仔细看过"
+]
+Willingness = Literal[
+    "敢，有授权就敢用", "有条件敢用（需补充验证）", "不敢，只能当参考", "完全不会用"
+]
 
 
 class SurveySubmission(BaseModel):

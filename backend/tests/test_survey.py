@@ -71,9 +71,7 @@ def test_responses_require_api_key(client, monkeypatch) -> None:
     assert client.get("/api/survey/responses").status_code == 401
 
     client.post("/api/survey/submit", json=_payload())
-    response = client.get(
-        "/api/survey/responses", headers={"x-api-key": "secret-key"}
-    )
+    response = client.get("/api/survey/responses", headers={"x-api-key": "secret-key"})
     assert response.status_code == 200
     assert response.json()["count"] == 1
 
