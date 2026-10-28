@@ -53,11 +53,16 @@ function roundOutcome(round: AdminBattleRounds['rounds'][number]): Outcome {
       ? { label: '穿透（规则推定，目标未验证）', tone: 'orange' }
       : { label: '已沦陷（已验证）', tone: 'red' }
   }
-  if (asArray(round.caught).length > 0) return { label: '已拦截', tone: 'green' }
+  // 靶标实际执行过：以验证结果为准，不再用"有没有命中规则"推断穿透。
+  if (round.attackSuccess === false && round.defenseSuccess === true) {
+    return { label: '已拦截（靶标验证）', tone: 'green' }
+  }
+  if (round.attackSuccess === true) return { label: '已沦陷（靶标验证）', tone: 'red' }
+  if (asArray(round.caught).length > 0) return { label: '已拦截（规则命中）', tone: 'green' }
   if (round.status && round.status !== 'completed') {
     return { label: labelOf(round.status, STATUS_LABELS), tone: 'gray' }
   }
-  return { label: '穿透（未命中规则、无验证）', tone: 'orange' }
+  return { label: '未验证（规则未命中）', tone: 'orange' }
 }
 
 function eventSummary(event: AdminBattleEvent): string {
@@ -185,7 +190,7 @@ export function AdminBattleDetail(props: Props) {
         {([['攻击方', score?.attacker], ['防守方', score?.defender]] as const).map(([title, role]) => <div className="score-column" key={title}>
           <div className="score-head"><strong>{title}</strong><span>{typeof role?.score === 'number' ? `${role.score} / ${formatNumber(role?.maxScore)}` : '证据不足'}</span></div>
           {typeof role?.summary?.finalScore === 'number' && <p className="score-final">
-            总分 {role.summary.finalScore} = 流程 {role.summary.processScore} + 效果 {role.summary.effectScore}；响应分 {role.summary.responseScore} / {role.summary.responseMaxScore ?? 5}（独立指标，不计入总分）
+            总分 {role.summary.finalScore} = 流程 {role.summary.processScore} + 效果 {role.summary.effectScore}；响应分 {role.summary.responseScore}（独立指标，不计入总分）
           </p>}
           <ul className="score-list">
             {asArray<NonNullable<typeof role>['categories'][number]>(role?.categories).map((category, index) => {
