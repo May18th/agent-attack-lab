@@ -58,7 +58,7 @@
     .col-main .battle-visual-panel{height:100%;min-height:620px}
     .side-right{display:flex;flex-direction:column;min-height:620px}
     .side-right>div[style*="margin-top:14px"]{display:flex;flex:1;min-height:0;margin-top:14px!important}
-    .side-right .timeline{height:auto;min-height:420px;flex:1}
+    .side-right .timeline{height:auto;min-height:520px;flex:1}
   }
   .layout>div:last-child{align-self:start}
   .col-main{display:grid;grid-template-columns:1fr;gap:14px}
@@ -2996,7 +2996,9 @@ var battle3d=(function(){
   function appendRoleRound(r,total){
     roleLogRound=r;
     var empty=roleLogStream.querySelector('.role-log-empty');if(empty)empty.remove();
-    var marker=document.createElement('div');marker.className='role-round';marker.textContent='ROUND '+r+' / '+total;
+    var existing=roleLogStream.querySelector('.role-round[data-round="'+String(r)+'"]');
+    if(existing){roleLogBody.scrollTop=roleLogBody.scrollHeight;return;}
+    var marker=document.createElement('div');marker.className='role-round';marker.dataset.round=String(r);marker.textContent='ROUND '+r+' / '+total;
     roleLogStream.appendChild(marker);roleLogBody.scrollTop=roleLogBody.scrollHeight;
   }
   function roleLogDetails(side,name,desc,meta,resultText,verdict){
@@ -3030,6 +3032,19 @@ var battle3d=(function(){
     entry.innerHTML='<div class="role-log-top"><span class="role-log-role">'+esc({att:'ATTACKER',def:'DEFENDER',judge:'ARBITER'}[side])+'</span><span class="role-log-name">'+esc(name)+'</span><time class="role-log-time">R'+roleLogRound+' · '+esc(timeText)+(side!=='judge'?' · '+Number(runtime||0).toFixed(2)+'s':'')+'</time></div><div class="role-log-fields"><div class="role-log-field"><b>'+labels.input+'</b>'+esc(d.input)+'</div><div class="role-log-field"><b>'+labels.action+'</b>'+esc(d.action)+'</div><div class="role-log-field emphasis"><b>'+labels.focus+'</b>'+esc(d.focus)+'</div><div class="role-log-field output"><b>具体输出</b>'+esc(d.output)+'</div><div class="role-log-field"><b>'+labels.handling+'</b>'+esc(d.handling)+'</div></div>';
     roleLogStream.appendChild(entry);roleLogTotal++;roleLogCount.textContent=roleLogTotal+' 条';roleLogBody.scrollTop=roleLogBody.scrollHeight;
   }
+  // 真实事件流由 command-center.ts 投影到同一条回合时间线，再由这里同步到角色日志。
+  window.addEventListener('battle-timeline:round',function(event){
+    var d=event.detail||{};if(Number(d.round)>0)appendRoleRound(Number(d.round),Number(d.total)||'—');
+  });
+  window.addEventListener('battle-timeline:entry',function(event){
+    var d=event.detail||{},round=Number(d.round)||roleLogRound;
+    if(round>0&&round!==roleLogRound)appendRoleRound(round,Number(d.total)||'—');
+    var evidence=Array.isArray(d.evidenceIds)&&d.evidenceIds.length?'证据：'+d.evidenceIds.join('、'):'';
+    var meta=[d.stageId,evidence].filter(Boolean).join(' · ');
+    var status=String(d.status||'');
+    var verdict=status==='blocked'?'blocked':status;
+    appendRoleLog(d.side||'judge',d.title||'未命名事件',d.description||'',meta,d.resultText||status,verdict,d.timeText||'',Number(d.responseMs||0)/1000);
+  });
   function addRound(r,total){
     var el=document.createElement('div');el.className='round';el.textContent='回合 '+r+(total?' / '+total:'');
     document.getElementById('liveRounds').textContent=r+'/'+total;

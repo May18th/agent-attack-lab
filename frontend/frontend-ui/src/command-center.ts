@@ -764,16 +764,36 @@ function renderLiveEvent(event: BattleEvent) {
     if (entry.kind === 'round') {
       ensureRound(entry.round)
       element('liveRounds').textContent = `${entry.round}/${Number(state.selected?.rounds) || state.requestedRounds || '—'}`
+      window.dispatchEvent(new CustomEvent('battle-timeline:round', {
+        detail: { round: entry.round, total: Number(state.selected?.rounds) || state.requestedRounds || 0 },
+      }))
       continue
     }
+    const timing = eventTiming(entry.event)
+    const evidenceIds = Array.isArray(entry.event.data.evidenceIds) ? entry.event.data.evidenceIds : []
     appendTimeline(
       entry.side,
       eventTitle(entry.event),
       eventDescription(entry.event),
       entry.event.createdAt,
-      eventTiming(entry.event),
-      Array.isArray(entry.event.data.evidenceIds) ? entry.event.data.evidenceIds : [],
+      timing,
+      evidenceIds,
     )
+    window.dispatchEvent(new CustomEvent('battle-timeline:entry', {
+      detail: {
+        round,
+        total: Number(state.selected?.rounds) || state.requestedRounds || 0,
+        side: entry.side,
+        title: eventTitle(entry.event),
+        description: eventDescription(entry.event),
+        stageId: entry.event.data.stageId || entry.event.type,
+        evidenceIds,
+        status: entry.event.status || entry.event.data.status || '',
+        resultText: eventDescription(entry.event),
+        timeText: formatTime(entry.event.createdAt),
+        responseMs: timing.responseMs,
+      },
+    }))
     element('liveStatus').textContent = eventTitle(entry.event)
   }
   bridge3dEvent(event, round)
