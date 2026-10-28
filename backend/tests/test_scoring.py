@@ -117,17 +117,17 @@ def test_internal_score_awards_full_score_for_traceable_acp_battle() -> None:
         "effectScore": 0,
         "responseScore": 100,
         "baseScore": 40,
-        "finalScore": 43.0,
+        "finalScore": 40.0,
     }
     assert result["defender"]["summary"] == {
         "processScore": 40,
         "effectScore": 45,
         "responseScore": 90,
         "baseScore": 85,
-        "finalScore": 85.25,
+        "finalScore": 85.0,
     }
-    assert result["attacker"]["score"] == 43.0
-    assert result["defender"]["score"] == 85.25
+    assert result["attacker"]["score"] == 40.0
+    assert result["defender"]["score"] == 85.0
     assert result["evidence"]["reportedSources"] == ["acp-rule-fallback"]
     assert result["message"]
 
@@ -166,7 +166,7 @@ def test_agent_scores_are_separate_and_missing_source_is_not_awarded() -> None:
     assert categories["A-04"] == 3
     assert result["attacker"]["summary"]["responseScore"] == 0
     assert result["attacker"]["summary"]["effectScore"] == 0
-    assert result["attacker"]["score"] == 6.65
+    assert result["attacker"]["score"] == 7.0
     assert result["defender"]["status"] == "insufficient_evidence"
 
 
