@@ -209,6 +209,28 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   return responseJson<T>(await request(path, options))
 }
 
+export type ApiDownload = { blob: Blob; filename: string; total: number }
+
+/**
+ * 下载二进制/文本附件（如 CSV 导出）。
+ *
+ * 走统一的 ``request``，因此错误码、超时提示与其它接口一致；
+ * 文件名优先取 ``Content-Disposition``，缺失时由调用方兜底。
+ */
+export async function apiDownload(path: string): Promise<ApiDownload> {
+  const response = await request(path)
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const matched = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+  const totalHeader = response.headers.get('X-Total-Count')
+  const total = totalHeader === null ? Number.NaN : Number(totalHeader)
+  return {
+    blob,
+    filename: matched ? decodeURIComponent(matched[1].trim()) : '',
+    total: Number.isFinite(total) && total >= 0 ? total : Number.NaN,
+  }
+}
+
 export async function apiPage<T>(path: string): Promise<{ items: T[]; total: number }> {
   const response = await request(path)
   const items = await responseJson<T[]>(response)
