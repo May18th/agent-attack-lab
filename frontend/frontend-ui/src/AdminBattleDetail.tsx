@@ -185,7 +185,7 @@ export function AdminBattleDetail(props: Props) {
         {([['攻击方', score?.attacker], ['防守方', score?.defender]] as const).map(([title, role]) => <div className="score-column" key={title}>
           <div className="score-head"><strong>{title}</strong><span>{typeof role?.score === 'number' ? `${role.score} / ${formatNumber(role?.maxScore)}` : '证据不足'}</span></div>
           {typeof role?.summary?.finalScore === 'number' && <p className="score-final">
-            总分 {role.summary.finalScore} = 流程 {role.summary.processScore} + 效果 {role.summary.effectScore}；响应分 {role.summary.responseScore}（独立指标，不计入总分）
+            总分 {role.summary.finalScore} = 流程 {role.summary.processScore} + 效果 {role.summary.effectScore}；响应分 {role.summary.responseScore} / {role.summary.responseMaxScore ?? 5}（独立指标，不计入总分）
           </p>}
           <ul className="score-list">
             {asArray<NonNullable<typeof role>['categories'][number]>(role?.categories).map((category, index) => {
