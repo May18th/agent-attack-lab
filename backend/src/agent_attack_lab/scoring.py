@@ -519,10 +519,10 @@ def score_battle_rounds(
 ) -> list[dict[str, Any]]:
     """Score each recorded round using only evidence associated with that round.
 
-    The attacker call is batch-scoped, so its completed call evidence is reused
-    for each generated sample. Defender call evidence is narrowed by the
-    correlation ID carried by the round event. Missing call evidence remains an
-    explicit ``insufficient_evidence`` result from :func:`score_battle`.
+    Current battles carry one attacker call per round. Legacy batch-scoped
+    attacker calls have round 0 or no round and remain reusable for historical
+    records. Defender call evidence is narrowed by the correlation ID carried
+    by the round event. Missing evidence remains explicit.
     """
     attacker_output = record.get("attackerOut")
     samples = (
@@ -542,9 +542,6 @@ def score_battle_rounds(
         if number > 0:
             round_numbers.add(number)
 
-    attacker_events = [
-        event for event in events if _event_data(event).get("agentRole") == "attacker"
-    ]
     results: list[dict[str, Any]] = []
     for number in sorted(round_numbers):
         round_events = [
@@ -561,6 +558,12 @@ def score_battle_rounds(
             for event in events
             if _event_data(event).get("agentRole") == "defender"
             and _event_data(event).get("correlationId") in defender_correlations
+        ]
+        attacker_events = [
+            event
+            for event in events
+            if _event_data(event).get("agentRole") == "attacker"
+            and _event_data(event).get("round") in {None, 0, number}
         ]
         evidence_events = attacker_events + defender_events + round_events
         sample = (

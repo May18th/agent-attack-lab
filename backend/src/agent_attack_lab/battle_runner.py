@@ -36,6 +36,7 @@ from agent_attack_lab.agents.knowledge import (
     build_defender_knowledge,
 )
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
+from agent_attack_lab.scoring import score_battle_rounds
 from agent_attack_lab.target_verify import (
     aggregate_verdict,
     configured_verify_mode,
@@ -278,43 +279,11 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             },
         )
         await asyncio.sleep(0.8)
-        attack_result, attacker_source, attack_call_id = await tracked_agent_call(
-            battle_id=battle_id,
-            role="attacker",
-            invoke=lambda correlation_id: battle_attack(
-                payload, correlation_id=correlation_id
-            ),
-            add_event=add_event,
-            round_number=0,
-            stage_id="A2",
-        )
-        record["attackerOut"] = attack_result
-        state.battle_store.save(record)
-        for index, sample in enumerate(attack_result["samples"], start=1):
-            add_event(
-                "attack.sample.generated",
-                "completed",
-                {
-                    "round": index,
-                    "sample": sample,
-                    "attackerSource": attacker_source,
-                    "correlationId": attack_call_id,
-                },
-            )
-            await asyncio.sleep(0.35)
-        add_event(
-            "attack.completed",
-            "completed",
-            {
-                "sampleCount": len(attack_result["samples"]),
-                "rounds": payload.rounds,
-                "attackerSource": attacker_source,
-                "correlationId": attack_call_id,
-            },
-        )
-
+        attack_result: dict[str, Any] = {"samples": []}
+        attacker_sources: list[str] = []
         defender_results: list[dict[str, Any]] = []
-        for index, sample in enumerate(attack_result["samples"], start=1):
+        previous_sample: dict[str, Any] | None = None
+        for index in range(1, payload.rounds + 1):
             add_event(
                 "round.started",
                 "running",
@@ -327,6 +296,42 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     else "local-rule",
                 },
             )
+            round_payload = payload.model_copy(update={"rounds": 1})
+            generated, attacker_source, attack_call_id = await tracked_agent_call(
+                battle_id=battle_id,
+                role="attacker",
+                invoke=lambda correlation_id, current_payload=round_payload: (
+                    battle_attack(current_payload, correlation_id=correlation_id)
+                ),
+                add_event=add_event,
+                round_number=index,
+                stage_id="A1",
+            )
+            generated_samples = generated.get("samples")
+            if not isinstance(generated_samples, list) or len(generated_samples) != 1:
+                raise ValueError("attacker must generate exactly one sample per round")
+            sample = dict(generated_samples[0])
+            sample["round"] = index
+            original_sample_id = sample.get("testCaseId") or sample.get("sampleId")
+            if original_sample_id and payload.rounds > 1:
+                sample["testCaseId"] = f"{original_sample_id}-R{index:02d}"
+            attack_result["samples"].append(sample)
+            attacker_sources.append(attacker_source)
+            attack_result["agentSource"] = (
+                attacker_sources[0] if len(set(attacker_sources)) == 1 else "mixed"
+            )
+            record["attackerOut"] = attack_result
+            state.battle_store.save(record)
+            add_event(
+                "attack.sample.generated",
+                "completed",
+                {
+                    "round": index,
+                    "sample": sample,
+                    "attackerSource": attacker_source,
+                    "correlationId": attack_call_id,
+                },
+            )
             battle_timeline.emit_attack_stages(
                 add_event,
                 round_number=index,
@@ -334,11 +339,10 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 difficulty=payload.difficulty,
                 topic=payload.topic,
                 sample=sample,
-                previous_sample=attack_result["samples"][index - 2]
-                if index > 1
-                else None,
+                previous_sample=previous_sample,
                 correlation_id=attack_call_id,
             )
+            previous_sample = sample
             await asyncio.sleep(0.8)
             defense, defender_source, defense_call_id = await tracked_agent_call(
                 battle_id=battle_id,
@@ -377,15 +381,12 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 arbiter_review=arbiter_review,
                 correlation_id=attack_call_id,
             )
-            add_event(
-                "round.settled",
-                "completed",
-                {
-                    "round": index,
-                    "stageId": "FINAL",
-                    "classification": classification,
-                    "structuredTimelineVersion": "v2.0",
-                },
+            battle_timeline.emit_post_verdict_stages(
+                add_event,
+                round_number=index,
+                defense=defense,
+                classification=classification,
+                correlation_id=defense_call_id,
             )
             round_data = {
                 "round": index,
@@ -408,6 +409,44 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             if isinstance(defense.get("safeControl"), dict):
                 round_data["safeControl"] = defense["safeControl"]
             add_event("round.completed", "completed", round_data)
+            round_scores = score_battle_rounds(
+                record, state.battle_store.list_events(battle_id)
+            )
+            current_score = next(
+                (item for item in round_scores if item["round"] == index), None
+            )
+            add_event(
+                "arbiter.round.scored",
+                "completed" if current_score is not None else "unresolved",
+                {
+                    "round": index,
+                    "stageId": "ROUND-SCORE",
+                    "agentRole": "arbiter",
+                    "classification": (
+                        "scored" if current_score is not None else "unresolved"
+                    ),
+                    "scores": current_score.get("scores", {}) if current_score else {},
+                    "attacker": current_score.get("attacker")
+                    if current_score
+                    else None,
+                    "defender": current_score.get("defender")
+                    if current_score
+                    else None,
+                    "statement": "本回合全部环节完成，评分已生成。"
+                    if current_score
+                    else "本回合评分证据不足。",
+                },
+            )
+            add_event(
+                "round.settled",
+                "completed",
+                {
+                    "round": index,
+                    "stageId": "FINAL",
+                    "classification": classification,
+                    "structuredTimelineVersion": "v2.0",
+                },
+            )
             if verification["verified"]:
                 add_event(
                     "attack.compromised",
@@ -423,6 +462,15 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                         "correlationId": defense_call_id,
                     },
                 )
+        add_event(
+            "attack.completed",
+            "completed",
+            {
+                "sampleCount": len(attack_result["samples"]),
+                "rounds": payload.rounds,
+                "attackerSource": attack_result.get("agentSource"),
+            },
+        )
         add_event(
             "defense.completed",
             "completed",
