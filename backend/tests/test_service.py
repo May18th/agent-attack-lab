@@ -195,7 +195,7 @@ def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_ve
     store.close()
 
 
-def test_simulated_detection_without_target_adapter_stays_unresolved(
+def test_simulated_mode_decides_without_claiming_a_real_compromise(
     tmp_path, monkeypatch
 ) -> None:
     store = BattleStore(str(tmp_path / "simulated-verdict.sqlite3"))
@@ -207,7 +207,8 @@ def test_simulated_detection_without_target_adapter_stays_unresolved(
     battle = response.json()
     events = store.list_events(battle["id"])
     compromised = [event for event in events if event["type"] == "attack.compromised"]
-    assert battle["verdict"] == "undetermined"
+    # 本地规则命中 = 拦截成立，可以直接下结论；但仍不能记成"已攻破"。
+    assert battle["verdict"] == "defender_won"
     assert not compromised
     store.close()
 
