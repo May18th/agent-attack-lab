@@ -99,7 +99,16 @@ declare global {
 }
 
 const configuredApi = import.meta.env.VITE_AGENT_API?.trim()
-const API_BASE = (configuredApi || (location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+// 正式站点下纠正被注入的预览 API：
+// 构建脚本按 CF_PAGES_BRANCH 判定生产/预览，分支不是 main 时会落到 preview-api。
+// 只对正式站点域名生效，预览子域的隔离语义不变。
+const productionHosts = new Set(['yuanyiagentzhandui.cn', 'www.yuanyiagentzhandui.cn'])
+const isProductionHost = productionHosts.has(location.hostname)
+const normalizedApi =
+  isProductionHost && configuredApi?.includes('preview-api')
+    ? 'https://api.yuanyiagentzhandui.cn'
+    : configuredApi
+const API_BASE = (normalizedApi || (location.hostname === 'localhost' || location.hostname === '127.0.0.1'
   ? 'http://127.0.0.1:8787'
   : 'https://api.yuanyiagentzhandui.cn')).replace(/\/$/, '')
 const PAGE_SIZE = 10
