@@ -675,6 +675,7 @@ function beginLiveBattle(battle: Battle) {
   status.classList.add('run')
   const empty = document.getElementById('tlEmpty')
   if (empty) empty.style.display = 'none'
+  window.dispatchEvent(new CustomEvent('battle-timeline:reset'))
   window.BattleEventBus?.reset(battle.id)
   window.BattleEventBus?.setMode('live')
   window.BattleEventBus?.emit({ type: 'battle_started', battleId: battle.id, source: 'live', mock: false, payload: { theme: battle.topic, difficulty: battle.difficulty, roundLimit } })

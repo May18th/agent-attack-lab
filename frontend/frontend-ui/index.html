@@ -3032,6 +3032,11 @@ var battle3d=(function(){
     entry.innerHTML='<div class="role-log-top"><span class="role-log-role">'+esc({att:'ATTACKER',def:'DEFENDER',judge:'ARBITER'}[side])+'</span><span class="role-log-name">'+esc(name)+'</span><time class="role-log-time">R'+roleLogRound+' · '+esc(timeText)+(side!=='judge'?' · '+Number(runtime||0).toFixed(2)+'s':'')+'</time></div><div class="role-log-fields"><div class="role-log-field"><b>'+labels.input+'</b>'+esc(d.input)+'</div><div class="role-log-field"><b>'+labels.action+'</b>'+esc(d.action)+'</div><div class="role-log-field emphasis"><b>'+labels.focus+'</b>'+esc(d.focus)+'</div><div class="role-log-field output"><b>具体输出</b>'+esc(d.output)+'</div><div class="role-log-field"><b>'+labels.handling+'</b>'+esc(d.handling)+'</div></div>';
     roleLogStream.appendChild(entry);roleLogTotal++;roleLogCount.textContent=roleLogTotal+' 条';roleLogBody.scrollTop=roleLogBody.scrollHeight;
   }
+  function resetRoleLog(){
+    roleLogStream.innerHTML='<div class="role-log-empty">等待攻防开始<br>日志将与回合时间线同步生成</div>';
+    roleLogTotal=0;roleLogRound=0;roleLogCount.textContent='0 条';
+  }
+  window.addEventListener('battle-timeline:reset',resetRoleLog);
   // 真实事件流由 command-center.ts 投影到同一条回合时间线，再由这里同步到角色日志。
   window.addEventListener('battle-timeline:round',function(event){
     var d=event.detail||{};if(Number(d.round)>0)appendRoleRound(Number(d.round),Number(d.total)||'—');
