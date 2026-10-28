@@ -491,7 +491,7 @@
               <strong>角色与待机：</strong>待机状态显示红色 Attacker、蓝色 Defender 和中央蓝色 Core，三者持续自转。点击“开始攻防”后，Defender 释放蓝色粒子，从 Core 外侧建立四层球面防御壳；节点和连线沿球面分布，层标签为 L0、L1、L2、L3。<br>
               <strong>四层顺序：</strong>L0 输入清洗与边界校验；L1 意图识别、推理约束和越狱语义识别；L2 工具白名单、参数风险、权限鉴权、调用时序和模拟执行核验；L3 全链路审计、异常监测、应急控制与恢复、最终分类。攻击严格按 L0 → L1 → L2 → L3 推进，当前层没有完成或被 Arbiter 确认前，不会跳层。<br>
               <strong>Attacker 阶段：</strong>A1 读取战局并吸收环境粒子；A2 由绿色“样本库”球选择样本；A3 由紫色“意图和策略”球提供策略粒子；A4 构建 Payload；A5 授权与格式自检；A6 由 Arbiter 判断同源或新源；A7 发射；A8 接收公开裁决并复盘。绿色球第一回合出现，紫色球在开启跨局记忆时第一回合出现，否则从第二回合出现。<br>
-              <strong>Payload 颜色：</strong><span style="color:#bfd9ff">浅蓝 / 灰白色</span>表示 Payload 刚在 A4 创建、尚未完成 A6 来源判定；<span style="color:#ff4d5e">红色</span>表示同源 Payload，即相似度达到或超过 0.85；<span style="color:#ff7ad8">粉色</span>表示新源 Payload，即相似度低于 0.85。新源粉色 Payload 无论被拦截与否，都在本回合结算后粒子化飞向 Defender，被吸收后显示“更新特征库”；红色同源 Payload 不触发这条更新动画。<br>
+              <strong>Payload 颜色：</strong><span style="color:#bfd9ff">浅蓝 / 灰白色</span>表示 Payload 刚在 A4 创建、尚未完成 A6 来源判定；<span style="color:#ff4d5e">红色</span>表示同源 Payload，即相似度达到或超过 0.85；<span style="color:#ffd24d">黄色</span>表示新源 Payload，即相似度低于 0.85。新源黄色 Payload 无论被拦截与否，都在本回合结算后粒子化飞向 Defender，被吸收后显示“更新特征库”；红色同源 Payload 不触发这条更新动画。<br>
               <strong>Defender 检查粒子：</strong>当前层会生成带编号的蓝色粒子，例如 L0-1、L0-2、L0-3，或 L2-1 至 L2-5。每个编号对应一个真实检查点；攻击开始时按编号顺序高亮对应蓝色粒子，该粒子飞向 Payload 进行拦截或与攻击粒子融合。<br>
               <strong>拦截与穿透：</strong>蓝色粒子与 Payload 相撞并消散，表示该检查点成功拦截，防御层向外扩散绿色光波；检查通过但未拦截时，攻击点扩散一次水晶屏障。某层最后一个检查点仍未拦截时，Arbiter 确认整层穿透，才播放玻璃裂解并进入下一层。<br>
               <strong>L3 与裁决：</strong>L3-1、L3-2、L3-3 会向 Core 发出内收光波，Core 随风险闪烁；L3-3 控制成功时 Core 恢复蓝色，控制失败时 Core 变红且 L3 破碎；L3-4 和 Arbiter 输出最终分类后，本回合才结束。HUD、时间线和评分只显示已收到的 Agent / Arbiter 事件。
@@ -822,7 +822,7 @@ var battle3d=(function(){
   var COLORS=[0x9fd8ff,0x78c0ff,0x4f9dff,0x2f7fe6];   // L0 最亮 -> L3 最暗
   var BASES=[0.60,0.46,0.34,0.24];
   var CHECK_IDS=[['L0-1','L0-2','L0-3'],['L1-1','L1-2','L1-3'],['L2-1','L2-2','L2-3','L2-4','L2-5'],['L3-1','L3-2','L3-3','L3-4']];
-  var COL_ATT=0xff3b30,COL_DEF=0x2f7fff,COL_CORE=0x1e86ff,COL_SAME=0xff4d5e,COL_NEW=0xff7ad8,COL_NEUTRAL=0xbfd9ff;
+  var COL_ATT=0xff3b30,COL_DEF=0x2f7fff,COL_CORE=0x1e86ff,COL_SAME=0xff4d5e,COL_NEW=0xffd24d,COL_NEUTRAL=0xbfd9ff;
 
   /* ---- 场景 ---- */
   var scene=new THREE.Scene();
@@ -1429,7 +1429,7 @@ var battle3d=(function(){
   function setPayloadState(kind){
     S.payloadState=kind;
     if(kind==='same'){setPayloadColor(COL_SAME);hudPayload('同源 · 红色');}
-    else if(kind==='new'){setPayloadColor(COL_NEW);hudPayload('新源 · 粉色');}
+    else if(kind==='new'){setPayloadColor(COL_NEW);hudPayload('新源 · 黄色');}
     else{setPayloadColor(COL_NEUTRAL);hudPayload('中性占位');}
   }
   function flyPayloadTo(target,dur){
@@ -1853,7 +1853,7 @@ var battle3d=(function(){
         payloadBlink=true;
         status('A5 · 授权与格式自检 · 检查中',true);hudStage('A5 自检 · 检查中');
       }else if(sid==='A6'){
-        status('A6 · 等待 Arbiter 相似度元数据',true);hudStage('A6 相似度核验 · 等待 Arbiter');
+        status('A6 · 等待 Arbiter 相似度源数据',true);hudStage('A6 相似度源数据校验 · 等待 Arbiter');
       }else if(sid==='A7'){
         if(p.accepted===false){S.paused=true;status('A7 提交未被接受 · 不发射',false);return;}
         S.submission=true;
@@ -3214,7 +3214,7 @@ var battle3d=(function(){
       });d+=620;
       at(d,function(){bus('stage_started',r,'A6',{similarityThreshold:0.85});});
       at(d+420,function(){
-        addEvent('judge','A6 · 相似度元数据校验',sim===null?'首轮建立 baseline。':'历史最大相似度 '+sim.toFixed(2)+'，判定为 '+(sim>=0.85?'同源':'新源')+'；阈值 0.85。','','','',new Date().toISOString(),0);
+        addEvent('judge','A6 · 相似度源数据校验',sim===null?'首轮建立 baseline。':'历史最大相似度 '+sim.toFixed(2)+'，判定为 '+(sim>=0.85?'同源':'新源')+'；阈值 0.85。','','','',new Date().toISOString(),0);
         bus('stage_completed',r,'A6',{similarity:sim===null?undefined:sim,sourceType:sourceType,similarityThreshold:0.85});
       });d+=900;
       at(d,function(){bus('stage_started',r,'A7',{submissionId:'SUB-'+r,correlationId:battleId+'-R'+r,accepted:true});});
