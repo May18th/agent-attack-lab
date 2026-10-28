@@ -18,11 +18,31 @@ def test_catalog_exposes_role_boundaries_and_empty_learning_libraries() -> None:
     assert roles == {"common", "attacker", "defender", "arbiter"}
     attacker = next(item for item in result["roles"] if item["role"] == "attacker")
     assert any(item["libraryId"] == "LIB-03" for item in attacker["libraries"])
-    assert next(item for item in attacker["libraries"] if item["libraryId"] == "LIB-03")["recordCount"] == 60
-    assert next(item for item in attacker["libraries"] if item["libraryId"] == "LIB-06")["recordCount"] == 0
-    assert next(item for item in attacker["libraries"] if item["libraryId"] == "LIB-17A")["recordCount"] == 0
+    assert (
+        next(item for item in attacker["libraries"] if item["libraryId"] == "LIB-03")[
+            "recordCount"
+        ]
+        == 60
+    )
+    assert (
+        next(item for item in attacker["libraries"] if item["libraryId"] == "LIB-06")[
+            "recordCount"
+        ]
+        == 0
+    )
+    assert (
+        next(item for item in attacker["libraries"] if item["libraryId"] == "LIB-17A")[
+            "recordCount"
+        ]
+        == 0
+    )
     defender = next(item for item in result["roles"] if item["role"] == "defender")
-    assert next(item for item in defender["libraries"] if item["libraryId"] == "LIB-17D")["recordCount"] == 0
+    assert (
+        next(item for item in defender["libraries"] if item["libraryId"] == "LIB-17D")[
+            "recordCount"
+        ]
+        == 0
+    )
 
 
 def test_published_records_are_returned_and_learning_libraries_stay_empty() -> None:
@@ -33,7 +53,9 @@ def test_published_records_are_returned_and_learning_libraries_stay_empty() -> N
     assert {item["status"] for item in baseline["records"]} == {"approved"}
 
 
-def test_attacker_filters_samples_and_intent_strategies_by_theme_and_difficulty() -> None:
+def test_attacker_filters_samples_and_intent_strategies_by_theme_and_difficulty() -> (
+    None
+):
     result = library_store.records(
         "attacker", library_ids={"LIB-03"}, topic=THEMES[0], difficulty="low"
     )
@@ -41,7 +63,10 @@ def test_attacker_filters_samples_and_intent_strategies_by_theme_and_difficulty(
     assert all(item["themeId"] == "T01" for item in result["records"])
     assert all(item["difficulty"] == "low" for item in result["records"])
     context = library_store.agent_context("attacker", topic=THEMES[0], difficulty="low")
-    assert {item["selectionKind"] for item in context["records"]} == {"sample", "intent-strategy"}
+    assert {item["selectionKind"] for item in context["records"]} == {
+        "sample",
+        "intent-strategy",
+    }
     assert all(item["difficulty"] == "low" for item in context["records"])
 
 
@@ -55,5 +80,7 @@ def test_agent_context_combines_only_common_and_role_catalogs() -> None:
 
 def test_all_six_themes_have_ten_samples() -> None:
     for theme in THEMES:
-        selected = library_store.records("attacker", library_ids={"LIB-03"}, topic=theme)
+        selected = library_store.records(
+            "attacker", library_ids={"LIB-03"}, topic=theme
+        )
         assert len(selected["records"]) == 10
