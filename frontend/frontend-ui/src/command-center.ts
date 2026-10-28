@@ -136,7 +136,12 @@ const state = {
 let visualizationRequestGeneration = 0
 let liveTimelineProjector = new LiveBattleTimelineProjector()
 let liveLifecycleProjector = new LiveBattleLifecycleProjector()
-type LiveRoundScore = { attacker: number | null; defender: number | null }
+type LiveRoundScore = {
+  attacker: number | null
+  defender: number | null
+  attackerRole?: RoundScoreRole
+  defenderRole?: RoundScoreRole
+}
 const liveRoundScores = new Map<number, LiveRoundScore>()
 
 function element<T extends HTMLElement>(id: string): T {
@@ -258,6 +263,11 @@ function updateSessionControls(enabled: boolean, authenticated: boolean) {
   state.sessionEnabled = enabled
   const logout = element<HTMLButtonElement>('agentSessionLogout')
   logout.style.display = enabled && authenticated ? 'inline-flex' : 'none'
+  const ready = document.getElementById('btnReady') as HTMLButtonElement | null
+  if (ready) {
+    ready.disabled = enabled && !authenticated
+    ready.title = ready.disabled ? '请先登录后再准备战局' : ''
+  }
 }
 
 function showLogin(message = '') {
@@ -357,6 +367,7 @@ function renderHistory(battles: Battle[]) {
   for (const battle of battles) {
     const button = document.createElement('button')
     button.className = 'battle-item'
+    button.classList.toggle('active', state.selected?.id === battle.id)
     button.dataset.battleId = battle.id
     const badge = document.createElement('span')
     badge.className = `battle-badge ${battle.difficulty}`
@@ -396,6 +407,9 @@ async function selectBattle(id: string) {
   try {
     const battle = await json<Battle>(`/battles/${encodeURIComponent(id)}`)
     state.selected = battle
+    document.querySelectorAll<HTMLButtonElement>('.battle-item').forEach((item) => {
+      item.classList.toggle('active', item.dataset.battleId === battle.id)
+    })
     renderBattleDetail(battle)
   } catch (error) { showToast(`详情加载失败：${errorText(error)}`) }
 }
@@ -436,12 +450,26 @@ function scoreValue(value: unknown): number | null {
   return scoreValue(record.finalScore ?? record.score ?? summary?.finalScore)
 }
 
+function scorePart(role: RoundScoreRole | undefined, key: 'processScore' | 'effectScore' | 'responseScore' | 'baseScore' | 'finalScore') {
+  const summary = role?.summary
+  const value = summary?.[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const group = key === 'processScore' ? 'process' : key === 'effectScore' ? 'effect' : key === 'responseScore' ? 'response' : null
+  const categories = Array.isArray(role?.categories) ? role.categories : []
+  if (!group || !categories.some((category) => category.group === group)) return null
+  return categories
+    .filter((category) => category.group === group)
+    .reduce((sum, category) => sum + scoreNumber(category.score), 0)
+}
+
 function eventRoundScore(event: BattleEvent): LiveRoundScore | null {
   const data = event.data
   const raw = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : data
+  const attackerRole = raw.attacker && typeof raw.attacker === 'object' ? raw.attacker as RoundScoreRole : undefined
+  const defenderRole = raw.defender && typeof raw.defender === 'object' ? raw.defender as RoundScoreRole : undefined
   const attacker = scoreValue(raw.attacker)
   const defender = scoreValue(raw.defender)
-  return attacker === null && defender === null ? null : { attacker, defender }
+  return attacker === null && defender === null ? null : { attacker, defender, attackerRole, defenderRole }
 }
 
 function renderLiveRoundScores() {
@@ -486,9 +514,24 @@ function syncLiveRoundScore(round: number, scores: LiveRoundScore) {
   const latest = scores
   if (latest.attacker !== null) element('atkWeighted').textContent = latest.attacker.toFixed(2)
   if (latest.defender !== null) element('defWeighted').textContent = latest.defender.toFixed(2)
+  syncLiveScoreParts(scores.attackerRole, scores.defenderRole)
   element('scoreScopeTitle').textContent = '实时评分 · 当前回合'
   element('scoreScopeNote').textContent = `当前展示第 ${round} 回合已结算的评分`
   element('scoreStatus').textContent = `第 ${round} 回合已结算`
+}
+
+function syncLiveScoreParts(attacker: RoundScoreRole | undefined, defender: RoundScoreRole | undefined) {
+  const values: Array<[string, number | null]> = [
+    ['atkProcess', scorePart(attacker, 'processScore')],
+    ['atkEffect', scorePart(attacker, 'effectScore')],
+    ['atkResponse', scorePart(attacker, 'responseScore')],
+    ['defProcess', scorePart(defender, 'processScore')],
+    ['defEffect', scorePart(defender, 'effectScore')],
+    ['defResponse', scorePart(defender, 'responseScore')],
+  ]
+  values.forEach(([id, value]) => {
+    element(id).textContent = value === null ? '证据不足' : String(value)
+  })
 }
 
 function publishBattleVisualizations(rounds: readonly BattleVisualizationRound[], status: 'loading' | 'ready' | 'unavailable') {
@@ -505,11 +548,23 @@ async function refreshBattleVisualizations(battleId: string) {
     renderRoundScoreDetails(result.rounds || [])
     liveRoundScores.clear()
     ;(result.rounds || []).forEach((round) => {
+      const attackerRole = round.attacker && typeof round.attacker === 'object' ? round.attacker : undefined
+      const defenderRole = round.defender && typeof round.defender === 'object' ? round.defender : undefined
       const attacker = scoreValue(round.attacker)
       const defender = scoreValue(round.defender)
-      if (attacker !== null || defender !== null) liveRoundScores.set(Number(round.round), { attacker, defender })
+      if (attacker !== null || defender !== null) liveRoundScores.set(Number(round.round), { attacker, defender, attackerRole, defenderRole })
     })
     renderLiveRoundScores()
+    const latest = (result.rounds || []).filter((round) => scoreValue(round.attacker) !== null || scoreValue(round.defender) !== null).at(-1)
+    if (latest) {
+      syncLiveScoreParts(
+        latest.attacker && typeof latest.attacker === 'object' ? latest.attacker : undefined,
+        latest.defender && typeof latest.defender === 'object' ? latest.defender : undefined,
+      )
+      window.dispatchEvent(new CustomEvent('battle-scores:update', {
+        detail: { rounds: result.rounds || [], latest, label: `第 ${latest.round} 回合已结算` },
+      }))
+    }
     publishBattleVisualizations(Array.isArray(result.rounds) ? result.rounds : [], 'ready')
   } catch {
     if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
@@ -563,7 +618,7 @@ function scoreCategories(role: RoundScoreRole | undefined) {
   const panel = document.createElement('div')
   panel.className = 'score-detail-panel'
   const categories = Array.isArray(role?.categories) ? role.categories : []
-  const groups: Array<[string, string]> = [['process', '流程规范 / 40'], ['effect', '实际效果 / 60'], ['response', '响应 / 5（独立指标，不计入总分）']]
+  const groups: Array<[string, string]> = [['process', '流程规范 / 40'], ['effect', '实际效果 / 60'], ['response', '响应 / 100（计入综合分 5%）']]
   for (const [group, title] of groups) {
     const items = categories.filter((category) => category.group === group)
     if (!items.length) continue
@@ -592,7 +647,7 @@ function renderRoundScoreDetails(rounds: readonly BattleRoundScore[]) {
     const details = document.createElement('details')
     details.className = 'score-details'
     const summary = document.createElement('summary')
-    summary.textContent = '评分细则（流程 40 + 效果 60 = 总分；响应分为独立诊断指标）'
+    summary.textContent = '评分细则（流程 40 + 效果 60 = 基础分；响应 0–100 按 5% 计入综合分）'
     details.appendChild(summary)
     const columns = document.createElement('div')
     columns.className = 'score-cols'
@@ -605,7 +660,7 @@ function renderRoundScoreDetails(rounds: readonly BattleRoundScore[]) {
       column.appendChild(scoreRow('流程规范', values.processScore, 40))
       column.appendChild(scoreRow(tone === 'def' ? '实际防御效果' : '分层穿透效果', values.effectScore, 60))
       column.appendChild(scoreRow('基础攻防分（流程+效果）', values.baseScore, 100, 'total'))
-      column.appendChild(scoreRow('响应分（不计入总分）', values.responseScore, 5))
+      column.appendChild(scoreRow('响应分（0–100，计入综合分 5%）', values.responseScore, 100))
       column.appendChild(scoreRow('总分', values.finalScore ?? role?.score, 100, 'weighted'))
       const toggleLabel = document.createElement('label')
       toggleLabel.className = 'score-detail-check compact'
@@ -1106,7 +1161,9 @@ async function initialize() {
   installControls()
   installSessionDialog()
   await checkHealth()
-  if (await checkSession()) await Promise.all([loadSummary(), loadHistory(0)])
+  const canUse = await checkSession()
+  if (canUse) await Promise.all([loadSummary(), loadHistory(0)])
+  else showLogin('首次使用请先登录，登录后才能准备和创建战局')
 }
 
 void initialize()
