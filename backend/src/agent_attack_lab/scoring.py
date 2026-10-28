@@ -262,14 +262,14 @@ def score_battle(
             continue
         try:
             round_by_correlation[correlation_id] = int(number)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
 
     terminal_rounds: dict[tuple[str, str], int] = {}
     for key, value in terminals.items():
         try:
             terminal_rounds[key] = int(value.get("round"))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
 
     attack_count = len(attack_samples)

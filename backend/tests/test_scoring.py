@@ -269,8 +269,9 @@ def test_response_indicator_uses_spec_v2_tiers_and_stays_out_of_total() -> None:
     assert result["defender"]["summary"]["responseScore"] == 0
     assert result["defender"]["summary"]["responseGrade"] == "unscorable"
     # 响应分不入总分：流程分仍为 40 分之上的实际得分。
-    assert result["attacker"]["summary"]["finalScore"] == (
-        result["attacker"]["summary"]["baseScore"]
+    assert (
+        result["attacker"]["summary"]["finalScore"]
+        == (result["attacker"]["summary"]["baseScore"])
     )
     assert result["attacker"]["categories"][-1]["group"] == "response"
     assert result["attacker"]["categories"][-1]["maxScore"] == 5
@@ -282,8 +283,16 @@ def test_defender_response_is_graded_only_for_correctly_blocked_rounds() -> None
         "topic": "通用安全测试",
         "attackerOut": {"samples": [{}, {}]},
         "defenderOut": [
-            {"caught": [{"reason": "命中", "evidence": "依据"}], "risks": [], "fixed": []},
-            {"caught": [{"reason": "命中", "evidence": "依据"}], "risks": [], "fixed": []},
+            {
+                "caught": [{"reason": "命中", "evidence": "依据"}],
+                "risks": [],
+                "fixed": [],
+            },
+            {
+                "caught": [{"reason": "命中", "evidence": "依据"}],
+                "risks": [],
+                "fixed": [],
+            },
         ],
     }
     events = [
