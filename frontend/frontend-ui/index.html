@@ -163,6 +163,7 @@
   .score-detail-check{display:flex;align-items:center;gap:7px;width:max-content;max-width:100%;color:#8fa0b2;font-size:11px;cursor:pointer;user-select:none}.score-detail-check input{width:14px;height:14px;accent-color:#4d9bd6;cursor:pointer}.score-detail-check.compact{margin:9px 0 0 auto}
   .score-detail-panel{margin-top:8px;padding-top:8px;border-top:1px dashed #2a394b}.score-detail-panel[hidden]{display:none}.score-detail-panel .score-cols{margin-top:0}.score-subhead{color:#718397;font-size:9.5px;font-weight:700;letter-spacing:.5px;margin:7px 0 2px}.score-row.detail{font-size:10.5px;padding:3px 0}.score-row.detail span{padding-right:10px}.score-row.detail b{white-space:nowrap}.score-row.formula{color:#9fc4ff;border-top:1px solid #2a3a50;margin-top:5px;padding-top:6px}
   .score-round-block{padding:10px 0 14px;border-bottom:1px solid #34465a}.score-round-block:first-child{padding-top:0}.score-round-block:last-child{padding-bottom:0;border-bottom:0}.score-round-title{margin:0 0 8px;color:var(--judge);font-size:12px;letter-spacing:.5px}.score-round-summary{color:#718397;font-size:10px;font-weight:400;margin-left:7px}
+  .live-round-scores{margin-top:10px;border:1px solid #263545;border-radius:8px;background:#10161f;overflow:hidden}.live-round-scores-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-bottom:1px solid #263545;color:#aeb9c6;font-size:11px}.live-round-scores-head small{color:#68717e;font-size:10px}.live-round-score-list{display:flex;flex-direction:column}.live-round-score-row{display:grid;grid-template-columns:minmax(44px,.7fr) minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center;padding:7px 10px;border-bottom:1px dashed #223044;font-size:11px}.live-round-score-row:last-child{border-bottom:0}.live-round-score-row .round-number{color:#aeb9c6;font-weight:700}.live-round-score-row .round-att{color:var(--att)}.live-round-score-row .round-def{color:var(--def)}.live-round-score-row b{display:block;margin-top:2px;font:700 13px ui-monospace,Consolas,monospace}.live-round-score-empty{padding:10px;color:#68717e;font-size:11px;text-align:center}
   @media(max-width:520px){.score-help-pop{width:min(330px,calc(100vw - 56px));left:-40px}}
   @media(max-width:720px){#scoreModal{left:12px;top:72px;width:calc(100vw - 24px);height:430px;max-height:calc(100vh - 84px)}}
   .score-data-row{grid-column:1/-1;display:grid;grid-template-columns:1fr;gap:14px;margin-top:14px;background:#10161f;border:1px solid var(--line);border-radius:12px;padding:16px}
@@ -690,6 +691,7 @@
           </article>
         </div>
         <div class="score-formula"><span id="scoreFormula"><strong>本回合综合分</strong> = 基础攻防分 × 0.95 + 响应分 × 0.05</span><span class="score-status" id="scoreStatus">等待有效回合</span></div>
+        <div class="live-round-scores" id="liveRoundScores" aria-live="polite" aria-label="每回合攻防评分"><div class="live-round-scores-head"><span>逐回合评分</span><small>Attacker / Defender 综合分</small></div><div class="live-round-score-list" id="liveRoundScoreList"><div class="live-round-score-empty">等待回合结算</div></div></div>
         <label class="score-detail-check"><input type="checkbox" id="liveScoreDetailToggle"><span>各回合各环节详细评分</span></label>
         <div class="score-detail-panel" id="liveScoreDetailPanel" hidden></div>
       </section>
@@ -2534,6 +2536,17 @@ var battle3d=(function(){
     if(isBattle&&rounds&&rounds.length)return rounds.map(function(round,index){var no=round.no||index+1,as=round.scores.attacker,ds=round.scores.defender;return '<section class="score-round-block"><h4 class="score-round-title">第 '+no+' 回合 · 各环节详细评分 <span class="score-round-summary">Attacker '+Number(as.weighted||0).toFixed(2)+' / Defender '+Number(ds.weighted||0).toFixed(2)+'</span></h4>'+scorePairDetailHTML(as,ds,no)+'</section>';}).join('');
     return scorePairDetailHTML(atk,def,null);
   }
+  function renderInlineRoundScores(rounds){
+    var list=document.getElementById('liveRoundScoreList');if(!list)return;
+    list.innerHTML='';
+    if(!rounds||!rounds.length){list.innerHTML='<div class="live-round-score-empty">等待回合结算</div>';return;}
+    rounds.forEach(function(round,index){
+      var as=round.scores&&round.scores.attacker||{},ds=round.scores&&round.scores.defender||{};
+      var row=document.createElement('div');row.className='live-round-score-row';
+      row.innerHTML='<span class="round-number">R'+(round.no||index+1)+'</span><span class="round-att"><span>Attacker</span><b>'+(Number(as.weighted||0)).toFixed(2)+'</b></span><span class="round-def"><span>Defender</span><b>'+(Number(ds.weighted||0)).toFixed(2)+'</b></span>';
+      list.appendChild(row);
+    });
+  }
   function detailedScoreMarkdown(round){
     var atk=round.scores.attacker,def=round.scores.defender,ai=fallbackScoreItems(atk,'att'),di=fallbackScoreItems(def,'def'),md='\n#### 各环节详细评分\n\n';
     function section(title,groups){md+='**'+title+'**\n\n';groups.forEach(function(group){md+='- '+group[0]+'\n';group[1].forEach(function(item){md+='  - '+item.id+' '+item.name+'：'+scoreValue(item.awarded)+'/'+item.max+'\n';});});}
@@ -2571,6 +2584,7 @@ var battle3d=(function(){
     document.getElementById('defWeighted').textContent=def?def.weighted.toFixed(2):'0.00';
     document.getElementById('scoreStatus').textContent=label||'等待有效回合';
     document.getElementById('liveScoreDetailPanel').innerHTML=detailedScoreHTML(atk,def,isBattle,rounds);
+    if(rounds)renderInlineRoundScores(rounds);
   }
   var liveScoreDetailToggle=document.getElementById('liveScoreDetailToggle'),liveScoreDetailPanel=document.getElementById('liveScoreDetailPanel');
   liveScoreDetailPanel.innerHTML=detailedScoreHTML(null,null);
@@ -3167,7 +3181,7 @@ var battle3d=(function(){
       var defResp=Math.round(avgOf(completed.map(function(x){return x.scores.defender;}),'response'));
       bar.setOption({series:[{data:[{value:atkResp,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},{value:defResp,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}]}]});
       var latest=completed[completed.length-1];
-      if(latest)setScoreboard(latest.scores.attacker,latest.scores.defender,'第 '+done+' / '+total+' 回合已结算');
+      if(latest)setScoreboard(latest.scores.attacker,latest.scores.defender,'第 '+done+' / '+total+' 回合已结算',false,total,completed);
       setStageCounts({
         created:1,
         attacks:completed.length,
@@ -3445,7 +3459,7 @@ var battle3d=(function(){
     document.getElementById('avgResp').textContent='0.00 s';
     document.getElementById('barPayload').style.width='0%';
     document.getElementById('barDefender').style.width='0%';
-    setScoreboard(null,null,'等待第 1 回合结算');
+    setScoreboard(null,null,'等待第 1 回合结算',false,0,[]);
     setLiveVisualizationState({status:'loading'});
     playDemo(state.theme, state.rounds, state.level.key, state.level.name);
   });

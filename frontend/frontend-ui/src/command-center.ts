@@ -136,6 +136,8 @@ const state = {
 let visualizationRequestGeneration = 0
 let liveTimelineProjector = new LiveBattleTimelineProjector()
 let liveLifecycleProjector = new LiveBattleLifecycleProjector()
+type LiveRoundScore = { attacker: number | null; defender: number | null }
+const liveRoundScores = new Map<number, LiveRoundScore>()
 
 function element<T extends HTMLElement>(id: string): T {
   const value = document.getElementById(id)
@@ -426,6 +428,69 @@ function renderBattleDetail(battle: Battle) {
   void refreshBattleVisualizations(battle.id)
 }
 
+function scoreValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  const summary = record.summary && typeof record.summary === 'object' ? record.summary as Record<string, unknown> : undefined
+  return scoreValue(record.finalScore ?? record.score ?? summary?.finalScore)
+}
+
+function eventRoundScore(event: BattleEvent): LiveRoundScore | null {
+  const data = event.data
+  const raw = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : data
+  const attacker = scoreValue(raw.attacker)
+  const defender = scoreValue(raw.defender)
+  return attacker === null && defender === null ? null : { attacker, defender }
+}
+
+function renderLiveRoundScores() {
+  const list = document.getElementById('liveRoundScoreList')
+  if (!list) return
+  const entries = [...liveRoundScores.entries()].sort(([left], [right]) => left - right)
+  list.replaceChildren()
+  if (!entries.length) {
+    const empty = document.createElement('div')
+    empty.className = 'live-round-score-empty'
+    empty.textContent = '等待回合结算'
+    list.appendChild(empty)
+    return
+  }
+  entries.forEach(([round, scores]) => {
+    const row = document.createElement('div')
+    row.className = 'live-round-score-row'
+    const roundLabel = document.createElement('span')
+    roundLabel.className = 'round-number'
+    roundLabel.textContent = `R${round}`
+    const attacker = document.createElement('span')
+    attacker.className = 'round-att'
+    attacker.innerHTML = '<span>Attacker</span>'
+    const attackerScore = document.createElement('b')
+    attackerScore.textContent = scores.attacker === null ? '—' : scores.attacker.toFixed(2)
+    attacker.appendChild(attackerScore)
+    const defender = document.createElement('span')
+    defender.className = 'round-def'
+    defender.innerHTML = '<span>Defender</span>'
+    const defenderScore = document.createElement('b')
+    defenderScore.textContent = scores.defender === null ? '—' : scores.defender.toFixed(2)
+    defender.appendChild(defenderScore)
+    row.append(roundLabel, attacker, defender)
+    list.appendChild(row)
+  })
+}
+
+function syncLiveRoundScore(round: number, scores: LiveRoundScore) {
+  if (!round) return
+  liveRoundScores.set(round, scores)
+  renderLiveRoundScores()
+  const latest = scores
+  if (latest.attacker !== null) element('atkWeighted').textContent = latest.attacker.toFixed(2)
+  if (latest.defender !== null) element('defWeighted').textContent = latest.defender.toFixed(2)
+  element('scoreScopeTitle').textContent = '实时评分 · 当前回合'
+  element('scoreScopeNote').textContent = `当前展示第 ${round} 回合已结算的评分`
+  element('scoreStatus').textContent = `第 ${round} 回合已结算`
+}
+
 function publishBattleVisualizations(rounds: readonly BattleVisualizationRound[], status: 'loading' | 'ready' | 'unavailable') {
   window.dispatchEvent(new CustomEvent('battle-visualizations:update', {
     detail: { ...buildBattleVisualizations(rounds), status },
@@ -438,6 +503,13 @@ async function refreshBattleVisualizations(battleId: string) {
     const result = await json<{ rounds?: (BattleVisualizationRound & BattleRoundScore)[] }>(`/battles/${encodeURIComponent(battleId)}/rounds`)
     if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
     renderRoundScoreDetails(result.rounds || [])
+    liveRoundScores.clear()
+    ;(result.rounds || []).forEach((round) => {
+      const attacker = scoreValue(round.attacker)
+      const defender = scoreValue(round.defender)
+      if (attacker !== null || defender !== null) liveRoundScores.set(Number(round.round), { attacker, defender })
+    })
+    renderLiveRoundScores()
     publishBattleVisualizations(Array.isArray(result.rounds) ? result.rounds : [], 'ready')
   } catch {
     if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
@@ -655,6 +727,8 @@ function beginLiveBattle(battle: Battle) {
   state.selected = battle
   liveTimelineProjector = new LiveBattleTimelineProjector()
   liveLifecycleProjector = new LiveBattleLifecycleProjector()
+  liveRoundScores.clear()
+  renderLiveRoundScores()
   publishBattleVisualizations([], 'loading')
   const roundLimit = Number(battle.rounds) || state.requestedRounds || 3
   element('liveId').textContent = battle.id
@@ -754,6 +828,10 @@ function waitForReconnect(delay: number, signal: AbortSignal) {
 
 function renderLiveEvent(event: BattleEvent) {
   const round = Number(event.data.round || 0)
+  if (event.type === 'arbiter.round.scored' || event.type === 'round.settled') {
+    const scores = eventRoundScore(event)
+    if (scores) syncLiveRoundScore(round, scores)
+  }
   if (event.type === 'attack.sample.generated') appendLivePayload(event, round)
   const entries = liveTimelineProjector.push(event)
   if (event.type.startsWith('agent.call.')) {
