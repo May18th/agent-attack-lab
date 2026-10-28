@@ -196,3 +196,43 @@ def test_lifespan_bootstraps_libraries_with_configured_switch(monkeypatch) -> No
     with TestClient(app):
         pass
     assert calls == [config.admin_library_autoseed]
+
+
+def test_mysql_reserved_word_columns_are_quoted() -> None:
+    """condition/action 是 MySQL 保留字：不转义时规则库在 MySQL 上完全写不进去。"""
+    import pathlib
+
+    import agent_attack_lab.storage as storage_module
+    from agent_attack_lab.storage import _quote_identifier
+
+    assert _quote_identifier("condition", is_postgres=False) == "`condition`"
+    assert _quote_identifier("action", is_postgres=False) == "`action`"
+    assert _quote_identifier("condition", is_postgres=True) == '"condition"'
+
+    source = pathlib.Path(storage_module.__file__).read_text(encoding="utf-8")
+    # MySQL 建表语句同样要转义，否则全新的库连 admin_rules 都建不出来
+    assert "`condition` TEXT NOT NULL" in source
+    assert "`action` TEXT NOT NULL" in source
+    # 规则的 INSERT / WHERE / UPDATE 都要走方言引用，不能再出现裸列名
+    assert 'self._col("condition")' in source
+    assert "self._col(column)" in source
+    assert "INSERT INTO admin_rules (id, name, condition" not in source
+    assert "OR condition " not in source
+
+
+def test_rule_crud_roundtrip_uses_quoted_columns() -> None:
+    store = BattleStore(":memory:")
+    try:
+        rule = store.save_admin_rule(
+            {"name": "保留字校验", "condition": "ignore previous", "action": "拦截"}
+        )
+        assert rule["action"] == "拦截"
+        assert [item["name"] for item in store.list_admin_rules("保留字")] == [
+            "保留字校验"
+        ]
+        updated = store.update_admin_rule(
+            rule["id"], {"condition": "x", "action": "放行"}
+        )
+        assert updated is not None and updated["action"] == "放行"
+    finally:
+        store.close()

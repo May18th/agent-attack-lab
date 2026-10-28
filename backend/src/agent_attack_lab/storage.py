@@ -37,6 +37,15 @@ def _sanitize_audit_data(value: Any) -> Any:
     return str(value)
 
 
+def _quote_identifier(column: str, *, is_postgres: bool) -> str:
+    """按方言引用列名。
+
+    ``condition`` 与 ``action`` 在 MySQL 里是保留字，不转义时 INSERT/UPDATE/SELECT
+    会直接语法报错（SQLite 两种引号都认，PostgreSQL 只认双引号）。
+    """
+    return f'"{column}"' if is_postgres else f"`{column}`"
+
+
 def _normalize_audit_time(value: str | None) -> str | None:
     """把审计筛选的时间边界统一成 created_at 的存储格式。
 
@@ -441,7 +450,7 @@ class BattleStore:
                 """
                 CREATE TABLE IF NOT EXISTS admin_rules (
                     id VARCHAR(191) PRIMARY KEY, name TEXT NOT NULL, `condition` TEXT NOT NULL,
-                    action TEXT NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0,
+                    `action` TEXT NOT NULL, hit_count INTEGER NOT NULL DEFAULT 0,
                     created_at VARCHAR(40) NOT NULL, updated_at VARCHAR(40) NOT NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
@@ -1021,6 +1030,10 @@ class BattleStore:
             self._connection.execute(sql, (key, value))
             self._connection.commit()
 
+    def _col(self, name: str) -> str:
+        """MySQL 的 condition/action 不做转义会直接语法报错。"""
+        return _quote_identifier(name, is_postgres=self._is_postgres)
+
     @staticmethod
     def _library_record(row: dict[str, Any], kind: str) -> dict[str, Any]:
         if kind == "sample":
@@ -1147,7 +1160,11 @@ class BattleStore:
         with self._lock:
             values = tuple(record.values())
             sql = (
-                "INSERT INTO admin_rules (id, name, condition, action, hit_count, created_at, updated_at) VALUES ("
+                "INSERT INTO admin_rules (id, name, "
+                + self._col("condition")
+                + ", "
+                + self._col("action")
+                + ", hit_count, created_at, updated_at) VALUES ("
                 + ",".join([self._placeholder] * 7)
                 + ")"
             )
@@ -1163,7 +1180,8 @@ class BattleStore:
         if query:
             operator = "ILIKE" if self._is_postgres else "LIKE"
             clauses.append(
-                f"(name {operator} {self._placeholder} OR condition {operator} {self._placeholder})"
+                f"(name {operator} {self._placeholder} OR "
+                f"{self._col('condition')} {operator} {self._placeholder})"
             )
             params.extend([f"%{query}%", f"%{query}%"])
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
@@ -1199,7 +1217,7 @@ class BattleStore:
             )
         updates.append(("updated_at", datetime.now(UTC).isoformat()))
         assignments = ", ".join(
-            f"{column} = {self._placeholder}" for column, _ in updates
+            f"{self._col(column)} = {self._placeholder}" for column, _ in updates
         )
         params = [value for _, value in updates] + [rule_id]
         with self._lock:

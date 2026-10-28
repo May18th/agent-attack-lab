@@ -1,7 +1,6 @@
 import {
   api,
   apiCursorPage,
-  apiDownload,
   apiPage,
   ApiError,
   type Battle,
@@ -225,11 +224,4 @@ export type AdminLibrarySeedResult = {
 /** 幂等补齐内置示例库；已存在的示例不会被覆盖。 */
 export function seedAdminLibrary(): Promise<AdminLibrarySeedResult> {
   return api<AdminLibrarySeedResult>('/admin/library/seed', { method: 'POST' })
-}
-
-export type AdminSurveyExport = { blob: Blob; filename: string; total: number }
-
-/** 导出调研问卷结果为 CSV；后台登录会话或 API 密钥均可，total 为记录份数。 */
-export function exportAdminSurveyCsv(): Promise<AdminSurveyExport> {
-  return apiDownload('/api/survey/export.csv')
 }
