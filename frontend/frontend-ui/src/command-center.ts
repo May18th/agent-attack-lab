@@ -489,7 +489,7 @@ function scoreCategories(role: RoundScoreRole | undefined) {
   const panel = document.createElement('div')
   panel.className = 'score-detail-panel'
   const categories = Array.isArray(role?.categories) ? role.categories : []
-  const groups: Array<[string, string]> = [['process', '流程规范 / 40'], ['effect', '实际效果 / 60'], ['response', '响应 / 100']]
+  const groups: Array<[string, string]> = [['process', '流程规范 / 40'], ['effect', '实际效果 / 60'], ['response', '响应 / 5（独立指标，不计入总分）']]
   for (const [group, title] of groups) {
     const items = categories.filter((category) => category.group === group)
     if (!items.length) continue
@@ -531,7 +531,7 @@ function renderRoundScoreDetails(rounds: readonly BattleRoundScore[]) {
       column.appendChild(scoreRow('流程规范', values.processScore, 40))
       column.appendChild(scoreRow(tone === 'def' ? '实际防御效果' : '分层穿透效果', values.effectScore, 60))
       column.appendChild(scoreRow('基础攻防分（流程+效果）', values.baseScore, 100, 'total'))
-      column.appendChild(scoreRow('响应分（不计入总分）', values.responseScore, 100))
+      column.appendChild(scoreRow('响应分（不计入总分）', values.responseScore, 5))
       column.appendChild(scoreRow('总分', values.finalScore ?? role?.score, 100, 'weighted'))
       const toggleLabel = document.createElement('label')
       toggleLabel.className = 'score-detail-check compact'

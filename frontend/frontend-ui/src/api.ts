@@ -106,6 +106,10 @@ export type RoleScore = {
     processScore: number
     effectScore: number
     responseScore: number
+    responseMaxScore?: number
+    responseGrade?: string
+    responseAverageMs?: number | null
+    responseScoredRounds?: number[]
     baseScore: number
     finalScore: number
   }

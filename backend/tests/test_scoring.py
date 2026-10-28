@@ -115,14 +115,22 @@ def test_internal_score_awards_full_score_for_traceable_acp_battle() -> None:
     assert result["attacker"]["summary"] == {
         "processScore": 40,
         "effectScore": 0,
-        "responseScore": 100,
+        "responseScore": 5,
+        "responseMaxScore": 5,
+        "responseGrade": "excellent",
+        "responseAverageMs": 0.0,
+        "responseScoredRounds": [],
         "baseScore": 40,
         "finalScore": 40.0,
     }
     assert result["defender"]["summary"] == {
         "processScore": 40,
         "effectScore": 45,
-        "responseScore": 90,
+        "responseScore": 5,
+        "responseMaxScore": 5,
+        "responseGrade": "excellent",
+        "responseAverageMs": 1600.0,
+        "responseScoredRounds": [1],
         "baseScore": 85,
         "finalScore": 85.0,
     }
@@ -164,7 +172,8 @@ def test_agent_scores_are_separate_and_missing_source_is_not_awarded() -> None:
 
     assert categories["A-05"] == 0
     assert categories["A-04"] == 3
-    assert result["attacker"]["summary"]["responseScore"] == 0
+    assert result["attacker"]["summary"]["responseScore"] == 1
+    assert result["attacker"]["summary"]["responseGrade"] == "needs_improvement"
     assert result["attacker"]["summary"]["effectScore"] == 0
     assert result["attacker"]["score"] == 7.0
     assert result["defender"]["status"] == "insufficient_evidence"
@@ -224,7 +233,7 @@ def test_defender_source_disclosure_is_proportional_to_successful_calls() -> Non
     assert categories["D-05"] == 2
 
 
-def test_frontend_v1_response_score_clamps_duration_and_rounds_final_score() -> None:
+def test_response_indicator_uses_spec_v2_tiers_and_stays_out_of_total() -> None:
     record = {
         "topic": "通用安全测试",
         "attackerOut": {"samples": [{"type": "x", "content": "x"}]},
@@ -255,10 +264,85 @@ def test_frontend_v1_response_score_clamps_duration_and_rounds_final_score() -> 
 
     result = score_battle(record, events)
 
-    assert result["attacker"]["summary"]["responseScore"] == 50
+    # 攻击方 8s → 需改进档 1 分；防守方无显式正确拦截真值 → 无可评分回合 0 分。
+    assert result["attacker"]["summary"]["responseScore"] == 1
     assert result["defender"]["summary"]["responseScore"] == 0
+    assert result["defender"]["summary"]["responseGrade"] == "unscorable"
+    # 响应分不入总分：流程分仍为 40 分之上的实际得分。
+    assert (
+        result["attacker"]["summary"]["finalScore"]
+        == (result["attacker"]["summary"]["baseScore"])
+    )
     assert result["attacker"]["categories"][-1]["group"] == "response"
+    assert result["attacker"]["categories"][-1]["maxScore"] == 5
     assert result["defender"]["categories"][-2]["group"] == "effect"
+
+
+def test_defender_response_is_graded_only_for_correctly_blocked_rounds() -> None:
+    record = {
+        "topic": "通用安全测试",
+        "attackerOut": {"samples": [{}, {}]},
+        "defenderOut": [
+            {
+                "caught": [{"reason": "命中", "evidence": "依据"}],
+                "risks": [],
+                "fixed": [],
+            },
+            {
+                "caught": [{"reason": "命中", "evidence": "依据"}],
+                "risks": [],
+                "fixed": [],
+            },
+        ],
+    }
+    events = [
+        _event(
+            "agent.call.completed",
+            {
+                "agentRole": "defender",
+                "correlationId": "d1",
+                "durationMs": 1500,
+                "round": 1,
+            },
+        ),
+        _event(
+            "agent.call.completed",
+            {
+                "agentRole": "defender",
+                "correlationId": "d2",
+                "durationMs": 9000,
+                "round": 2,
+            },
+        ),
+        _event(
+            "round.completed",
+            {
+                "round": 1,
+                "correlationId": "d1",
+                "attackSuccess": False,
+                "defenseSuccess": True,
+            },
+        ),
+        _event(
+            "round.completed",
+            {
+                "round": 2,
+                "correlationId": "d2",
+                "attackSuccess": True,
+                "defenseSuccess": False,
+            },
+        ),
+    ]
+
+    result = score_battle(record, events)
+    summary = result["defender"]["summary"]
+
+    # 只对第 1 回合（正确拦截）计档：1500ms → 优秀 5 分；第 2 回合穿透不参与。
+    assert summary["responseScore"] == 5
+    assert summary["responseGrade"] == "excellent"
+    assert summary["responseAverageMs"] == 1500.0
+    assert summary["responseScoredRounds"] == [1]
+    assert result["evidence"]["responseMetrics"]["defender"]["blockedRounds"] == [1]
 
 
 def test_v2_effect_score_does_not_infer_success_from_round_completed_findings() -> None:
