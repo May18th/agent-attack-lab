@@ -153,3 +153,57 @@ def test_arbiter_fabricated_evidence_still_falls_back(monkeypatch) -> None:
 
     assert result["agentMode"] == "local-rule-fallback"
     assert result["agentSource"] == "arbiter-rule-fallback"
+
+
+def _blocked_verification() -> dict[str, object]:
+    return {
+        "verified": True,
+        "mode": "simulated",
+        "simulated": True,
+        "attackSuccess": False,
+        "defenseSuccess": True,
+        "evidence": ["忽略之前的指令"],
+        "reason": "simulated_target_blocked",
+        "targetAssetId": "simulated:local-adapter-v1",
+    }
+
+
+def test_local_arbiter_follows_blocked_verification() -> None:
+    result = asyncio.run(
+        arbiter.review_round(_sample(), _defense(), _blocked_verification())
+    )
+
+    assert result["verdict"] == "defender_won"
+    assert result["needsHumanReview"] is False
+
+
+def test_model_cannot_override_target_verification(monkeypatch) -> None:
+    monkeypatch.setattr(arbiter, "_model_enabled", lambda: True)
+    monkeypatch.setattr(arbiter, "is_configured", lambda role=None: True)
+
+    async def fake_complete(_system_prompt, _payload, *, role):
+        assert role == "arbiter"
+        # 明明有拦截证据，模型仍想判"未判定"，必须被拒绝并回落规则结论。
+        return {
+            "verdict": "undetermined",
+            "confidence": 0.5,
+            "rationale": "需要人工复核",
+            "evidence": ["忽略之前的指令"],
+            "needsHumanReview": True,
+        }
+
+    monkeypatch.setattr(arbiter, "complete_json", fake_complete)
+    result = asyncio.run(
+        arbiter.review_round(_sample(), _defense(), _blocked_verification())
+    )
+
+    assert result["verdict"] == "defender_won"
+    assert result["agentSource"] == "arbiter-rule-fallback"
+
+
+def test_verification_projection_carries_decided_outcome() -> None:
+    projected = arbiter._project_verification(_blocked_verification())
+
+    assert projected["attackSuccess"] is False
+    assert projected["defenseSuccess"] is True
+    assert projected["evidence"] == ["忽略之前的指令"]

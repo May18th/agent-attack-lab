@@ -47,13 +47,40 @@ def _evidence(sample: dict[str, Any], defense: dict[str, Any]) -> list[str]:
     return values
 
 
+def _evidence_decision(verification: dict[str, Any]) -> str | None:
+    """靶标验证已经给出确定结论时，仲裁只能沿用该结论。"""
+    if verification.get("verified") is not True:
+        return None
+    if verification.get("mode") not in {"simulated", "live"}:
+        return None
+    if verification.get("attackSuccess") is True and bool(verification.get("evidence")):
+        return "attacker_won"
+    if (
+        verification.get("attackSuccess") is False
+        and verification.get("defenseSuccess") is True
+    ):
+        return "defender_won"
+    return None
+
+
 def _local_review(
     sample: dict[str, Any],
     defense: dict[str, Any],
     verification: dict[str, Any],
 ) -> dict[str, Any]:
     evidence = _evidence(sample, defense)
-    if (
+    decision = _evidence_decision(verification)
+    if decision == "attacker_won":
+        verdict = "attacker_won"
+        confidence = 1.0
+        rationale = "模拟靶标确认攻击成功，并提供了样本原文证据。"
+        needs_review = False
+    elif decision == "defender_won":
+        verdict = "defender_won"
+        confidence = 0.8
+        rationale = "模拟靶标确认攻击被阻断，防守结果包含命中证据。"
+        needs_review = False
+    elif (
         verification.get("verified") is True
         and verification.get("mode") in {"simulated", "live"}
         and bool(verification.get("evidence"))
@@ -141,6 +168,10 @@ def _validate_model_result(
         )
     if verdict == "undetermined" and not needs_review:
         raise LLMError("undetermined verdict must require human review")
+    expected = _evidence_decision(verification)
+    if expected is not None and verdict != expected:
+        # 靶标已给出结论时不允许模型改判，避免"有证据还判未判定"。
+        raise LLMError("arbiter verdict conflicts with target verification")
     return {
         "verdict": verdict,
         "confidence": round(confidence_value, 3),
@@ -236,14 +267,25 @@ def _project_defense(defense: dict[str, Any]) -> dict[str, Any]:
 def _project_verification(verification: dict[str, Any]) -> dict[str, Any]:
     result = {
         key: verification.get(key)
-        for key in ("verified", "mode", "simulated", "reason")
+        for key in (
+            "verified",
+            "mode",
+            "simulated",
+            "reason",
+            "attackSuccess",
+            "defenseSuccess",
+            "targetAssetId",
+        )
         if isinstance(verification.get(key), (str, bool))
     }
     evidence = verification.get("evidence")
     if isinstance(evidence, list):
-        result["evidence"] = [
-            {"kind": item.get("kind"), "ruleId": item.get("ruleId")}
-            for item in evidence[:5]
-            if isinstance(item, dict)
-        ]
+        items: list[Any] = []
+        for item in evidence[:5]:
+            if isinstance(item, dict):
+                items.append({"kind": item.get("kind"), "ruleId": item.get("ruleId")})
+            elif isinstance(item, str):
+                items.append(item[:300])
+        if items:
+            result["evidence"] = items
     return result
