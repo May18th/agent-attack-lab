@@ -95,10 +95,10 @@ describe('live battle visualizations', () => {
   })
 
   it('limits the primary timeline to canonical attacker, defender, and Arbiter events', () => {
-    expect(shouldRenderBattleTimelineEvent('attack.stage.started', { stageId: 'A1' })).toBe(false)
+    expect(shouldRenderBattleTimelineEvent('attack.stage.started', { stageId: 'A1' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('attack.stage.completed', { stageId: 'A8' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('defense.layer.started', { stageId: 'L0' })).toBe(false)
-    expect(shouldRenderBattleTimelineEvent('defense.check.started', { stageId: 'L0-1' })).toBe(false)
+    expect(shouldRenderBattleTimelineEvent('defense.check.started', { stageId: 'L0-1' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('defense.layer.verdict', { stageId: 'L3-4' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('arbiter.similarity.checked', { stageId: 'A6' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('arbiter.layer.confirmed', { stageId: 'L0' })).toBe(true)
@@ -106,13 +106,14 @@ describe('live battle visualizations', () => {
     expect(shouldRenderBattleTimelineEvent('arbiter.verdict', { stageId: 'ARBITER' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('defense.safe_control', { stageId: 'D-07' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('arbiter.round.scored', { stageId: 'ROUND-SCORE' })).toBe(true)
-    expect(shouldRenderBattleTimelineEvent('agent.call.completed', { stageId: 'A1' })).toBe(false)
+    expect(shouldRenderBattleTimelineEvent('agent.call.completed', { stageId: 'A1', agentRole: 'attacker' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('round.started', { round: 1 })).toBe(false)
     expect(shouldRenderBattleTimelineEvent('attack.sample.generated', { round: 1 })).toBe(false)
-    expect(shouldRenderBattleTimelineEvent('battle.completed')).toBe(false)
+    expect(shouldRenderBattleTimelineEvent('round.settled', { stageId: 'FINAL' })).toBe(true)
+    expect(shouldRenderBattleTimelineEvent('battle.completed')).toBe(true)
   })
 
-  it('groups only canonical events into their round and excludes lifecycle and sample events', () => {
+  it('groups canonical events and backend agent calls into their round while excluding lifecycle and sample events', () => {
     const projector = new LiveBattleTimelineProjector()
     const event = (type: string, sequence: number, round?: number, extra: Record<string, unknown> = {}): BattleTimelineEvent => ({
       id: `event-${sequence}`,
@@ -126,20 +127,41 @@ describe('live battle visualizations', () => {
 
     expect(projector.push(event('attack.sample.generated', 1, 1))).toEqual([])
     expect(projector.push(event('attack.sample.generated', 2, 2))).toEqual([])
-    expect(projector.push(event('agent.call.completed', 3, undefined, { agentRole: 'attacker' }))).toEqual([])
-    expect(projector.push(event('round.started', 4, 1))).toEqual([])
-    expect(projector.push(event('attack.stage.started', 5, 1, { stageId: 'A1' }))).toEqual([])
-    expect(projector.push(event('attack.stage.completed', 6, 1, { stageId: 'A1' }))).toEqual([
+    expect(projector.push(event('agent.call.completed', 3, 1, { agentRole: 'attacker', stageId: 'A2', correlationId: 'call-a' }))).toEqual([
       { kind: 'round', round: 1 },
-      { kind: 'event', side: 'att', event: event('attack.stage.completed', 6, 1, { stageId: 'A1' }) },
+      {
+        kind: 'event', side: 'att', event: event('agent.call.completed', 3, 1, { agentRole: 'attacker', stageId: 'A2', correlationId: 'call-a' }),
+        key: 'battle-1:1:agent-call:A2:call-a', update: false,
+      },
+    ])
+    expect(projector.push(event('round.started', 4, 1))).toEqual([])
+    expect(projector.push(event('attack.stage.started', 5, 1, { stageId: 'A1' }))).toEqual([
+      {
+        kind: 'event', side: 'att', event: event('attack.stage.started', 5, 1, { stageId: 'A1' }),
+        key: 'battle-1:1:attacker:A1', update: false,
+      },
+    ])
+    expect(projector.push(event('attack.stage.completed', 6, 1, { stageId: 'A1' }))).toEqual([
+      {
+        kind: 'event', side: 'att', event: event('attack.stage.completed', 6, 1, { stageId: 'A1' }),
+        key: 'battle-1:1:attacker:A1', update: true,
+      },
     ])
     expect(projector.push(event('round.completed', 7, 1))).toEqual([])
     expect(projector.push(event('defense.layer.started', 7, 2, { stageId: 'L0' }))).toEqual([])
     expect(projector.push(event('arbiter.layer.started', 8, 2, { stageId: 'L0' }))).toEqual([
       { kind: 'round', round: 2 },
-      { kind: 'event', side: 'judge', event: event('arbiter.layer.started', 8, 2, { stageId: 'L0' }) },
+      {
+        kind: 'event', side: 'judge', event: event('arbiter.layer.started', 8, 2, { stageId: 'L0' }),
+        key: 'battle-1:2:arbiter-layer:L0', update: false,
+      },
     ])
-    expect(projector.push(event('defense.check.started', 9, 2, { stageId: 'L0-1' }))).toEqual([])
+    expect(projector.push(event('defense.check.started', 9, 2, { stageId: 'L0-1' }))).toEqual([
+      {
+        kind: 'event', side: 'def', event: event('defense.check.started', 9, 2, { stageId: 'L0-1' }),
+        key: 'battle-1:2:defender:L0-1', update: false,
+      },
+    ])
   })
 
   it('places Arbiter events centrally even when they carry an L-layer stage id', () => {
@@ -156,7 +178,10 @@ describe('live battle visualizations', () => {
 
     expect(projector.push(event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }))).toEqual([
       { kind: 'round', round: 1 },
-      { kind: 'event', side: 'judge', event: event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }) },
+      {
+        kind: 'event', side: 'judge', event: event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }),
+        key: 'battle-1:1:arbiter-layer:L0', update: false,
+      },
     ])
   })
 
@@ -174,11 +199,14 @@ describe('live battle visualizations', () => {
 
     projector.push(event('arbiter.layer.started', 1, { stageId: 'L0' }))
     expect(projector.push(event('arbiter.layer.confirmed', 2, { stageId: 'L0' }))).toEqual([
-      { kind: 'event', side: 'judge', event: event('arbiter.layer.confirmed', 2, { stageId: 'L0' }) },
+      {
+        kind: 'event', side: 'judge', event: event('arbiter.layer.confirmed', 2, { stageId: 'L0' }),
+        key: 'battle-1:1:arbiter-layer:L0', update: true,
+      },
     ])
   })
 
-  it('does not add battle lifecycle events when there are no canonical stages', () => {
+  it('keeps terminal battle results while excluding non-canonical sample events', () => {
     const projector = new LiveBattleTimelineProjector()
     const sample: BattleTimelineEvent = {
       id: 'sample-1', battleId: 'battle-1',
@@ -192,7 +220,12 @@ describe('live battle visualizations', () => {
     }
 
     expect(projector.push(sample)).toEqual([])
-    expect(projector.push(failed)).toEqual([])
+    expect(projector.push(failed)).toEqual([
+      {
+        kind: 'event', side: 'judge', event: failed,
+        key: 'battle-1:0:arbiter:battle-settled', update: false,
+      },
+    ])
   })
 
   it('projects backend rounds into the lifecycle events consumed by the attack animation', () => {

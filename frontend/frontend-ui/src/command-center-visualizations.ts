@@ -50,7 +50,13 @@ export type BattleTimelineEvent = {
 
 export type BattleTimelineEntry =
   | { kind: 'round'; round: number }
-  | { kind: 'event'; side: 'att' | 'def' | 'judge'; event: BattleTimelineEvent }
+  | {
+      kind: 'event'
+      side: 'att' | 'def' | 'judge'
+      event: BattleTimelineEvent
+      key: string
+      update: boolean
+    }
 
 export type BattleLifecycleEvent = {
   type: string
@@ -125,17 +131,44 @@ export function buildBattleVisualizations(rounds: readonly BattleVisualizationRo
 }
 
 export function shouldRenderBattleTimelineEvent(type: string, data: Record<string, unknown> = {}): boolean {
-  if (type.startsWith('arbiter.')) return true
-  if (type === 'defense.safe_control') return true
   const stageId = typeof data.stageId === 'string' ? data.stageId.trim().toUpperCase() : ''
-  // The primary timeline is a result timeline: one card per logical stage.
-  // Started events remain available to the role log and 3D animation stream.
-  if (/^A[1-8]$/.test(stageId)) return type === 'attack.stage.completed'
+  // Agent 调用是 Attacker/Defender 与后端实际执行之间的可追溯边界，
+  // 必须进入时间线；同一 correlationId 的 started/completed/failed 会合并到一个框。
+  if (type === 'agent.call.started' || type === 'agent.call.completed' || type === 'agent.call.failed') return true
+  if (/^A[1-8]$/.test(stageId)) {
+    return type === 'attack.stage.started'
+      || type === 'attack.stage.completed'
+      || type === 'attack.stage.failed'
+      || type === 'arbiter.similarity.checked'
+  }
+  if (type.startsWith('arbiter.')) return true
   if (/^L[0-3]$/.test(stageId)) return false
   if (/^L[0-3]-\d+$/.test(stageId)) {
-    return type === 'defense.layer.verdict'
+    return type === 'defense.check.started' || type === 'defense.layer.verdict'
   }
-  return false
+  return type === 'defense.safe_control'
+    || type === 'round.settled'
+    || type === 'battle.completed'
+    || type === 'battle.failed'
+}
+
+function logicalTimelineStage(type: string, stageId: string, data: Record<string, unknown> = {}): string {
+  if (type === 'agent.call.started' || type === 'agent.call.completed' || type === 'agent.call.failed') {
+    return `agent-call:${String(stageId || 'agent').toUpperCase()}:${String(data.correlationId || '')}`
+  }
+  if (/^A[1-8]$/.test(stageId)) return `attacker:${stageId}`
+  if (/^L[0-3]-\d+$/.test(stageId)) return `defender:${stageId}`
+  if (type === 'arbiter.layer.started' || type === 'arbiter.layer.confirmed') {
+    return `arbiter-layer:${stageId || 'unknown'}`
+  }
+  if (type === 'arbiter.similarity.checked') return 'arbiter:A6'
+  if (type === 'arbiter.safe_control') return 'arbiter:safe-control'
+  if (type === 'defense.safe_control') return 'defender:safe-control'
+  if (type === 'arbiter.verdict') return 'arbiter:verdict'
+  if (type === 'arbiter.round.scored') return 'arbiter:round-score'
+  if (type === 'round.settled') return 'arbiter:round-settled'
+  if (type === 'battle.completed' || type === 'battle.failed') return 'arbiter:battle-settled'
+  return `${type}:${stageId || 'event'}`
 }
 
 export class LiveBattleTimelineProjector {
@@ -151,12 +184,16 @@ export class LiveBattleTimelineProjector {
       entries.push({ kind: 'round', round })
     }
     const stageId = String(event.data.stageId || '').trim().toUpperCase()
-    const stageKey = `${event.battleId}:${round}:${stageId}:${event.type.startsWith('arbiter.') ? event.type : 'stage'}`
-    if (stageId && this.renderedStages.has(stageKey)) return entries
-    if (stageId) this.renderedStages.add(stageKey)
+    const stageKey = `${event.battleId}:${round}:${logicalTimelineStage(event.type, stageId, event.data)}`
+    const update = this.renderedStages.has(stageKey)
+    this.renderedStages.add(stageKey)
+    const agentRole = String(event.data.agentRole || '').trim().toLowerCase()
     const side = event.type.startsWith('arbiter.') || stageId === 'A6' ? 'judge'
+      : event.type === 'round.settled' || event.type === 'battle.completed' || event.type === 'battle.failed' ? 'judge'
+      : event.type.startsWith('agent.call.') && agentRole === 'defender' ? 'def'
+      : event.type.startsWith('agent.call.') && agentRole === 'attacker' ? 'att'
       : /^A[1-8]$/.test(stageId) ? 'att' : 'def'
-    entries.push({ kind: 'event', side, event })
+    entries.push({ kind: 'event', side, event, key: stageKey, update })
     return entries
   }
 }
