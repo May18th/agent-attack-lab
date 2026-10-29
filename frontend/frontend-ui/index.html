@@ -181,7 +181,7 @@
   .metric-head{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--mut);margin-bottom:8px}
   .metric-head b{color:var(--txt);font-size:18px;font-weight:700}
   .bar{height:8px;background:#1a2230;border-radius:4px;overflow:hidden}
-  .bar-fill{height:100%;border-radius:4px;transition:width .4s}
+  .bar-fill{display:block;flex:none;box-sizing:border-box;min-width:0;max-width:100%;height:100%;border-radius:4px;transition:width .4s}
   .bar-fill.att{background:#ff8f6b}
   .bar-fill.def{background:#9fc4ff}
   .tip-q{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid #4a5568;color:#8892a0;font-size:10px;line-height:1;cursor:help;margin-left:5px;vertical-align:middle;position:relative;top:-1px}
@@ -599,18 +599,18 @@
     <div class="score-data-row">
       <div class="metric-col">
         <div class="metric">
-          <div class="metric-head"><span class="tip-wrap">payload 更新率<span class="tip-q" tabindex="0" role="button" aria-label="查看 payload 更新率说明">?</span><span class="tip-pop">本局新增载荷里，全新攻击范式（不同源样本）占本局全部新增 Payload 的比例，反映攻击方创新能力。</span></span><b id="ratePayload">0%</b></div>
+          <div class="metric-head"><span class="tip-wrap">payload 更新率<span class="tip-q" tabindex="0" role="button" aria-label="查看 payload 更新率说明">?</span><span class="tip-pop">本局不同源 Payload 数 ÷ 本局已产生的全部 Payload 数 × 100%。来源由 Arbiter 的相似度校验结果确定。</span></span><b id="ratePayload">0%</b></div>
           <div class="bar"><div class="bar-fill att" id="barPayload" style="width:0%"></div></div>
         </div>
         <div class="metric">
-          <div class="metric-head"><span class="tip-wrap">defender 有效拦截率<span class="tip-q" tabindex="0" role="button" aria-label="查看 defender 有效拦截率说明">?</span><span class="tip-pop">获得 D-06 正确拦截 45 分的有效回合占比；完整穿透或无有效拦截证据不计入。</span></span><b id="rateDefender">0%</b></div>
+          <div class="metric-head"><span class="tip-wrap">defender 有效拦截率<span class="tip-q" tabindex="0" role="button" aria-label="查看 defender 有效拦截率说明">?</span><span class="tip-pop">本局 Arbiter 确认的有效拦截回合数 ÷ 本局已开始的总回合数 × 100%。</span></span><b id="rateDefender">0%</b></div>
           <div class="bar"><div class="bar-fill def" id="barDefender" style="width:0%"></div></div>
         </div>
         <div class="metric">
           <div class="metric-head"><span class="tip-wrap">defender 平均响应时长<span class="tip-q" tabindex="0" role="button" aria-label="查看 defender 平均响应时长说明">?</span><span class="tip-pop">攻击样本与安全对照的有效决策耗时均值；错误结果的响应分为 0，但耗时仍保留审计。</span></span><b id="avgResp">0.00 s</b></div>
         </div>
       </div>
-      <div class="chart-box"><div class="chart-title"><span class="tip-wrap">拦截 / 逃逸分布<span class="tip-q" tabindex="0" role="button" aria-label="查看拦截与逃逸分布说明">?</span><span class="tip-pop"><b>成功拦截：</b>Defender 判定攻击载荷非法，成功阻断本次攻击。<br><b>攻击逃逸：</b>Payload 绕过当前防御规则，防御判定放行，攻击达成目标。</span></span></div><div class="chart-canvas" id="pieChart" style="height:170px"></div></div>
+      <div class="chart-box"><div class="chart-title"><span class="tip-wrap">拦截 / 逃逸分布<span class="tip-q" tabindex="0" role="button" aria-label="查看拦截与逃逸分布说明">?</span><span class="tip-pop"><b>拦截：</b>Arbiter 确认的有效拦截回合数 ÷ 本局已开始总回合数。<br><b>逃逸：</b>Arbiter 确认的攻击穿透回合数 ÷ 本局已开始总回合数。其余回合显示为未分类/其他。</span></span></div><div class="chart-canvas" id="pieChart" style="height:170px"></div></div>
       <div class="chart-box"><div class="chart-title">综合分（每回合，0–100）</div><div class="chart-canvas" id="lineChart" style="height:220px"></div></div>
       <div class="chart-box"><div class="chart-title">响应分均值（0–100，占综合分 5%）</div><div class="chart-canvas" id="barChart" style="height:220px"></div></div>
     </div>
@@ -2548,45 +2548,57 @@ var battle3d=(function(){
 
   /* ============ 计分图表 ============ */
   var pie=echarts.init(document.getElementById('pieChart'));
-  function pieOption(block,escape){
-    var total=block+escape;
+  function pieOption(block,escape,roundCount){
+    var total=Number.isFinite(roundCount)?Math.max(0,roundCount):block+escape;
     var blockPct=total?block/total*100:0;
     var escapePct=total?escape/total*100:0;
     // 无数据时仍保留截图中的红绿对照环；中心百分比继续反映真实数据 0.00%。
     var displayBlock=total?block:1;
     var displayEscape=total?escape:1;
+    var other=total?Math.max(0,total-block-escape):0;
     var centerText='{block|拦截 '+blockPct.toFixed(2)+'%}\n{escape|逃逸 '+escapePct.toFixed(2)+'%}';
     return {backgroundColor:'transparent',tooltip:{trigger:'item',formatter:function(params){return params.name+': '+(total?Number(params.percent||0).toFixed(2):'0.00')+'%';}},graphic:[{type:'text',left:'center',top:'middle',silent:true,style:{text:centerText,textAlign:'center',textVerticalAlign:'middle',fontSize:12,fontWeight:700,lineHeight:21,rich:{block:{fill:'#7fd49b',align:'center'},escape:{fill:'#ff6b6b',align:'center'}}}}],series:[{type:'pie',radius:['56%','84%'],center:['50%','53%'],showEmptyCircle:true,emptyCircleStyle:{color:'#253140'},avoidLabelOverlap:true,label:{show:false},labelLine:{show:false},itemStyle:{borderColor:'#1a2230',borderWidth:2},data:[
       {value:displayBlock,name:'拦截',itemStyle:{color:'#7fd49b'}},
-      {value:displayEscape,name:'逃逸',itemStyle:{color:'#ff6b6b'}}
+      {value:displayEscape,name:'逃逸',itemStyle:{color:'#ff6b6b'}},
+      {value:other,name:'未分类/其他',itemStyle:{color:'#596575'}}
     ]}]} ;
   }
   pie.setOption(pieOption(0,0));
   var line=echarts.init(document.getElementById('lineChart'));
   function emptyChartGraphic(id,message,show){return [{id:id,type:'text',left:'center',top:'middle',silent:true,invisible:!show,style:{text:message,textAlign:'center',fill:'#68717e',fontSize:11}}];}
-  line.setOption({backgroundColor:'transparent',tooltip:{trigger:'axis'},grid:{left:58,right:26,top:34,bottom:42,containLabel:false},xAxis:{type:'category',data:['R1'],boundaryGap:true,axisLine:{lineStyle:{color:'#26303f'}},axisLabel:{color:'#9aa6b2'}},yAxis:{type:'value',min:0,max:100,interval:10,name:'综合分',nameLocation:'middle',nameGap:40,nameTextStyle:{color:'#68717e',fontSize:11},splitLine:{lineStyle:{color:'#1a2230'}},axisLabel:{color:'#68717e',margin:8}},series:[{name:'Attacker',type:'line',smooth:true,data:[0],symbolSize:7,lineStyle:{width:3,color:'#ff8f6b'},itemStyle:{color:'#ff8f6b'}},{name:'Defender',type:'line',smooth:true,data:[0],symbolSize:7,lineStyle:{width:3,color:'#9fc4ff'},itemStyle:{color:'#9fc4ff'}}]});
+  line.setOption({backgroundColor:'transparent',tooltip:{trigger:'axis'},grid:{left:58,right:26,top:34,bottom:42,containLabel:false},xAxis:{type:'category',data:[],boundaryGap:true,axisLine:{lineStyle:{color:'#26303f'}},axisLabel:{color:'#9aa6b2'}},yAxis:{type:'value',min:0,max:100,interval:10,name:'综合分',nameLocation:'middle',nameGap:40,nameTextStyle:{color:'#68717e',fontSize:11},splitLine:{lineStyle:{color:'#1a2230'}},axisLabel:{color:'#68717e',margin:8}},series:[{name:'Attacker',type:'line',smooth:true,data:[],symbolSize:7,lineStyle:{width:3,color:'#ff8f6b'},itemStyle:{color:'#ff8f6b'}},{name:'Defender',type:'line',smooth:true,data:[],symbolSize:7,lineStyle:{width:3,color:'#9fc4ff'},itemStyle:{color:'#9fc4ff'}}]});
   var bar=echarts.init(document.getElementById('barChart'));
   bar.setOption({backgroundColor:'transparent',grid:{left:'16%',right:'16%',top:34,bottom:26},graphic:emptyChartGraphic('bar-empty','等待回合评分',true),xAxis:{type:'category',data:['Attacker','Defender'],axisLine:{show:false},axisTick:{show:false},axisLabel:{show:true,color:'#8190a0',fontSize:10}},yAxis:{type:'value',min:0,max:100,axisLabel:{show:false},splitLine:{show:false}},series:[{type:'bar',barWidth:44,data:[
     {value:0,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},
     {value:0,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}
   ],label:{show:true,position:'top',color:'#c8d0dc',fontSize:12,fontWeight:600}}]});
 
+  function setMetricBar(id,value){
+    var fill=document.getElementById(id);
+    var percentage=Number.isFinite(Number(value))?Math.max(0,Math.min(100,Number(value))):0;
+    fill.style.width=percentage+'%';
+    fill.style.visibility=percentage>0?'visible':'hidden';
+  }
   function setLiveVisualizationState(detail){
     if(!detail||detail.status==='loading'){
       document.getElementById('ratePayload').textContent='0%';
       document.getElementById('rateDefender').textContent='0%';
+      setMetricBar('barPayload',0);
+      setMetricBar('barDefender',0);
       document.getElementById('avgResp').textContent='0.00 s';
       pie.setOption(pieOption(0,0));
-      line.setOption({graphic:emptyChartGraphic('line-empty','等待回合评分',false),xAxis:{data:['R1']},series:[{data:[0]},{data:[0]}]});
+      line.setOption({graphic:emptyChartGraphic('line-empty','等待回合评分',false),xAxis:{data:[]},series:[{data:[]},{data:[]}]});
       bar.setOption({graphic:emptyChartGraphic('bar-empty','等待回合评分',false),series:[{data:[{value:0,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},{value:0,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}]}]});
       return;
     }
     if(detail.status!=='ready'){
       document.getElementById('ratePayload').textContent='0%';
       document.getElementById('rateDefender').textContent='0%';
+      setMetricBar('barPayload',0);
+      setMetricBar('barDefender',0);
       document.getElementById('avgResp').textContent='0.00 s';
       pie.setOption(pieOption(0,0));
-      line.setOption({graphic:emptyChartGraphic('line-empty','评分数据暂不可用',false),xAxis:{data:['R1']},series:[{data:[0]},{data:[0]}]});
+      line.setOption({graphic:emptyChartGraphic('line-empty','评分数据暂不可用',false),xAxis:{data:[]},series:[{data:[]},{data:[]}]});
       bar.setOption({graphic:emptyChartGraphic('bar-empty','评分数据暂不可用',false),series:[{data:[{value:0},{value:0}]}]});
       return;
     }
@@ -2594,16 +2606,17 @@ var battle3d=(function(){
     var labels=points.map(function(point){return 'R'+point.round;});
     var attacker=points.map(function(point){return typeof point.attacker==='number'?point.attacker:null;});
     var defender=points.map(function(point){return typeof point.defender==='number'?point.defender:null;});
-    pie.setOption(pieOption(Number(detail.interceptedRounds||0),Number(detail.escapedRounds||0)));
+    pie.setOption(pieOption(Number(detail.interceptedRounds||0),Number(detail.escapedRounds||0),Number(detail.roundCount||0)));
     var hasScore=attacker.some(function(value){return value!==null;})||defender.some(function(value){return value!==null;});
-    if(!points.length){labels=['R1'];attacker=[0];defender=[0];hasScore=true;}
     line.setOption({graphic:emptyChartGraphic('line-empty','暂无评分证据',!hasScore),xAxis:{data:labels},series:[{data:attacker},{data:defender}]});
     var attackerResponse=typeof detail.averageResponseScore?.attacker==='number'?detail.averageResponseScore.attacker:null;
     var defenderResponse=typeof detail.averageResponseScore?.defender==='number'?detail.averageResponseScore.defender:null;
     var hasResponse=attackerResponse!==null||defenderResponse!==null;
     bar.setOption({graphic:emptyChartGraphic('bar-empty','暂无响应评分证据',!hasResponse),series:[{data:[{value:attackerResponse,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},{value:defenderResponse,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}]}]});
-    document.getElementById('ratePayload').textContent='0%';
+    document.getElementById('ratePayload').textContent=Number(detail.payloadUpdateRate||0).toFixed(0)+'%';
     document.getElementById('rateDefender').textContent=typeof detail.effectiveInterceptionRate==='number'?detail.effectiveInterceptionRate.toFixed(0)+'%':'0%';
+    setMetricBar('barPayload',detail.payloadUpdateRate);
+    setMetricBar('barDefender',detail.effectiveInterceptionRate);
     document.getElementById('avgResp').textContent=typeof detail.averageResponseMs==='number'?(detail.averageResponseMs/1000).toFixed(2)+' s':'0.00 s';
   }
   window.addEventListener('battle-visualizations:update',function(event){setLiveVisualizationState(event.detail||{});});
@@ -3388,9 +3401,9 @@ var battle3d=(function(){
       document.getElementById('ratePayload').textContent=pr+'%';
       document.getElementById('rateDefender').textContent=dr+'%';
       document.getElementById('avgResp').textContent=avg.toFixed(2)+' s';
-      document.getElementById('barPayload').style.width=pr+'%';
-      document.getElementById('barDefender').style.width=dr+'%';
-      pie.setOption(pieOption(blocked,escaped));
+      setMetricBar('barPayload',pr);
+      setMetricBar('barDefender',dr);
+      pie.setOption(pieOption(blocked,escaped,done));
       var labels=[],atkC=[],defC=[];
       completed.forEach(function(rs,i){labels.push('R'+(i+1));atkC.push(rs.scores.attacker.weighted);defC.push(rs.scores.defender.weighted);});
       line.setOption({xAxis:{data:labels.length?labels:['R1']},series:[{data:atkC.length?atkC:[0]},{data:defC.length?defC:[0]}]});
@@ -3677,8 +3690,8 @@ var battle3d=(function(){
     document.getElementById('ratePayload').textContent='0%';
     document.getElementById('rateDefender').textContent='0%';
     document.getElementById('avgResp').textContent='0.00 s';
-    document.getElementById('barPayload').style.width='0%';
-    document.getElementById('barDefender').style.width='0%';
+    setMetricBar('barPayload',0);
+    setMetricBar('barDefender',0);
     setScoreboard(null,null,'等待第 1 回合结算',false,0,[]);
     setLiveVisualizationState({status:'loading'});
     playDemo(state.theme, state.rounds, state.level.key, state.level.name);
