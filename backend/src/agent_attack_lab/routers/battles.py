@@ -360,6 +360,13 @@ async def create_battle(
                 arbiter_review=arbiter_review,
                 correlation_id=attack_call_id,
             )
+            feature_action = battle_timeline.emit_post_verdict_stages(
+                add_event,
+                round_number=index,
+                defense=defense,
+                classification=classification,
+                correlation_id=defense_call_id,
+            )
             round_data = {
                 "round": index,
                 "sample": sample,
@@ -421,7 +428,8 @@ async def create_battle(
             )
             submission_id = battle_timeline.submission_id_for(sample, index)
             if not any(
-                event.get("type") == "arbiter.round.scored"
+                event.get("type")
+                in {"arbiter.round.score", "arbiter.round.scored"}
                 and (event.get("data") or {}).get("round") == index
                 and (event.get("data") or {}).get("submissionId") == submission_id
                 and (event.get("data") or {}).get("rulesVersion") == SCORING_VERSION
@@ -452,7 +460,7 @@ async def create_battle(
                     else "unresolved"
                 )
                 add_event(
-                    "arbiter.round.scored",
+                    "arbiter.round.score",
                     "completed" if score_complete else "unresolved",
                     {
                         "round": index,
@@ -464,6 +472,10 @@ async def create_battle(
                         "classification": (
                             "scored" if score_complete else "unresolved"
                         ),
+                        "featureAction": feature_action["featureAction"],
+                        "featureActionReason": feature_action[
+                            "featureActionReason"
+                        ],
                         "scores": current_score.get("scores", {})
                         if current_score
                         else {},
@@ -964,7 +976,7 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
     for event in events:
         data = event.get("data") or {}
         if (
-            event.get("type") == "arbiter.round.scored"
+            event.get("type") in {"arbiter.round.score", "arbiter.round.scored"}
             and data.get("rulesVersion") == SCORING_VERSION
         ):
             try:

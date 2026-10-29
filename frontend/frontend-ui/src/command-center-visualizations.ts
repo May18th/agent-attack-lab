@@ -181,10 +181,11 @@ function logicalTimelineStage(type: string, stageId: string, data: Record<string
     return `arbiter-layer:${stageId || 'unknown'}`
   }
   if (type === 'arbiter.similarity.checked') return 'arbiter:A6'
-  if (type === 'arbiter.safe_control') return 'arbiter:safe-control'
+  if (type === 'arbiter.safe_control.started' || type === 'arbiter.safe_control') return 'arbiter:safe-control'
+  if (type === 'arbiter.safe_control.verdict') return 'arbiter:safe-control-verdict'
   if (type === 'defense.safe_control') return 'defender:safe-control'
   if (type === 'arbiter.verdict') return 'arbiter:verdict'
-  if (type === 'arbiter.round.scored') return 'arbiter:round-score'
+  if (type === 'arbiter.round.score' || type === 'arbiter.round.scored') return 'arbiter:round-score'
   if (type === 'round.settled') return 'arbiter:round-settled'
   if (type === 'battle.completed' || type === 'battle.failed') return 'arbiter:battle-settled'
   return `${type}:${stageId || 'event'}`
@@ -281,6 +282,9 @@ export class LiveBattleLifecycleProjector {
     }
     if (event.type === 'defense.safe_control') {
       return [lifecycleEvent(event, 'safe_control', event.data, stageId, event.status)]
+    }
+    if (event.type === 'arbiter.safe_control.verdict') {
+      return [lifecycleEvent(event, 'safe_control_verdict', event.data, stageId, event.status)]
     }
     if (event.type === 'attack.sample.generated' && round > 0) {
       this.pendingSamples.set(key, event)

@@ -1043,7 +1043,7 @@ function renderLiveEvent(event: BattleEvent) {
   const round = Number(event.data.round || 0)
   // 3D 事件先进入串行播放队列；时间线视觉项共享同一个完成信号。
   const ready = bridge3dEvent(event, round)
-  if (event.type === 'arbiter.round.scored' || event.type === 'round.settled') {
+  if (event.type === 'arbiter.round.score' || event.type === 'arbiter.round.scored' || event.type === 'round.settled') {
     const scores = eventRoundScore(event)
     if (scores) {
       if (slowPlayback) enqueueTimelinePlayback(() => syncLiveRoundScore(round, scores), ready)
@@ -1245,10 +1245,15 @@ function timelineGuide(event: BattleEvent, description: string): TimelineGuide {
   if (event.type === 'arbiter.verdict') {
     return { input: '各层检查、实际效果与恢复证据', action: '生成唯一最终分类', next: 'A8 · 公开结果复盘', score: '锁定本回合实际效果分类' }
   }
-  if (event.type === 'arbiter.safe_control' || event.type === 'defense.safe_control') {
+  if (
+    event.type === 'arbiter.safe_control'
+    || event.type === 'arbiter.safe_control.started'
+    || event.type === 'arbiter.safe_control.verdict'
+    || event.type === 'defense.safe_control'
+  ) {
     return { input: '独立正常样本与安全对照证据', action: '验证正常样本是否被正确放行', next: '回合评分与结算', score: '影响 Defender D-07 及相应响应分' }
   }
-  if (event.type === 'arbiter.round.scored') {
+  if (event.type === 'arbiter.round.score' || event.type === 'arbiter.round.scored') {
     return { input: '完整事件链、裁决和响应时长', action: '计算双方基础分、响应分与综合分', next: '本回合结算', score: '写入当前回合实时评分' }
   }
   if (event.type === 'round.settled') {
@@ -1376,7 +1381,8 @@ function eventTitle(event: BattleEvent) {
   }
   if (event.type === 'arbiter.layer.started') return `${stageId} · Arbiter 开启层检测`
   if (event.type === 'arbiter.layer.confirmed') return `${stageId} · Arbiter 确认本层结果`
-  if (event.type === 'arbiter.safe_control') return 'Arbiter · 启动安全对照'
+  if (event.type === 'arbiter.safe_control.started' || event.type === 'arbiter.safe_control') return 'Arbiter · 启动安全对照'
+  if (event.type === 'arbiter.safe_control.verdict') return `Arbiter · 特征库动作（${String(event.data.featureAction || 'no-update')}）`
   if (event.type === 'defense.safe_control') return 'D-07 · 安全对照结果'
   if (event.type === 'agent.call.started' || event.type === 'agent.call.completed' || event.type === 'agent.call.failed') {
     const role = String(event.data.agentRole || '').toLowerCase() === 'defender' ? 'Defender' : 'Attacker'
@@ -1392,7 +1398,8 @@ function eventTitle(event: BattleEvent) {
     'defense.layer.verdict': '防御检查点裁决',
     'defense.completed': '防守分析完成', 'arbiter.similarity.checked': 'A6 · 相似度元数据校验',
     'arbiter.verdict': 'Arbiter · 最终分类',
-    'arbiter.round.scored': 'Arbiter · 本回合评分', 'round.settled': 'Arbiter · 本回合结算',
+    'arbiter.round.score': 'Arbiter · 本回合评分', 'arbiter.round.scored': 'Arbiter · 本回合评分',
+    'round.settled': 'Arbiter · 本回合结算',
     'battle.completed': 'Arbiter · 整局结算完成', 'battle.failed': 'Arbiter · 战局执行失败',
   } as Record<string, string>)[event.type] || event.type
 }
@@ -1411,7 +1418,7 @@ function eventDescription(event: BattleEvent) {
     if (stageId === 'A7') return `提交 ${text(data.submissionId)} · ${data.accepted === false ? '未接受' : suffix}`
     if (stageId === 'A8') return `公开裁决 ${text(data.classification || data.verdict || '待公布')} · ${suffix}`
   }
-  if (event.type === 'arbiter.round.scored') {
+  if (event.type === 'arbiter.round.score' || event.type === 'arbiter.round.scored') {
     const scores = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : {}
     const attacker = scoreValue(scores.attacker)
     const defender = scoreValue(scores.defender)
@@ -1448,7 +1455,18 @@ function eventDescription(event: BattleEvent) {
   if (event.type === 'arbiter.layer.started') return `${text(data.layer || data.stageId)} 层检测已开启，等待 Defender 按顺序提交检查证据`
   if (event.type === 'arbiter.layer.confirmed') return `确认 ${text(data.layer || data.stageId)} 必要检查全部通过，证据完整`
   if (event.type === 'arbiter.verdict') return `最终分类：${text(data.classification || event.status)}`
-  if (event.type === 'defense.safe_control' || event.type === 'arbiter.safe_control' || event.type === 'safe_control') {
+  if (event.type === 'arbiter.safe_control.verdict') {
+    const action = String(data.featureAction || 'no-update')
+    return action === 'update-pending-review'
+      ? `特征库动作：update-pending-review · ${String(data.featureActionReason || '特征候选进入待审核队列')}`
+      : `特征库动作：${action} · ${String(data.featureActionReason || '不更新特征库')}`
+  }
+  if (
+    event.type === 'defense.safe_control'
+    || event.type === 'arbiter.safe_control'
+    || event.type === 'arbiter.safe_control.started'
+    || event.type === 'safe_control'
+  ) {
     const result = String(data.classification || data.status || event.status || '').toLowerCase()
     const allowed = result === 'passed' || result === 'allow' || result === 'allowed' || result === '放行'
     if (result === 'pending' || result === 'running' || !result) return '安全对照测试：正常样本检测中'

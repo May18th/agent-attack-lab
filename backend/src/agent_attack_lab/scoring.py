@@ -166,7 +166,10 @@ def _round_aggregate(
             number = int(data.get("round"))
         except TypeError, ValueError:
             continue
-        if event.get("type") == "arbiter.round.scored" and number > 0:
+        if (
+            event.get("type") in {"arbiter.round.score", "arbiter.round.scored"}
+            and number > 0
+        ):
             snapshots[number] = data
         if data.get("roundValidity") == "invalid" and number > 0:
             invalid_rounds.add(number)
@@ -827,6 +830,8 @@ def score_battle(
                         "attack.compromised",
                         "defense.safe_control",
                         "arbiter.safe_control",
+                        "arbiter.safe_control.started",
+                        "arbiter.safe_control.verdict",
                     }
                 )
             ][:4]
