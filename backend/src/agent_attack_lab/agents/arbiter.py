@@ -100,7 +100,6 @@ def _layer_evidence(
         if checks:
             result[str(layer["layer"])] = [
                 f"ARB-{layer['layer']}-{stage_id}-{fingerprint}" for stage_id in checks
-                for stage_id in checks
             ][:10]
     return result
 
