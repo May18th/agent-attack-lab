@@ -36,6 +36,7 @@ from fastapi.responses import StreamingResponse
 from agent_attack_lab import (
     battle_runner,
     battle_timeline,
+    candidate_library,
     config,
     scoring_glue,
     security,
@@ -48,7 +49,12 @@ from agent_attack_lab.agents.arbiter import review_round
 from agent_attack_lab.agents.attack_evolve import summarize_escalation
 from agent_attack_lab.battle_audit import audit_battle
 from agent_attack_lab.layer_interceptions import derive_layer_interceptions
-from agent_attack_lab.models import BattleEvent, BattleRecord, BattleRequest
+from agent_attack_lab.models import (
+    BattleEvent,
+    BattleRecord,
+    BattleRequest,
+    CrossMemoryStateRequest,
+)
 from agent_attack_lab.scoring import SCORING_VERSION, score_battle_rounds
 from agent_attack_lab.target_verify import (
     aggregate_verdict,
@@ -141,6 +147,7 @@ async def create_battle(
             topic=payload.topic,
             status="pending",
             rounds=payload.rounds,
+            crossMemory=payload.crossMemory,
             createdAt=created_at,
             attackerOut={"samples": []},
             defenderOut=[],
@@ -169,6 +176,7 @@ async def create_battle(
                     "topic": payload.topic,
                     "difficulty": payload.difficulty,
                     "rounds": payload.rounds,
+                    "crossMemory": payload.crossMemory,
                     "rulesVersion": SCORING_VERSION,
                     "attackerSource": "acp-pending"
                     if acp_agent_configured("attacker")
@@ -199,6 +207,7 @@ async def create_battle(
             "topic": payload.topic,
             "difficulty": payload.difficulty,
             "rounds": payload.rounds,
+            "crossMemory": payload.crossMemory,
             "rulesVersion": SCORING_VERSION,
             "attackerSource": "acp-pending"
             if acp_agent_configured("attacker")
@@ -242,6 +251,12 @@ async def create_battle(
                 },
             )
             round_payload = payload.model_copy(update={"rounds": 1})
+            attacker_memory = candidate_library.agent_memory(
+                battle_id=battle_id,
+                role="attacker",
+                round_index=index,
+                cross_enabled=payload.crossMemory,
+            )
             (
                 generated,
                 attacker_source,
@@ -250,13 +265,14 @@ async def create_battle(
                 battle_id=battle_id,
                 role="attacker",
                 # 回调可能被重试逻辑延后调用：用默认参数把当轮的值固定下来（B023）。
-                invoke=lambda correlation_id, current_payload=round_payload, current_round=index, previous=previous_round: (
+                invoke=lambda correlation_id, current_payload=round_payload, current_round=index, previous=previous_round, memory=attacker_memory: (
                     battle_runner.battle_attack(
                         current_payload,
                         correlation_id=correlation_id,
                         round_index=current_round,
                         total_rounds=payload.rounds,
                         previous_round=previous,
+                        candidate_memory=memory,
                     )
                 ),
                 add_event=add_event,
@@ -306,9 +322,14 @@ async def create_battle(
             ) = await battle_runner.tracked_agent_call(
                 battle_id=battle_id,
                 role="defender",
-                invoke=lambda correlation_id, current_sample=sample: (
+                invoke=lambda correlation_id, current_sample=sample, memory=candidate_library.agent_memory(
+                    battle_id=battle_id,
+                    role="defender",
+                    round_index=index,
+                    cross_enabled=payload.crossMemory,
+                ): (
                     battle_runner.battle_defend(
-                        current_sample, correlation_id=correlation_id
+                        current_sample, correlation_id=correlation_id, candidate_memory=memory
                     )
                 ),
                 add_event=add_event,
@@ -415,6 +436,19 @@ async def create_battle(
                         "correlationId": defense_call_id,
                     },
                 )
+            candidate_result = candidate_library.record_round(
+                battle_id=battle_id,
+                round_number=index,
+                topic=payload.topic,
+                sample=sample,
+                defense=defense,
+                verification=verification,
+                classification=classification,
+                previous_sample=attack_result["samples"][index - 2]
+                if index > 1
+                else None,
+                cross_enabled=payload.crossMemory,
+            )
             add_event(
                 "round.settled",
                 "completed",
@@ -424,6 +458,11 @@ async def create_battle(
                     "classification": classification,
                     "structuredTimelineVersion": "v2.0",
                     "rulesVersion": SCORING_VERSION,
+                    "candidateLibrary": {
+                        "attacker": candidate_result["attacker"],
+                        "defender": candidate_result["defender"],
+                        "crossEnabled": payload.crossMemory,
+                    },
                 },
             )
             submission_id = battle_timeline.submission_id_for(sample, index)
@@ -524,6 +563,7 @@ async def create_battle(
             topic=payload.topic,
             status="failed",
             rounds=payload.rounds,
+            crossMemory=payload.crossMemory,
             createdAt=created_at,
             attackerOut=attack_result,
             defenderOut=defense_results,
@@ -559,6 +599,7 @@ async def create_battle(
         topic=payload.topic,
         status="completed",
         rounds=payload.rounds,
+        crossMemory=payload.crossMemory,
         verdict=aggregate_verdict(verification_mode, verifications, defense_results),
         createdAt=created_at,
         attackerOut=attack_result,
@@ -1102,3 +1143,85 @@ async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
     finally:
         if websocket.client_state.name == "CONNECTED":
             await websocket.close()
+
+
+# ---------------------------------------------------------------------------
+# 候选库（一局记忆 / 跨局记忆）API
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/battles/{battle_id}/candidate-library",
+    summary="读取战局的候选库（一局记忆）",
+    description=(
+        "返回本战局 Attacker 策略候选与 Defender 特征候选记录。"
+        "一局记忆逐回合累积；前端开新一局时使用新 battleId，即得到空的一局库。"
+    ),
+    tags=["战局接口"],
+)
+def get_battle_candidate_library(battle_id: str) -> dict[str, Any]:
+    return candidate_library.battle_entries(battle_id)
+
+
+@router.get(
+    "/libraries/cross-memory",
+    summary="读取跨局记忆（长期候选库）",
+    description=(
+        "返回跨局保存的 Attacker 策略候选与 Defender 特征候选。"
+        "仅当战局创建时开启跨局记忆开关才会写入；关闭开关不会删除已有数据。"
+    ),
+    tags=["战局接口"],
+)
+def get_cross_memory_library() -> dict[str, Any]:
+    return candidate_library.cross_entries()
+
+
+@router.post(
+    "/libraries/cross-memory/state",
+    dependencies=[Depends(security.rate_limit_dependency)],
+    summary="同步跨局记忆开关状态",
+    description=(
+        "前端切换跨局记忆开关时调用，把状态绑定到当前战局："
+        "开启后该战局智能体从第 1 回合读取长期记忆，且每回合结算写入跨局库。"
+    ),
+    tags=["战局接口"],
+)
+def set_cross_memory_state(payload: CrossMemoryStateRequest, request: Request) -> dict[str, Any]:
+    security.check_browser_or_api_auth(request)
+    updated = candidate_library.set_battle_flag(
+        payload.battleId, enabled=payload.enabled
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="战局尚无候选库记录")
+    events_api.record_audit_event(
+        "library.cross_memory.state_changed",
+        status="accepted",
+        request_id=request.state.request_id,
+        battle_id=payload.battleId,
+        actor_role="operator",
+        data={"enabled": payload.enabled},
+    )
+    return {"battleId": payload.battleId, "crossMemory": payload.enabled}
+
+
+@router.delete(
+    "/libraries/cross-memory",
+    dependencies=[Depends(security.rate_limit_dependency)],
+    summary="清空跨局记忆",
+    description=(
+        "彻底删除 Attacker 与 Defender 的跨局候选记录（一局记忆不受影响），"
+        "对应前端「清空记忆」按钮，并保留审计记录。"
+    ),
+    tags=["战局接口"],
+)
+def clear_cross_memory_library(request: Request) -> dict[str, Any]:
+    security.check_browser_or_api_auth(request)
+    cleared = candidate_library.clear_cross()
+    events_api.record_audit_event(
+        "library.cross_memory.cleared",
+        status="completed",
+        request_id=request.state.request_id,
+        actor_role="operator",
+        data=cleared,
+    )
+    return {"cleared": cleared}

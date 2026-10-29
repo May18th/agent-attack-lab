@@ -580,6 +580,8 @@ def test_battle_injects_role_scoped_knowledge_into_remote_agents(monkeypatch) ->
         # 攻击方需要知道自己是第几轮，才能选择战术并判断是否已有上轮反馈。
         "_roundIndex": 1,
         "_totalRounds": 1,
+        # 跨局记忆开关随战局配置下发给智能体（未开启时为 False）。
+        "crossMemory": False,
         "_knowledgeContext": {
             "role": "attacker",
             "records": [

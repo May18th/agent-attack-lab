@@ -3018,11 +3018,11 @@ var battle3d=(function(){
     document.addEventListener('mouseup',function(){res=false;});
   })();
   var libraryModalState={attacker:{memory:'battle'},defender:{memory:'battle'}};
-  function openLibraryModal(role){var modal=document.getElementById(role==='attacker'?'attackerLibraryModal':'defenderLibraryModal');if(modal)modal.classList.add('open');renderCandidateLibrary(role);}
+  function openLibraryModal(role){var modal=document.getElementById(role==='attacker'?'attackerLibraryModal':'defenderLibraryModal');if(modal)modal.classList.add('open');if(LIB_API_BASE)refreshRemoteLibraries();renderCandidateLibrary(role);}
   function setupLibraryModal(role){
     var prefix=role==='attacker'?'attackerLibrary':'defenderLibrary',modal=document.getElementById(prefix+'Modal');
     document.getElementById(prefix+'Close').addEventListener('click',function(){modal.classList.remove('open');});
-    modal.querySelectorAll('.library-tab').forEach(function(tab){tab.addEventListener('click',function(){libraryModalState[role].memory=tab.dataset.memory||'battle';modal.querySelectorAll('.library-tab').forEach(function(x){x.classList.toggle('active',x===tab);});renderCandidateLibrary(role);});});
+    modal.querySelectorAll('.library-tab').forEach(function(tab){tab.addEventListener('click',function(){libraryModalState[role].memory=tab.dataset.memory||'battle';modal.querySelectorAll('.library-tab').forEach(function(x){x.classList.toggle('active',x===tab);});if(libraryModalState[role].memory==='cross'&&LIB_API_BASE)refreshRemoteLibraries();renderCandidateLibrary(role);});});
     (function(){
       var head=document.getElementById(prefix+'Head'),mx=0,my=0,ox=0,oy=0,drag=false;
       head.addEventListener('mousedown',function(e){if(e.target.closest('button'))return;drag=true;mx=e.clientX;my=e.clientY;ox=modal.offsetLeft;oy=modal.offsetTop;e.preventDefault();});
@@ -3035,17 +3035,43 @@ var battle3d=(function(){
     })();
   }
   setupLibraryModal('attacker');setupLibraryModal('defender');
-  document.getElementById('healthBtn').addEventListener('click',function(){showToast('服务健康检查正常');});
+  var LIB_API_BASE=(function(){
+    var explicit='';
+    try{explicit=String(window.AGENT_LAB_API_BASE||localStorage.getItem('agentLabApiBase')||'').replace(/\/+$/,'');}catch(e){}
+    if(explicit)return explicit;
+    /* 公网正式部署：www 站点默认走 api 子域；本地开发用 localStorage 配置 */
+    var host=(location.hostname||'').toLowerCase();
+    if(host==='yuanyiagentzhandui.cn'||host==='www.yuanyiagentzhandui.cn')return 'https://api.yuanyiagentzhandui.cn';
+    return '';
+  })();
+  function libApi(method,path,body){
+    if(!LIB_API_BASE)return Promise.resolve(null);
+    return fetch(LIB_API_BASE+path,{method:method,headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined,credentials:'include'})
+      .then(function(res){if(!res.ok)throw new Error('HTTP '+res.status);return res.status===204?null:res.json();});
+  }
+  document.getElementById('healthBtn').addEventListener('click',function(){
+    if(!LIB_API_BASE){showToast('未配置后端 API（可在控制台执行 localStorage.setItem("agentLabApiBase","http://127.0.0.1:8787")），当前为本地演示模式');return;}
+    showToast('正在检查后端：'+LIB_API_BASE);
+    libApi('GET','/health').then(function(){showToast('后端连接正常：'+LIB_API_BASE);}).catch(function(){showToast('后端不可达：'+LIB_API_BASE);});
+  });
   var CROSS_BATTLE_MEMORY_KEY='agentLabCrossBattleMemoryV1',memoryResetVersion=0;
   var roundCandidateMemory={attacker:[],defender:[]};
   function readCrossBattleMemory(){try{var data=JSON.parse(localStorage.getItem(CROSS_BATTLE_MEMORY_KEY)||'null')||{battleCount:0};data.attackerCandidates=Array.isArray(data.attackerCandidates)?data.attackerCandidates:[];data.defenderCandidates=Array.isArray(data.defenderCandidates)?data.defenderCandidates:[];return data;}catch(e){return {battleCount:0,attackerCandidates:[],defenderCandidates:[]};}}
   function hasStoredCrossBattleMemory(){try{return localStorage.getItem(CROSS_BATTLE_MEMORY_KEY)!==null;}catch(e){return false;}}
   function renderCandidateLibrary(role){
     var prefix=role==='attacker'?'attackerLibrary':'defenderLibrary',memory=libraryModalState[role].memory,list=document.getElementById(prefix+'List'),state=document.getElementById(prefix+'State');if(!list)return;
-    var data=readCrossBattleMemory(),entries=memory==='cross'?(role==='attacker'?data.attackerCandidates:data.defenderCandidates):roundCandidateMemory[role];
+    var data=readCrossBattleMemory(),entries,fromBackend=false;
+    if(memory==='cross'){
+      if(LIB_API_BASE){entries=role==='attacker'?remoteLibraryState.cross.attacker:remoteLibraryState.cross.defender;fromBackend=true;}
+      else{entries=role==='attacker'?data.attackerCandidates:data.defenderCandidates;}
+    }else{
+      if(LIB_API_BASE&&remoteLibraryState.battleId){entries=role==='attacker'?remoteLibraryState.battle.attacker:remoteLibraryState.battle.defender;fromBackend=true;}
+      else{entries=roundCandidateMemory[role];}
+    }
     entries=Array.isArray(entries)?entries:[];list.innerHTML='';
-    state.textContent=(memory==='cross'?'跨局记忆':'当前战局')+' · '+entries.length+' 条'+(memory==='cross'&&!document.getElementById('memToggle').checked?' · 开关已关闭，数据仍保留':'');
-    if(!entries.length){list.innerHTML='<div class="library-empty">'+(memory==='cross'?'开启跨局记忆后，回合结算数据会持续写入这里；关闭开关不会删除已有数据。':'等待回合结算后生成候选记录')+'</div>';return;}
+    var scopeLabel=memory==='cross'?'跨局记忆':'当前战局';
+    state.textContent=scopeLabel+' · '+entries.length+' 条'+(fromBackend?' · 后端智能体同步':'')+((memory==='cross'&&fromBackend&&remoteLibraryState.battleCount)?' · 累计 '+remoteLibraryState.battleCount+' 局':'')+(memory==='cross'&&!LIB_API_BASE&&!document.getElementById('memToggle').checked?' · 开关已关闭，数据仍保留':'');
+    if(!entries.length){list.innerHTML='<div class="library-empty">'+(memory==='cross'?(LIB_API_BASE?'后端跨局记忆为空：开启跨局记忆后，每回合结算会持续写入；关闭开关不会删除已有数据。':'开启跨局记忆后，回合结算数据会持续写入这里；关闭开关不会删除已有数据。'):(fromBackend?'等待后端智能体回合结算后生成候选记录…':'等待回合结算后生成候选记录'))+'</div>';return;}
     entries.slice().reverse().forEach(function(candidate){
       var card=document.createElement('article');card.className='library-entry '+(role==='attacker'?'att':'def');
       var head=document.createElement('div');head.className='library-entry-head';head.innerHTML='<span>R'+String(candidate.round)+' · '+String(candidate.resultLabel||'候选记录')+'</span><span class="library-entry-tag">'+String(candidate.sourceType||'local')+'</span>';card.appendChild(head);
@@ -3064,8 +3090,8 @@ var battle3d=(function(){
   var memToggle=document.getElementById('memToggle'),memClear=document.getElementById('memClear');
   function syncMemoryClearState(){if(memClear)memClear.disabled=!(memToggle.checked||hasStoredCrossBattleMemory());}
   function markCrossBattleMemoryEnabled(){if(hasStoredCrossBattleMemory())return;try{localStorage.setItem(CROSS_BATTLE_MEMORY_KEY,JSON.stringify({version:1,everEnabled:true,battleCount:0,updatedAt:new Date().toISOString()}));}catch(e){}}
-  memToggle.addEventListener('change',function(){if(this.checked)markCrossBattleMemoryEnabled();syncMemoryClearState();renderAllCandidateLibraries();showToast(this.checked?'跨局记忆：Attacker 与 Defender 同时开启':'跨局记忆：关闭；已有候选数据保留，后续回合停止写入跨局库');});
-  memClear.addEventListener('click',function(){if(memToggle.checked||hasStoredCrossBattleMemory())clearCrossBattleMemory(false);});
+  memToggle.addEventListener('change',function(){if(this.checked)markCrossBattleMemoryEnabled();syncMemoryClearState();renderAllCandidateLibraries();syncRemoteCrossState(this.checked);showToast(this.checked?'跨局记忆：Attacker 与 Defender 同时开启':'跨局记忆：关闭；已有候选数据保留，后续回合停止写入跨局库');});
+  memClear.addEventListener('click',function(){if(memToggle.checked||hasStoredCrossBattleMemory()){clearCrossBattleMemory(false);clearRemoteCrossMemory();}});
   syncMemoryClearState();
   renderAllCandidateLibraries();
 
@@ -3084,6 +3110,49 @@ var battle3d=(function(){
     roundCandidateMemory.attacker.push({round:round,theme:theme,resultLabel:resultLabel,sourceType:sourceType,fields:attackerFields});
     roundCandidateMemory.defender.push({round:round,theme:theme,resultLabel:resultLabel,sourceType:sourceType,fields:defenderFields});
     persistCandidate('attacker',Object.assign({},base,{fields:attackerFields}));persistCandidate('defender',Object.assign({},base,{fields:defenderFields}));renderAllCandidateLibraries();
+    if(LIB_API_BASE&&remoteLibraryState.battleId)refreshRemoteLibraries();
+  }
+
+  /* ============ 后端候选库同步（智能体 ↔ 前端）============ */
+  /* 配置 LIB_API_BASE 后（localStorage.agentLabApiBase 或 window.AGENT_LAB_API_BASE），
+     开始攻防会在后端创建真实智能体战局：每回合攻防结算后，Attacker 策略候选与
+     Defender 特征候选由后端写入候选库（一局记忆按战局隔离，跨局记忆受开关控制），
+     前端轮询拉取并渲染，形成智能体逐回合迭代学习的前后端闭环。 */
+  var remoteLibraryState={battleId:null,crossMemory:false,battle:{attacker:[],defender:[]},cross:{attacker:[],defender:[]},battleCount:0,pollTimer:null};
+  function normalizeRemoteEntries(list){return (Array.isArray(list)?list:[]).map(function(item){return {round:item.round,theme:item.topic,resultLabel:item.resultLabel,sourceType:item.sourceType,createdAt:item.createdAt,fields:item.fields||{}};});}
+  function applyRemoteBattleLibrary(data){if(!data)return;remoteLibraryState.battleId=data.battleId||remoteLibraryState.battleId;remoteLibraryState.crossMemory=!!data.crossMemory;remoteLibraryState.battle={attacker:normalizeRemoteEntries(data.attacker),defender:normalizeRemoteEntries(data.defender)};}
+  function applyRemoteCrossLibrary(data){if(!data)return;remoteLibraryState.cross={attacker:normalizeRemoteEntries(data.attacker),defender:normalizeRemoteEntries(data.defender)};remoteLibraryState.battleCount=Number(data.battleCount||0);}
+  function refreshRemoteLibraries(){
+    if(!LIB_API_BASE)return Promise.resolve();
+    return Promise.all([
+      libApi('GET','/libraries/cross-memory').then(applyRemoteCrossLibrary),
+      remoteLibraryState.battleId?libApi('GET','/battles/'+encodeURIComponent(remoteLibraryState.battleId)+'/candidate-library').then(applyRemoteBattleLibrary):null
+    ]).then(function(){renderAllCandidateLibraries();}).catch(function(){});
+  }
+  function stopRemotePolling(){if(remoteLibraryState.pollTimer){clearInterval(remoteLibraryState.pollTimer);remoteLibraryState.pollTimer=null;}}
+  function startRemoteBattle(topic,difficulty,rounds,crossEnabled){
+    if(!LIB_API_BASE)return;
+    libApi('POST','/battles?background=true',{topic:topic,difficulty:difficulty,rounds:rounds,crossMemory:crossEnabled}).then(function(record){
+      if(!record||!record.id){showToast('后端未返回战局，候选库使用本地演示数据');return;}
+      remoteLibraryState.battleId=record.id;remoteLibraryState.crossMemory=crossEnabled;
+      remoteLibraryState.battle={attacker:[],defender:[]};
+      stopRemotePolling();
+      remoteLibraryState.pollTimer=setInterval(function(){
+        libApi('GET','/battles/'+encodeURIComponent(record.id)).then(function(battle){
+          refreshRemoteLibraries();
+          if(battle&&(battle.status==='completed'||battle.status==='failed')){stopRemotePolling();showToast('后端战局 '+(battle.code||record.id)+' 已结束：候选库完成最终同步');}
+        }).catch(function(){});
+      },3000);
+      showToast('已连接后端智能体战局 '+(record.code||record.id)+'：候选库将逐回合同步'+(crossEnabled?'（跨局记忆开启）':''));
+    }).catch(function(){showToast('后端连接失败，候选库使用本地演示数据');});
+  }
+  function syncRemoteCrossState(enabled){
+    if(!LIB_API_BASE||!remoteLibraryState.battleId)return;
+    libApi('POST','/libraries/cross-memory/state',{battleId:remoteLibraryState.battleId,enabled:!!enabled}).catch(function(){});
+  }
+  function clearRemoteCrossMemory(){
+    if(!LIB_API_BASE)return;
+    libApi('DELETE','/libraries/cross-memory').then(function(){applyRemoteCrossLibrary({attacker:[],defender:[],battleCount:0});renderAllCandidateLibraries();}).catch(function(){});
   }
 
   /* ============ 配置弹窗 ============ */
@@ -3698,6 +3767,10 @@ var battle3d=(function(){
     setMetricBar('barDefender',0);
     setScoreboard(null,null,'等待第 1 回合结算',false,0,[]);
     setLiveVisualizationState({status:'loading'});
+    // 新一局：一局记忆回到空库；后端已配置时创建真实智能体战局并轮询同步候选库
+    remoteLibraryState.battle={attacker:[],defender:[]};
+    stopRemotePolling();
+    startRemoteBattle(state.theme,state.level.key,state.rounds,!!memToggle.checked);
     playDemo(state.theme, state.rounds, state.level.key, state.level.name);
   });
 

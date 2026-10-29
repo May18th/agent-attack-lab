@@ -63,6 +63,13 @@ def _payload_similarity(
     return round(dot / (current_norm * previous_norm), 6)
 
 
+def payload_similarity(
+    sample: Mapping[str, Any], previous_sample: Mapping[str, Any] | None
+) -> float | None:
+    """Public alias of :func:`_payload_similarity` for other modules."""
+    return _payload_similarity(sample, previous_sample)
+
+
 def emit_attack_stages(
     add_event: AddEvent,
     *,
