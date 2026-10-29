@@ -275,6 +275,9 @@ def emit_defense_and_arbiter_stages(
             )
             if check["status"] == "blocked" and blocked_check is None:
                 blocked_check = check
+                break
+        if blocked_check is not None:
+            break
         raw_evidence_ids = (
             layer_evidence.get(layer["layer"])
             if isinstance(layer_evidence, Mapping)
