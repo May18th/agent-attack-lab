@@ -1281,15 +1281,12 @@ function appendTimeline(
   let event = Array.from(host.querySelectorAll<HTMLElement>('.event'))
     .find((item) => item.dataset.timelineKey === key)
   const isNew = !event
-  const expanded = event?.classList.contains('is-expanded') || false
+  const expanded = event?.querySelector<HTMLDetailsElement>('.event-disclosure')?.open || false
   if (!event) event = document.createElement('div')
   event.className = `event ${side}${expanded ? ' is-expanded' : ''}`
   event.dataset.timelineKey = key
   event.dataset.eventId = sourceEvent.id
-  event.setAttribute('role', 'button')
-  event.setAttribute('tabindex', '0')
-  event.setAttribute('aria-expanded', String(expanded))
-  event.setAttribute('aria-label', `${title}，${timelineStatusLabel(timelineStatus(sourceEvent))}，点击查看审计详情`)
+  
   event.replaceChildren()
   const card = document.createElement('div')
   card.className = 'card'
@@ -1346,26 +1343,20 @@ function appendTimeline(
     timelineDetail('评分影响', guide.score),
     timelineDetail('下一节点', guide.next),
   )
-  card.append(actor, name, desc, status, timingRow, audit, detail)
+  const disclosure = document.createElement('details')
+  disclosure.className = 'event-disclosure'
+  disclosure.open = expanded
+  const summary = document.createElement('summary')
+  summary.textContent = '查看事件详情'
+  disclosure.append(summary, timingRow, audit, detail)
+  card.append(actor, name, desc, status, disclosure)
   event.appendChild(card)
   if (side !== 'judge') {
     const dot = document.createElement('span')
     dot.className = 'dot'
     event.appendChild(dot)
   }
-  if (isNew) {
-    const toggle = () => {
-      const open = event!.classList.toggle('is-expanded')
-      event!.setAttribute('aria-expanded', String(open))
-    }
-    event.addEventListener('click', toggle)
-    event.addEventListener('keydown', (keyboardEvent) => {
-      if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return
-      keyboardEvent.preventDefault()
-      toggle()
-    })
-    host.appendChild(event)
-  }
+    if (isNew) host.appendChild(event)
   // 让页面脚本根据用户是否正在手动查看时间线决定是否跟随到底部。
   // 直接设置 scrollTop 会覆盖用户滚轮位置，导致实时事件到来时强制跳到底部。
   window.dispatchEvent(new CustomEvent('battle-timeline:follow'))
