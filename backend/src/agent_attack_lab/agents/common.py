@@ -37,6 +37,29 @@ from agent_attack_lab.agents.llm_runtime import is_configured as llm_configured
 from agent_attack_lab.aip_compat import server_identity_options
 
 
+# 平台协作入口（如叮当）派发的是自然语言指令，而不是 ACS 约定的结构化字段。
+# 这类请求在 TextDataItem 里是一段人话，json.loads 必然失败；若直接抛错，
+# 平台侧只会看到 "AIP 输入必须是 JSON 对象"，整条互联链路就断在格式上。
+# 因此非 JSON 文本一律降级为最小可用载荷：攻击方按 topic 取用，
+# 防守方按 sample.content 取用，同一段指令两边都能消费。
+_INSTRUCTION_TOPIC_LIMIT = 200  # 与 AttackRequest.topic 的 max_length 对齐
+_INSTRUCTION_CONTENT_LIMIT = 8000  # 与 defender 的 content 截断长度对齐
+
+
+def _instruction_payload(text: str) -> dict[str, Any]:
+    instruction = text.strip()
+    topic = instruction[:_INSTRUCTION_TOPIC_LIMIT] or "general"
+    return {
+        "instruction": instruction,
+        "text": instruction,
+        "topic": topic,
+        "sample": {
+            "content": instruction[:_INSTRUCTION_CONTENT_LIMIT],
+            "topic": topic,
+        },
+    }
+
+
 def _command_payload(command: TaskCommand) -> dict[str, Any]:
     payload = (command.commandParams or {}).get("payload")
     if isinstance(payload, dict):
@@ -46,13 +69,20 @@ def _command_payload(command: TaskCommand) -> dict[str, Any]:
         if isinstance(item, StructuredDataItem):
             return item.data
         if isinstance(item, TextDataItem):
+            text = (item.text or "").strip()
+            if not text:
+                continue
             try:
-                payload = json.loads(item.text)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("AIP 输入必须是 JSON 对象") from exc
+                payload = json.loads(text)
+            except (TypeError, ValueError):
+                payload = None
             if isinstance(payload, dict):
                 return payload
-            raise ValueError("AIP 输入必须是 JSON 对象")
+            logger.info(
+                "AIP 输入为自然语言指令（非 JSON），按通用载荷处理：%s",
+                text[:80],
+            )
+            return _instruction_payload(text)
 
     raise ValueError("AIP Start 命令缺少 JSON 输入")
 
