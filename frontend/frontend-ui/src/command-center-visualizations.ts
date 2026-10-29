@@ -11,6 +11,9 @@ export type BattleVisualizationRoleScore = {
 export type BattleVisualizationRound = {
   round: number
   status: string
+  sample?: unknown
+  startedAt?: string | null
+  sourceType?: string | null
   attackSuccess?: boolean
   defenseSuccess?: boolean
   safeControl?: {
@@ -29,6 +32,10 @@ export type BattleVisualizationRound = {
 
 export type BattleVisualizationSummary = {
   points: Array<{ round: number; attacker: number | null; defender: number | null }>
+  roundCount: number
+  payloadCount: number
+  newSourcePayloadCount: number
+  payloadUpdateRate: number
   classificationAvailable: boolean
   interceptedRounds: number | null
   escapedRounds: number | null
@@ -82,11 +89,16 @@ function average(values: number[]): number | null {
     : null
 }
 
+function percentage(numerator: number, denominator: number): number {
+  return denominator > 0 ? Math.round(numerator / denominator * 10_000) / 100 : 0
+}
+
 export function buildBattleVisualizations(rounds: readonly BattleVisualizationRound[]): BattleVisualizationSummary {
-  const completed = rounds
-    .filter((round) => round.status === 'completed')
+  const visibleRounds = rounds
+    .filter((round) => round.status !== 'pending' || Boolean(round.startedAt))
     .slice()
     .sort((left, right) => left.round - right.round)
+  const completed = visibleRounds.filter((round) => round.status === 'completed')
 
   const classified = completed.filter((round) => (
     typeof round.attackSuccess === 'boolean'
@@ -103,18 +115,25 @@ export function buildBattleVisualizations(rounds: readonly BattleVisualizationRo
   const classifiedRounds = interceptedRounds === null || escapedRounds === null
     ? null
     : interceptedRounds + escapedRounds
+  const payloadRounds = rounds.filter((round) => round.sample != null || round.sourceType != null)
+  const newSourcePayloadCount = payloadRounds.filter((round) => round.sourceType === 'new-source').length
+  const roundCount = visibleRounds.length
   return {
-    points: completed.map((round) => ({
+    points: visibleRounds.map((round) => ({
       round: round.round,
       attacker: roleScore(round.attacker),
       defender: roleScore(round.defender),
     })),
+    roundCount,
+    payloadCount: payloadRounds.length,
+    newSourcePayloadCount,
+    payloadUpdateRate: percentage(newSourcePayloadCount, payloadRounds.length),
     classificationAvailable,
     interceptedRounds,
     escapedRounds,
     classifiedRounds,
-    effectiveInterceptionRate: interceptedRounds !== null && classifiedRounds !== null && classifiedRounds > 0
-      ? interceptedRounds / classifiedRounds * 100
+    effectiveInterceptionRate: interceptedRounds !== null && roundCount > 0
+      ? percentage(interceptedRounds, roundCount)
       : null,
     averageResponseMs: average(completed
       .map((round) => round.durationMs)

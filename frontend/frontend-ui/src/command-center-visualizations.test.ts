@@ -51,8 +51,13 @@ describe('live battle visualizations', () => {
         { round: 1, attacker: 72.5, defender: 84 },
         { round: 2, attacker: null, defender: null },
         { round: 3, attacker: null, defender: null },
+        { round: 4, attacker: 100, defender: 100 },
         { round: 5, attacker: 50, defender: 50 },
       ],
+      roundCount: 5,
+      payloadCount: 0,
+      newSourcePayloadCount: 0,
+      payloadUpdateRate: 0,
       classificationAvailable: false,
       interceptedRounds: null,
       escapedRounds: null,
@@ -90,7 +95,31 @@ describe('live battle visualizations', () => {
       interceptedRounds: 1,
       escapedRounds: 1,
       classifiedRounds: 2,
-      effectiveInterceptionRate: 50,
+      effectiveInterceptionRate: 33.33,
+    })
+  })
+
+  it('uses all battle payloads for source rate and only started rounds on the score axis', () => {
+    const result = buildBattleVisualizations([
+      { round: 1, status: 'completed', sample: { id: 'p1' }, sourceType: 'baseline', attackSuccess: false, defenseSuccess: true },
+      { round: 2, status: 'completed', sample: { id: 'p2' }, sourceType: 'new-source', attackSuccess: true, defenseSuccess: false },
+      { round: 3, status: 'running', startedAt: '2026-10-30T00:00:00Z', attacker: { score: 60 } },
+      { round: 4, status: 'pending', sample: { id: 'p4' }, sourceType: null },
+    ])
+
+    expect(result).toMatchObject({
+      points: [
+        { round: 1, attacker: null, defender: null },
+        { round: 2, attacker: null, defender: null },
+        { round: 3, attacker: 60, defender: null },
+      ],
+      roundCount: 3,
+      payloadCount: 3,
+      newSourcePayloadCount: 1,
+      payloadUpdateRate: 33.33,
+      interceptedRounds: 1,
+      escapedRounds: 1,
+      effectiveInterceptionRate: 33.33,
     })
   })
 

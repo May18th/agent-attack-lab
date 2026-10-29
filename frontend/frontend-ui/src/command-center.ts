@@ -669,9 +669,23 @@ function publishBattleVisualizations(rounds: readonly BattleVisualizationRound[]
 async function refreshBattleVisualizations(battleId: string) {
   const requestGeneration = ++visualizationRequestGeneration
   try {
-    const result = await json<{ rounds?: (BattleVisualizationRound & BattleRoundScore)[] }>(`/battles/${encodeURIComponent(battleId)}/rounds`)
+    const encodedBattleId = encodeURIComponent(battleId)
+    const [result, similarityEvents] = await Promise.all([
+      json<{ rounds?: (BattleVisualizationRound & BattleRoundScore)[] }>(`/battles/${encodedBattleId}/rounds`),
+      json<BattleEvent[]>(`/battles/${encodedBattleId}/events?event_type=arbiter.similarity.checked&limit=1000`).catch(() => []),
+    ])
     if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
     renderRoundScoreDetails(result.rounds || [])
+    const sourceByRound = new Map<number, string>()
+    similarityEvents.forEach((event) => {
+      const round = Number(event.data.round)
+      const sourceType = event.data.sourceType
+      if (Number.isInteger(round) && round > 0 && typeof sourceType === 'string') sourceByRound.set(round, sourceType)
+    })
+    const visualizationRounds = (result.rounds || []).map((round) => ({
+      ...round,
+      sourceType: sourceByRound.get(Number(round.round)) ?? round.sourceType,
+    }))
     liveRoundScores.clear()
     ;(result.rounds || []).forEach((round) => {
       const attackerRole = round.attacker && typeof round.attacker === 'object' ? round.attacker : undefined
@@ -698,7 +712,7 @@ async function refreshBattleVisualizations(battleId: string) {
         detail: { rounds: result.rounds || [], latest: normalizedLatest, label: `第 ${latest.round} 回合已结算` },
       }))
     }
-    publishBattleVisualizations(Array.isArray(result.rounds) ? result.rounds : [], 'ready')
+    publishBattleVisualizations(visualizationRounds, 'ready')
   } catch {
     if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
     publishBattleVisualizations([], 'unavailable')
