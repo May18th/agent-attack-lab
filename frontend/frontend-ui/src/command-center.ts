@@ -128,6 +128,8 @@ const state = {
   streamAbort: null as AbortController | null,
   streamSeen: new Set<string>(),
   sessionEnabled: false,
+  authenticated: false,
+  guestMode: false,
   starting: false,
   searchTimer: 0,
   requestedRounds: 3,
@@ -136,6 +138,14 @@ const state = {
 let visualizationRequestGeneration = 0
 let liveTimelineProjector = new LiveBattleTimelineProjector()
 let liveLifecycleProjector = new LiveBattleLifecycleProjector()
+type TimelinePlaybackItem = { ready: Promise<void>; render: () => void }
+type ThreePlaybackItem = { event: BattleEvent; round: number; resolve: () => void }
+let slowPlayback = false
+let timelinePlaybackQueue: TimelinePlaybackItem[] = []
+let timelinePlaybackRunning = false
+const pendingAnimationResolvers = new Set<() => void>()
+let threePlaybackQueue: ThreePlaybackItem[] = []
+let threePlaybackRunning = false
 type LiveRoundScore = {
   attacker: number | null
   defender: number | null
@@ -143,6 +153,74 @@ type LiveRoundScore = {
   defenderRole?: RoundScoreRole
 }
 const liveRoundScores = new Map<number, LiveRoundScore>()
+
+function animationWindowMs(type: string) {
+  if (type.includes('layer')) return 1100
+  if (type.includes('verdict') || type.includes('similarity')) return 950
+  if (type.includes('sample') || type.includes('stage')) return 850
+  if (type.includes('settled') || type.includes('scored')) return 950
+  return 750
+}
+
+function waitFor3dAnimation(type: string): Promise<void> {
+  if (!slowPlayback) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = () => {
+      window.clearTimeout(timer)
+      pendingAnimationResolvers.delete(finish)
+      resolve()
+    }
+    const timer = window.setTimeout(finish, animationWindowMs(type))
+    pendingAnimationResolvers.add(finish)
+  })
+}
+
+function drain3dPlayback() {
+  if (threePlaybackRunning) return
+  threePlaybackRunning = true
+  void (async () => {
+    while (threePlaybackQueue.length) {
+      const item = threePlaybackQueue.shift()!
+      emit3dEvent(item.event, item.round)
+      if (slowPlayback) await waitFor3dAnimation(item.event.type)
+      item.resolve()
+    }
+    threePlaybackRunning = false
+  })()
+}
+
+function drainTimelinePlayback() {
+  if (timelinePlaybackRunning) return
+  timelinePlaybackRunning = true
+  void (async () => {
+    while (timelinePlaybackQueue.length) {
+      const item = timelinePlaybackQueue.shift()!
+      if (slowPlayback) await item.ready
+      item.render()
+    }
+    timelinePlaybackRunning = false
+  })()
+}
+
+function enqueueTimelinePlayback(render: () => void, ready: Promise<void>) {
+  timelinePlaybackQueue.push({ render, ready })
+  drainTimelinePlayback()
+}
+
+function setSlowPlayback(enabled: boolean) {
+  slowPlayback = enabled
+  if (!enabled) {
+    pendingAnimationResolvers.forEach((resolve) => resolve())
+    drain3dPlayback()
+    drainTimelinePlayback()
+  }
+}
+
+async function waitForTimelinePlayback() {
+  while (timelinePlaybackRunning || timelinePlaybackQueue.length || threePlaybackRunning || threePlaybackQueue.length) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 20))
+  }
+}
 
 function element<T extends HTMLElement>(id: string): T {
   const value = document.getElementById(id)
@@ -234,17 +312,32 @@ function installSessionDialog() {
   if (document.getElementById('agentLoginMask')) return
   const style = document.createElement('style')
   style.textContent = `
-    .agent-login-mask{position:fixed;inset:0;z-index:2000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(2,5,12,.78);backdrop-filter:blur(8px)}
-    .agent-login-mask.open{display:flex}.agent-login-box{width:min(420px,100%);border:1px solid #35475d;border-radius:10px;background:#101722;padding:20px;box-shadow:0 20px 70px rgba(0,0,0,.62)}
-    .agent-login-box h2{font-size:18px;margin:0 0 5px}.agent-login-box p{color:#8fa0b2;font-size:12px;margin:0 0 15px}.agent-login-box input{margin-bottom:10px}.agent-login-actions{display:flex;justify-content:flex-end;gap:8px}.agent-login-error{min-height:18px;color:#ff8f6b;font-size:12px;margin-bottom:8px}
+    .agent-login-mask{position:fixed;inset:0;z-index:2000;display:none;align-items:center;justify-content:center;padding:20px;background:radial-gradient(ellipse at 50% 45%,rgba(23,85,133,.2),transparent 48%),rgba(2,5,12,.82);backdrop-filter:blur(12px)}
+    .agent-login-mask.open{display:flex}.agent-login-box{position:relative;isolation:isolate;overflow:hidden;width:min(460px,100%);border:1px solid rgba(91,151,196,.48);border-radius:12px;background:linear-gradient(145deg,rgba(18,29,44,.98),rgba(9,16,27,.98));padding:28px;box-shadow:0 24px 80px rgba(0,0,0,.68),0 0 38px rgba(29,125,194,.14),inset 0 1px rgba(205,232,255,.08)}
+    .agent-login-box:before{content:"";position:absolute;z-index:-1;inset:0 0 auto;height:2px;background:linear-gradient(90deg,transparent,#69d5ff 24%,#6595ff 70%,transparent);opacity:.9}
+    .agent-login-box:after{content:"";position:absolute;z-index:-1;right:-65px;top:-80px;width:190px;height:190px;border:1px solid rgba(91,181,222,.12);border-radius:50%;box-shadow:0 0 0 18px rgba(91,181,222,.025),0 0 0 38px rgba(91,181,222,.02);pointer-events:none}
+    .agent-login-kicker{display:flex;align-items:center;gap:8px;margin-bottom:14px;color:#75b9dc;font:10px ui-monospace,Consolas,monospace;letter-spacing:1.2px;text-transform:uppercase}.agent-login-kicker:before{content:"";width:7px;height:7px;border-radius:50%;background:#62d5c4;box-shadow:0 0 10px rgba(98,213,196,.75)}
+    .agent-login-box h2{position:relative;margin:0 0 7px;color:#e9f4ff;font-size:21px;font-weight:800;letter-spacing:.2px}.agent-login-box p{max-width:360px;margin:0 0 20px;color:#91a5b8;font-size:12px;line-height:1.7}.agent-login-box input{width:100%;min-height:42px;margin:0 0 10px;padding:10px 12px;border:1px solid #344b61;border-radius:6px;background:rgba(5,12,21,.78);color:#e7f3ff;outline:none;transition:border-color .16s,box-shadow .16s}.agent-login-box input::placeholder{color:#65798d}.agent-login-box input:focus{border-color:#62b9e5;box-shadow:0 0 0 3px rgba(58,157,208,.16)}
+    .agent-login-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}.agent-login-submit,.agent-login-guest{min-height:42px;border-radius:6px;font-size:13px;font-weight:750;cursor:pointer;transition:transform .16s,border-color .16s,background .16s}.agent-login-submit{border:1px solid rgba(124,183,255,.52);background:linear-gradient(110deg,#246da9,#4d65c9);color:#fff;box-shadow:0 5px 20px rgba(57,112,211,.24),inset 0 1px rgba(255,255,255,.17)}.agent-login-guest{border:1px solid #38516a;background:rgba(18,31,46,.82);color:#b9ccdc}.agent-login-submit:hover,.agent-login-guest:hover{transform:translateY(-1px)}.agent-login-submit:hover{background:linear-gradient(110deg,#2d83c4,#5c73df)}.agent-login-guest:hover{border-color:#5b86a7;background:#172b3e;color:#e4f4ff}.agent-login-submit:focus-visible,.agent-login-guest:focus-visible{outline:2px solid #78c9ed;outline-offset:2px}
+    .agent-login-error{min-height:18px;color:#ff9a84;font-size:12px;margin:0 0 8px}.agent-login-foot{display:flex;align-items:center;gap:7px;margin-top:16px;padding-top:12px;border-top:1px solid rgba(75,101,125,.28);color:#6f8498;font-size:10px;line-height:1.5}.agent-login-foot:before{content:"◇";color:#73bddd;font-size:14px}
+    .agent-session-login{display:none;border:1px solid #4e6f9a;border-radius:6px;background:linear-gradient(110deg,rgba(32,74,116,.92),rgba(54,61,126,.92));color:#e8f4ff;padding:7px 13px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(39,91,160,.2)}.agent-session-login:hover{border-color:#82b9e8;background:linear-gradient(110deg,rgba(43,99,151,.98),rgba(69,77,151,.98))}.agent-session-login:focus-visible{outline:2px solid #78c9ed;outline-offset:2px}
     .agent-session-logout{display:none;border:1px solid #35475d;border-radius:6px;background:#101722;color:#9fb0c2;padding:7px 11px;font-size:12px;cursor:pointer}.agent-session-logout:hover{border-color:#59738f;color:#fff}
+    @media(max-width:520px){.agent-login-box{padding:23px 20px}.agent-login-box h2{font-size:19px}.agent-login-actions{grid-template-columns:1fr}.agent-login-box p{margin-bottom:16px}}
   `
   document.head.appendChild(style)
   const mask = document.createElement('div')
   mask.id = 'agentLoginMask'
   mask.className = 'agent-login-mask'
-  mask.innerHTML = `<form class="agent-login-box" id="agentLoginForm"><h2>登录攻防实验室</h2><p>密码只发送给后端换取 HttpOnly 会话，不会存入网页或浏览器存储。</p><input id="agentLoginPassword" type="password" autocomplete="current-password" placeholder="浏览器访问密码" required maxlength="256"><div class="agent-login-error" id="agentLoginError"></div><div class="agent-login-actions"><button type="submit" class="btn-ready" style="width:auto;padding:9px 24px">登录</button></div></form>`
+  mask.innerHTML = `<form class="agent-login-box" id="agentLoginForm"><div class="agent-login-kicker">AGENT SECURITY LAB · ACCESS</div><h2>登录攻防实验室</h2><p>登录后可创建战局并查看受保护的数据；密码仅用于向后端换取安全会话。</p><input id="agentLoginPassword" type="password" autocomplete="current-password" placeholder="输入浏览器访问密码" required maxlength="256"><div class="agent-login-error" id="agentLoginError" role="status" aria-live="polite"></div><div class="agent-login-actions"><button type="submit" class="agent-login-submit">登录并继续</button><button type="button" class="agent-login-guest" id="agentGuestBrowse">以游客身份浏览</button></div><div class="agent-login-foot">游客可浏览公开页面；准备和创建战局功能保持禁用。</div></form>`
   document.body.appendChild(mask)
+  const loginButton = document.createElement('button')
+  loginButton.id = 'agentSessionLogin'
+  loginButton.className = 'agent-session-login'
+  loginButton.type = 'button'
+  loginButton.textContent = '登录'
+  loginButton.title = '登录攻防实验室'
+  element('healthBtn').insertAdjacentElement('afterend', loginButton)
+  loginButton.addEventListener('click', () => showLogin())
   const logout = document.createElement('button')
   logout.id = 'agentSessionLogout'
   logout.className = 'agent-session-logout'
@@ -257,16 +350,31 @@ function installSessionDialog() {
     event.preventDefault()
     void login()
   })
+  element<HTMLButtonElement>('agentGuestBrowse').addEventListener('click', () => {
+    state.guestMode = true
+    updateSessionControls(state.sessionEnabled, false)
+    element<HTMLDivElement>('agentLoginMask').classList.remove('open')
+    element<HTMLInputElement>('agentLoginPassword').value = ''
+    if (state.sessionEnabled) {
+      showToast('游客浏览模式：准备和创建战局功能已禁用')
+    } else {
+      showToast('已进入浏览模式')
+    }
+  })
 }
 
 function updateSessionControls(enabled: boolean, authenticated: boolean) {
   state.sessionEnabled = enabled
+  state.authenticated = authenticated
+  if (authenticated) state.guestMode = false
+  const loginButton = element<HTMLButtonElement>('agentSessionLogin')
   const logout = element<HTMLButtonElement>('agentSessionLogout')
+  loginButton.style.display = enabled && !authenticated ? 'inline-flex' : 'none'
   logout.style.display = enabled && authenticated ? 'inline-flex' : 'none'
   const ready = document.getElementById('btnReady') as HTMLButtonElement | null
   if (ready) {
-    ready.disabled = enabled && !authenticated
-    ready.title = ready.disabled ? '请先登录后再准备战局' : ''
+    ready.disabled = state.guestMode || (enabled && !authenticated)
+    ready.title = state.guestMode ? '游客浏览模式下不能创建战局，请登录后继续' : ready.disabled ? '请先登录后再准备战局' : ''
   }
 }
 
@@ -285,6 +393,7 @@ async function login() {
     await json('/auth/session', { method: 'POST', body: JSON.stringify({ password: password.value }) })
     password.value = ''
     element<HTMLDivElement>('agentLoginMask').classList.remove('open')
+    state.guestMode = false
     updateSessionControls(true, true)
     showToast('登录成功，正在加载真实战局')
     await Promise.all([loadSummary(), loadHistory(0), checkHealth()])
@@ -745,6 +854,14 @@ function selectedDifficulty(): Difficulty | null {
 }
 
 async function startBattle() {
+  if (state.guestMode) {
+    showToast('游客模式仅可浏览，请登录后创建战局')
+    return
+  }
+  if (state.sessionEnabled && !state.authenticated) {
+    showLogin('创建战局需要先登录')
+    return
+  }
   if (state.starting) return
   const topic = element<HTMLInputElement>('themeInput').value.trim()
   const difficulty = selectedDifficulty()
@@ -779,6 +896,9 @@ async function startBattle() {
 
 function beginLiveBattle(battle: Battle) {
   state.streamSeen.clear()
+  timelinePlaybackQueue = []
+  threePlaybackQueue = []
+  pendingAnimationResolvers.forEach((resolve) => resolve())
   state.selected = battle
   liveTimelineProjector = new LiveBattleTimelineProjector()
   liveLifecycleProjector = new LiveBattleLifecycleProjector()
@@ -883,11 +1003,19 @@ function waitForReconnect(delay: number, signal: AbortSignal) {
 
 function renderLiveEvent(event: BattleEvent) {
   const round = Number(event.data.round || 0)
+  // 3D 事件先进入串行播放队列；时间线视觉项共享同一个完成信号。
+  const ready = bridge3dEvent(event, round)
   if (event.type === 'arbiter.round.scored' || event.type === 'round.settled') {
     const scores = eventRoundScore(event)
-    if (scores) syncLiveRoundScore(round, scores)
+    if (scores) {
+      if (slowPlayback) enqueueTimelinePlayback(() => syncLiveRoundScore(round, scores), ready)
+      else syncLiveRoundScore(round, scores)
+    }
   }
-  if (event.type === 'attack.sample.generated') appendLivePayload(event, round)
+  if (event.type === 'attack.sample.generated') {
+    if (slowPlayback) enqueueTimelinePlayback(() => appendLivePayload(event, round), ready)
+    else appendLivePayload(event, round)
+  }
   const entries = liveTimelineProjector.push(event)
   if (event.type.startsWith('agent.call.')) {
     const role = event.data.agentRole === 'defender' ? '防守方' : '攻击方'
@@ -895,43 +1023,52 @@ function renderLiveEvent(event: BattleEvent) {
     element('liveStatus').textContent = `${role}智能体${state}`
   }
   for (const entry of entries) {
+    const total = Number(state.selected?.rounds) || state.requestedRounds || 0
     if (entry.kind === 'round') {
-      ensureRound(entry.round)
-      element('liveRounds').textContent = `${entry.round}/${Number(state.selected?.rounds) || state.requestedRounds || '—'}`
+      const publishRound = () => {
+        ensureRound(entry.round)
+        element('liveRounds').textContent = `${entry.round}/${Number(state.selected?.rounds) || state.requestedRounds || '—'}`
+      }
       window.dispatchEvent(new CustomEvent('battle-timeline:round', {
-        detail: { round: entry.round, total: Number(state.selected?.rounds) || state.requestedRounds || 0 },
+        detail: { round: entry.round, total },
       }))
+      if (slowPlayback) enqueueTimelinePlayback(publishRound, ready)
+      else publishRound()
       continue
     }
+    const entryRound = Number(entry.event.data.round || round)
     const timing = eventTiming(entry.event)
-    const evidenceIds = Array.isArray(entry.event.data.evidenceIds) ? entry.event.data.evidenceIds : []
-    appendTimeline(
-      entry.side,
-      eventTitle(entry.event),
-      eventDescription(entry.event),
-      entry.event.createdAt,
-      timing,
-      evidenceIds,
-    )
+    const evidenceIds = timelineEvidenceIds(entry.event)
+    const title = eventTitle(entry.event)
+    const description = eventDescription(entry.event)
+    const publishEntry = () => {
+      appendTimeline(entry.side, entry.key, entry.event, title, description, timing, evidenceIds)
+      element('liveStatus').textContent = title
+    }
+    // 角色日志保持实时：它不等待慢速播放，也不改变后端时间戳。
     window.dispatchEvent(new CustomEvent('battle-timeline:entry', {
       detail: {
-        round,
-        total: Number(state.selected?.rounds) || state.requestedRounds || 0,
+        round: entryRound,
+        total,
         side: entry.side,
-        title: eventTitle(entry.event),
-        description: eventDescription(entry.event),
+        title,
+        description,
         stageId: entry.event.data.stageId || entry.event.type,
         evidenceIds,
         status: entry.event.status || entry.event.data.status || '',
-        resultText: eventDescription(entry.event),
+        resultText: description,
         timeText: formatTime(entry.event.createdAt),
         responseMs: timing.responseMs,
       },
     }))
-    element('liveStatus').textContent = eventTitle(entry.event)
+    if (slowPlayback) enqueueTimelinePlayback(publishEntry, ready)
+    else publishEntry()
   }
-  bridge3dEvent(event, round)
-  if (event.type === 'round.completed') void refreshBattleVisualizations(event.battleId)
+  if (event.type === 'round.completed') {
+    const refresh = () => { void refreshBattleVisualizations(event.battleId) }
+    if (slowPlayback) enqueueTimelinePlayback(refresh, ready)
+    else refresh()
+  }
 }
 
 function appendLivePayload(event: BattleEvent, round: number) {
@@ -973,16 +1110,149 @@ function eventTiming(event: BattleEvent) {
   }
 }
 
+function timelineEvidenceIds(event: BattleEvent): unknown[] {
+  const direct = Array.isArray(event.data.evidenceIds) ? event.data.evidenceIds : []
+  const nested = Array.isArray(event.data.evidence) ? event.data.evidence : []
+  const refs = Array.isArray(event.data.evidenceRefs) ? event.data.evidenceRefs : []
+  return [...new Set([...direct, ...nested, ...refs].map((value) => {
+    if (typeof value === 'string' || typeof value === 'number') return String(value)
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>
+      return String(record.id ?? record.evidenceId ?? record.ref ?? '')
+    }
+    return ''
+  }).filter(Boolean))]
+}
+
+function timelineStatus(event: BattleEvent) {
+  const type = event.type
+  const classification = typeof event.data.classification === 'string'
+    ? event.data.classification.trim().toLowerCase()
+    : ''
+  const explicit = typeof event.data.status === 'string'
+    ? event.data.status.trim().toLowerCase()
+    : ''
+  const status = String(event.status || '').trim().toLowerCase()
+  if (type.endsWith('.started')) return 'running'
+  if (classification && classification !== 'completed') return classification
+  if (explicit && explicit !== 'completed') return explicit
+  if (type === 'attack.stage.completed' && classification === 'passed') return 'passed'
+  return status || classification || explicit || 'pending'
+}
+
+function timelineStatusLabel(status: string) {
+  return ({
+    running: '进行中', pending: '等待中', completed: '已完成', passed: '已通过', confirmed: '已确认',
+    blocked: '已阻断', contained: '已控制', 'full-penetration': '完全穿透', unresolved: '证据不足',
+    'system-void': '系统无效', 'not-applicable': '不适用', 'skipped-by-block': '阻断后跳过', failed: '执行失败',
+    baseline: '基线样本', 'same-source': '同源样本', 'new-source': '新源样本',
+  } as Record<string, string>)[status] || status || '等待中'
+}
+
+type TimelineGuide = { input: string; action: string; next: string; score: string }
+
+const attackTimelineGuide: Record<string, Omit<TimelineGuide, 'score'>> = {
+  A1: { input: '战局编号、规则版本、总回合数、难度和授权范围', action: '读取并核对已锁定的战局配置', next: 'A2 · 选择唯一样本与攻击面' },
+  A2: { input: '授权样本库、攻击面和目标层', action: '选择唯一 sampleId，并确认目标层', next: 'A3 · 选择攻击意图与策略' },
+  A3: { input: '当前样本与上一回合公开裁决', action: '确定模拟攻击意图、策略及变化点', next: 'A4 · 构建合成 Payload' },
+  A4: { input: '已选样本、策略和授权靶场范围', action: '构建仅用于授权靶场的合成 Payload', next: 'A5 · 授权与格式自检' },
+  A5: { input: 'Payload、授权范围和格式约束', action: '检查真实凭据、真实目标、长度、编码和格式', next: 'A6 · 相似度元数据校验' },
+  A6: { input: '当前 Payload 与全部合格历史样本', action: '由 Arbiter 计算相似度并判定 baseline / same-source / new-source', next: 'A7 · 冻结并正式提交' },
+  A7: { input: '已通过自检和来源校验的 Payload', action: '冻结 Payload，生成提交标识并正式提交', next: 'L0 · 输入层检查' },
+  A8: { input: 'Arbiter 已公开的最终裁决', action: '仅基于公开信息复盘并形成下一回合策略', next: '安全对照测试与回合结算' },
+}
+
+function timelineGuide(event: BattleEvent, description: string): TimelineGuide {
+  const data = event.data
+  const stageId = String(data.stageId || '').trim().toUpperCase()
+  const status = timelineStatus(event)
+  if (event.type === 'agent.call.started' || event.type === 'agent.call.completed' || event.type === 'agent.call.failed') {
+    const role = String(data.agentRole || '').toLowerCase() === 'defender' ? 'Defender' : 'Attacker'
+    const phase = event.type.endsWith('.started') ? '发起后端智能体调用'
+      : event.type.endsWith('.failed') ? '记录后端智能体调用失败'
+      : '接收后端智能体调用结果'
+    return {
+      input: `${role} · ${text(data.stageId || '当前阶段')} · correlationId ${text(data.correlationId)}`,
+      action: phase,
+      next: event.type.endsWith('.failed') ? '暂停当前分支，等待重试或 Arbiter 标记 system-void' : role === 'Attacker' ? '继续对应 A 阶段事件' : '继续 L0 → L1 → L2 → L3 防御检查',
+      score: `响应耗时 ${text(data.durationMs)} ms 进入本回合响应证据；调用失败不得用速度补分`,
+    }
+  }
+  const attack = attackTimelineGuide[stageId]
+  const unresolved = status === 'unresolved' || status === 'system-void' || status === 'failed'
+  const blocked = status === 'blocked'
+  if (attack) {
+    return {
+      ...attack,
+      next: unresolved ? '暂停当前阶段，等待补充证据或重试' : attack.next,
+      score: unresolved ? '不可用响应速度补分；等待 Arbiter 有效结论' : '由本回合 Arbiter 评分事件统一计入',
+    }
+  }
+  if (/^L[0-3]-\d+$/.test(stageId)) {
+    return {
+      input: String(data.evidenceBasis || 'Payload、当前防御层规则与已有证据'),
+      action: String(data.checkDescription || data.checkName || '执行当前检查点并记录证据'),
+      next: blocked ? '停止后续检查，进入 Arbiter 最终裁决' : unresolved ? '暂停时间线，等待补充证据' : '当前层下一检查点或 Arbiter 层确认',
+      score: unresolved ? '证据不足，本项不得通过响应速度补分' : '检查结果进入 Defender 流程分与实际效果分证据链',
+    }
+  }
+  if (event.type === 'arbiter.layer.started' || event.type === 'arbiter.layer.confirmed') {
+    return {
+      input: `${stageId || '当前层'}检查点状态与证据`,
+      action: event.type === 'arbiter.layer.started' ? '开启本层裁决窗口' : '确认必要检查均已通过且证据完整',
+      next: unresolved ? '暂停时间线，等待证据补充' : '进入下一防御层或最终分类',
+      score: '只有 Arbiter 确认后的层穿透事实才进入评分',
+    }
+  }
+  if (event.type === 'arbiter.verdict') {
+    return { input: '各层检查、实际效果与恢复证据', action: '生成唯一最终分类', next: 'A8 · 公开结果复盘', score: '锁定本回合实际效果分类' }
+  }
+  if (event.type === 'arbiter.safe_control' || event.type === 'defense.safe_control') {
+    return { input: '独立正常样本与安全对照证据', action: '验证正常样本是否被正确放行', next: '回合评分与结算', score: '影响 Defender D-07 及相应响应分' }
+  }
+  if (event.type === 'arbiter.round.scored') {
+    return { input: '完整事件链、裁决和响应时长', action: '计算双方基础分、响应分与综合分', next: '本回合结算', score: '写入当前回合实时评分' }
+  }
+  if (event.type === 'round.settled') {
+    return { input: '最终分类、安全对照和回合评分', action: '冻结回合结果并更新有效回合计数', next: '下一有效回合或整局结算', score: '有效回合计入整局平均分；system-void 不计入' }
+  }
+  if (event.type === 'battle.completed' || event.type === 'battle.failed') {
+    return { input: '全部有效回合与无效回合记录', action: '完成整局结算并保留事件链', next: '历史战局与复盘', score: '按有效回合综合分平均值生成整局结果' }
+  }
+  return { input: '后端实时事件数据', action: description, next: '等待下一条有效事件', score: '由 Arbiter 统一确认评分影响' }
+}
+
+function timelineDetail(label: string, value: string) {
+  const item = document.createElement('span')
+  const title = document.createElement('b')
+  title.textContent = label
+  item.append(title, document.createTextNode(` ${value || '—'}`))
+  return item
+}
+
 function appendTimeline(
   side: 'att' | 'def' | 'judge',
+  key: string,
+  sourceEvent: BattleEvent,
   title: string,
   description: string,
-  createdAt: string,
   timing?: { startedAt: string; endedAt: string; responseMs: number },
   evidenceIds: unknown[] = [],
 ) {
-  const event = document.createElement('div')
-  event.className = `event ${side}`
+  const host = element('tlContent')
+  let event = Array.from(host.querySelectorAll<HTMLElement>('.event'))
+    .find((item) => item.dataset.timelineKey === key)
+  const isNew = !event
+  const expanded = event?.classList.contains('is-expanded') || false
+  if (!event) event = document.createElement('div')
+  event.className = `event ${side}${expanded ? ' is-expanded' : ''}`
+  event.dataset.timelineKey = key
+  event.dataset.eventId = sourceEvent.id
+  event.setAttribute('role', 'button')
+  event.setAttribute('tabindex', '0')
+  event.setAttribute('aria-expanded', String(expanded))
+  event.setAttribute('aria-label', `${title}，${timelineStatusLabel(timelineStatus(sourceEvent))}，点击查看审计详情`)
+  event.replaceChildren()
   const card = document.createElement('div')
   card.className = 'card'
   const actor = document.createElement('div')
@@ -994,32 +1264,73 @@ function appendTimeline(
   const desc = document.createElement('div')
   desc.className = 'desc'
   desc.textContent = description
-  const meta = document.createElement('div')
-  meta.className = 'meta'
+  const statusValue = timelineStatus(sourceEvent)
+  const status = document.createElement('span')
+  status.className = `event-status ${statusValue}`
+  status.textContent = timelineStatusLabel(statusValue)
+  const timingRow = document.createElement('div')
+  timingRow.className = 'timing'
   const start = timing?.startedAt ? formatTime(timing.startedAt) : ''
   const end = timing?.endedAt ? formatTime(timing.endedAt) : ''
   const response = Number.isFinite(timing?.responseMs) && (timing?.responseMs ?? 0) >= 0
     ? `响应 ${(timing!.responseMs / 1000).toFixed(2)}s`
     : ''
-  meta.textContent = start || end || response
-    ? `开始 ${start || '—'} · 结束 ${end || '—'} · ${response || '响应 —'}`
-    : formatTime(createdAt)
-  card.append(actor, name, desc, meta)
-  if (evidenceIds.length) {
-    const evidence = document.createElement('div')
-    evidence.className = 'meta'
-    evidence.textContent = `证据：${evidenceIds.map(String).join('、')}`
-    card.appendChild(evidence)
-  }
+  ;[`开始 ${start || formatTime(sourceEvent.createdAt)}`, `结束 ${end || '—'}`, response || '响应 —'].forEach((value) => {
+    const item = document.createElement('span')
+    item.textContent = value
+    timingRow.appendChild(item)
+  })
+  const audit = document.createElement('div')
+  audit.className = 'event-audit'
+  const auditValues = [
+    ['回合', String(sourceEvent.data.round || '—')],
+    ['角色', String(sourceEvent.data.agentRole || (side === 'att' ? 'attacker' : side === 'def' ? 'defender' : 'arbiter'))],
+    ['阶段', String(sourceEvent.data.stageId || sourceEvent.type)],
+    ['关联', String(sourceEvent.data.correlationId || '—')],
+    ['事件', sourceEvent.id],
+    ['样本', String(sourceEvent.data.sampleId || '—')],
+    ['提交', String(sourceEvent.data.submissionId || '—')],
+    ['证据', evidenceIds.length ? evidenceIds.map(String).join('、') : '—'],
+  ]
+  auditValues.forEach(([label, value]) => {
+    const item = document.createElement('span')
+    item.textContent = `${label} ${value}`
+    audit.appendChild(item)
+  })
+  const guide = timelineGuide(sourceEvent, description)
+  const detail = document.createElement('div')
+  detail.className = 'event-detail'
+  detail.append(
+    timelineDetail('输入', guide.input),
+    timelineDetail('执行动作', guide.action),
+    timelineDetail('具体输出', description),
+    timelineDetail('状态', timelineStatusLabel(statusValue)),
+    timelineDetail('评分影响', guide.score),
+    timelineDetail('下一节点', guide.next),
+  )
+  card.append(actor, name, desc, status, timingRow, audit, detail)
   event.appendChild(card)
   if (side !== 'judge') {
     const dot = document.createElement('span')
     dot.className = 'dot'
     event.appendChild(dot)
   }
-  element('tlContent').appendChild(event)
-  const stream = element<HTMLDivElement>('tlStream')
-  stream.scrollTop = stream.scrollHeight
+  if (isNew) {
+    const toggle = () => {
+      const open = event!.classList.toggle('is-expanded')
+      event!.setAttribute('aria-expanded', String(open))
+    }
+    event.addEventListener('click', toggle)
+    event.addEventListener('keydown', (keyboardEvent) => {
+      if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return
+      keyboardEvent.preventDefault()
+      toggle()
+    })
+    host.appendChild(event)
+  }
+  // 让页面脚本根据用户是否正在手动查看时间线决定是否跟随到底部。
+  // 直接设置 scrollTop 会覆盖用户滚轮位置，导致实时事件到来时强制跳到底部。
+  window.dispatchEvent(new CustomEvent('battle-timeline:follow'))
 }
 
 function eventTitle(event: BattleEvent) {
@@ -1034,26 +1345,48 @@ function eventTitle(event: BattleEvent) {
     const name = String(event.data.checkName || '').trim()
     return `${stageId}${name ? ` · ${name}` : ''}`
   }
-  if (event.type === 'arbiter.layer.started') return `${stageId} 层检测开始`
+  if (event.type === 'arbiter.layer.started') return `${stageId} · Arbiter 开启层检测`
+  if (event.type === 'arbiter.layer.confirmed') return `${stageId} · Arbiter 确认本层结果`
+  if (event.type === 'arbiter.safe_control') return 'Arbiter · 启动安全对照'
+  if (event.type === 'defense.safe_control') return 'D-07 · 安全对照结果'
+  if (event.type === 'agent.call.started' || event.type === 'agent.call.completed' || event.type === 'agent.call.failed') {
+    const role = String(event.data.agentRole || '').toLowerCase() === 'defender' ? 'Defender' : 'Attacker'
+    const phase = event.type.endsWith('.started') ? '调用开始' : event.type.endsWith('.failed') ? '调用失败' : '调用完成'
+    return `${role} · 后端智能体${phase}`
+  }
   return ({
     'battle.created': '战局已创建', 'battle.retry': '战局已重新提交', 'attack.started': '攻击阶段开始',
     'attack.sample.generated': '攻击方生成样本', 'attack.completed': '攻击样本生成完成', 'attack.compromised': '目标验证结果',
     'attack.stage.completed': '攻击阶段完成', 'attack.stage.failed': '攻击阶段失败',
     'round.started': '防守方开始检测', 'round.completed': '本轮检测完成',
     'defense.layer.started': '防御层检测开始', 'defense.check.started': '防御检查点开始',
-    'defense.layer.verdict': '防御检查点裁决', 'defense.safe_control': '安全对照测试',
-    'defense.completed': '防守分析完成', 'arbiter.similarity.checked': 'A6 · 相似度源数据校验',
-    'arbiter.layer.confirmed': 'Arbiter · 确认本层结果', 'arbiter.verdict': 'Arbiter · 最终分类',
-    'arbiter.safe_control': 'Arbiter · 安全对照测试', 'arbiter.round.scored': 'Arbiter · 本回合评分',
-    'round.settled': '本回合已结算', 'battle.completed': '战局完成', 'battle.failed': '战局失败',
+    'defense.layer.verdict': '防御检查点裁决',
+    'defense.completed': '防守分析完成', 'arbiter.similarity.checked': 'A6 · 相似度元数据校验',
+    'arbiter.verdict': 'Arbiter · 最终分类',
+    'arbiter.round.scored': 'Arbiter · 本回合评分', 'round.settled': 'Arbiter · 本回合结算',
+    'battle.completed': 'Arbiter · 整局结算完成', 'battle.failed': 'Arbiter · 战局执行失败',
   } as Record<string, string>)[event.type] || event.type
 }
 
 function eventDescription(event: BattleEvent) {
   const data = event.data
+  const stageId = String(data.stageId || '').trim().toUpperCase()
+  if (event.type === 'attack.stage.started' || event.type === 'attack.stage.completed' || event.type === 'attack.stage.failed') {
+    const running = event.type === 'attack.stage.started'
+    const suffix = running ? '执行中' : event.type === 'attack.stage.failed' ? '执行失败' : timelineStatusLabel(timelineStatus(event))
+    if (stageId === 'A1') return `规则 ${text(data.rulesVersion || 'v2.0')} · 难度 ${text(data.difficulty)} · 总回合 ${text(data.roundLimit)} · ${suffix}`
+    if (stageId === 'A2') return `样本 ${text(data.sampleId)} · 选择唯一攻击样本与目标面 · ${suffix}`
+    if (stageId === 'A3') return `策略 ${text(data.tactic || data.scenario || data.objective || '待后端记录')} · ${suffix}`
+    if (stageId === 'A4') return `${text(data.payloadType || 'synthetic')} Payload · 长度 ${text(data.contentLength)} · ${suffix}`
+    if (stageId === 'A5') return `授权、真实目标、凭据、长度、编码与格式自检 · ${text(data.validationStatus || suffix)}`
+    if (stageId === 'A7') return `提交 ${text(data.submissionId)} · ${data.accepted === false ? '未接受' : suffix}`
+    if (stageId === 'A8') return `公开裁决 ${text(data.classification || data.verdict || '待公布')} · ${suffix}`
+  }
   if (event.type === 'arbiter.round.scored') {
     const scores = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : {}
-    return `Attacker ${text(scores.attacker)} · Defender ${text(scores.defender)}`
+    const attacker = scoreValue(scores.attacker)
+    const defender = scoreValue(scores.defender)
+    return `Attacker ${attacker === null ? '证据不足' : attacker.toFixed(2)} · Defender ${defender === null ? '证据不足' : defender.toFixed(2)}`
   }
   if (typeof data.statement === 'string' && data.statement) return data.statement
   if (event.type === 'attack.sample.generated') return `第 ${text(data.round)} 轮样本已生成 · ${sourceLabel(String(data.attackerSource || ''))}`
@@ -1061,27 +1394,51 @@ function eventDescription(event: BattleEvent) {
   if (event.type === 'round.started') return `正在检测第 ${text(data.round)} 轮 · ${sourceLabel(String(data.defenderSource || ''))}`
   if (event.type === 'round.completed') return `命中 ${Array.isArray(data.caught) ? data.caught.length : 0} 条规则，记录 ${Array.isArray(data.risks) ? data.risks.length : 0} 条风险，提出 ${Array.isArray(data.fixed) ? data.fixed.length : 0} 条建议`
   if (event.type === 'defense.layer.started') return `${text(data.layer || data.stageId)} · 开始检查 ${Array.isArray(data.applicableChecks) ? data.applicableChecks.length : 0} 项`
+  if (event.type === 'defense.check.started') return `${text(data.checkDescription || data.checkName || '执行当前检查点')} · 进行中`
   if (event.type === 'defense.layer.verdict') {
     const detail = String(data.checkDescription || '')
-    return `${detail}${detail ? ' · ' : ''}${statusLabel((event.status || data.status || 'pending') as Battle['status'])}`
+    return `${detail}${detail ? ' · ' : ''}${timelineStatusLabel(timelineStatus(event))}`
+  }
+  if (event.type === 'agent.call.started' || event.type === 'agent.call.completed' || event.type === 'agent.call.failed') {
+    const role = String(data.agentRole || '').toLowerCase() === 'defender' ? 'Defender' : 'Attacker'
+    const stage = text(data.stageId || (role === 'Defender' ? 'DEFENSE' : 'A2'))
+    const source = text(data.resultSource || data.agentSource || data.dispatchMode)
+    const duration = Number(data.durationMs)
+    const elapsed = Number.isFinite(duration) && duration >= 0 ? ` · 耗时 ${duration} ms` : ''
+    if (event.type.endsWith('.started')) return `${role} 后端调用已发起 · 阶段 ${stage} · ${text(data.dispatchMode || '未记录')}`
+    if (event.type.endsWith('.failed')) return `${role} 后端调用失败 · 阶段 ${stage} · ${text(data.errorType || data.error || '未提供失败原因')}${elapsed}`
+    return `${role} 后端调用已完成 · 阶段 ${stage} · 来源 ${source}${elapsed}`
   }
   if (event.type === 'arbiter.similarity.checked') {
-    const similarity = typeof data.similarity === 'number' ? data.similarity.toFixed(3) : 'baseline'
-    return `与上一轮 Payload 相似度 ${similarity} · 阈值 0.850 · ${text(data.sourceType || 'unresolved')}`
+    const similarity = typeof data.maxHistoricalSimilarity === 'number'
+      ? data.maxHistoricalSimilarity.toFixed(3)
+      : typeof data.similarity === 'number' ? data.similarity.toFixed(3) : '—'
+    const previous = typeof data.similarityToPrevious === 'number' ? data.similarityToPrevious.toFixed(3) : '—'
+    return `历史最大相似度 ${similarity} · 上一回合 ${previous} · 阈值 0.850 · ${text(data.sourceType || 'unresolved')}`
   }
-  if (event.type === 'arbiter.layer.confirmed') return `确认第 ${text(data.layerIndex)} 层证据完整`
+  if (event.type === 'arbiter.layer.started') return `${text(data.layer || data.stageId)} 层检测已开启，等待 Defender 按顺序提交检查证据`
+  if (event.type === 'arbiter.layer.confirmed') return `确认 ${text(data.layer || data.stageId)} 必要检查全部通过，证据完整`
   if (event.type === 'arbiter.verdict') return `最终分类：${text(data.classification || event.status)}`
-  if (event.type === 'defense.safe_control') return String(data.statement || `正常样本判定：${text(data.classification || event.status)}`)
+  if (event.type === 'defense.safe_control' || event.type === 'arbiter.safe_control' || event.type === 'safe_control') {
+    const result = String(data.classification || data.status || event.status || '').toLowerCase()
+    const allowed = result === 'passed' || result === 'allow' || result === 'allowed' || result === '放行'
+    if (result === 'pending' || result === 'running' || !result) return '安全对照测试：正常样本检测中'
+    return allowed
+      ? '安全对照测试：正常样本正确放行 · D-07=15 · 不改变攻击样本最终分类'
+      : '安全对照测试：正常样本被误拦截 · false-positive · D-07=0'
+  }
   if (event.type === 'attack.compromised') {
     return data.simulated === true
       ? '模拟验证证据；不代表真实目标沦陷'
       : data.targetVerified === true ? '已记录目标验证证据' : '未取得目标验证证据'
   }
+  if (event.type === 'round.settled') return `回合结果已冻结 · ${text(data.classification || event.status)}`
+  if (event.type === 'battle.completed') return `全部有效回合已完成，整局结果已保存至历史记录`
   if (event.type === 'battle.failed') return String(data.error || '后端执行失败')
   return `状态：${event.status}`
 }
 
-function bridge3dEvent(event: BattleEvent, round: number) {
+function emit3dEvent(event: BattleEvent, round: number) {
   const bus = window.BattleEventBus
   if (!bus) return
   const projected = liveLifecycleProjector.push(event)
@@ -1098,7 +1455,20 @@ function bridge3dEvent(event: BattleEvent, round: number) {
   })
 }
 
+function bridge3dEvent(event: BattleEvent, round: number): Promise<void> {
+  if (!slowPlayback) {
+    emit3dEvent(event, round)
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    threePlaybackQueue.push({ event, round, resolve })
+    drain3dPlayback()
+  })
+}
+
 async function finishLiveBattle(event: BattleEvent) {
+  // 战局完成事件可能先于慢速视觉队列到达；先让展示队列播放完，再刷新历史详情。
+  await waitForTimelinePlayback()
   element('liveStatus').classList.remove('run')
   element('liveStatus').textContent = event.type === 'battle.completed' ? '真实战局已完成' : '真实战局执行失败'
   try {
@@ -1138,6 +1508,12 @@ function installControls() {
   intercept(element('nextPage'), 'click', () => { if ((state.page + 1) * PAGE_SIZE < state.total) void loadHistory(state.page + 1) })
   intercept(element('exportBtn'), 'click', () => void exportReport())
   intercept(element('deleteBtn'), 'click', () => showToast('后端尚未提供删除战局接口，前端不会伪删除真实数据'))
+  const slowToggle = element<HTMLInputElement>('slowPlaybackToggle')
+  slowPlayback = slowToggle.checked
+  intercept(slowToggle, 'change', () => {
+    setSlowPlayback(slowToggle.checked)
+    slowToggle.setAttribute('aria-checked', String(slowToggle.checked))
+  })
   const search = element<HTMLInputElement>('logInput')
   intercept(search, 'input', () => {
     window.clearTimeout(state.searchTimer)

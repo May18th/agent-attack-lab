@@ -540,7 +540,7 @@
               <strong>Payload 颜色：</strong><span style="color:#bfd9ff">浅蓝 / 灰白色</span>表示 Payload 刚在 A4 创建、尚未完成 A6 来源判定；<span style="color:#ff4d5e">红色</span>表示同源 Payload，即相似度达到或超过 0.85；<span style="color:#ffd24d">黄色</span>表示新源 Payload，即相似度低于 0.85。新源黄色 Payload 无论被拦截与否，都在本回合结算后粒子化飞向 Defender，被吸收后显示“更新特征库”；红色同源 Payload 不触发这条更新动画。<br>
               <strong>Defender 检查粒子：</strong>当前层会生成带编号的蓝色粒子，例如 L0-1、L0-2、L0-3，或 L2-1 至 L2-5。每个编号对应一个真实检查点；攻击开始时按编号顺序高亮对应蓝色粒子，该粒子飞向 Payload 进行拦截或与攻击粒子融合。<br>
               <strong>拦截与穿透：</strong>蓝色粒子与 Payload 相撞并消散，表示该检查点成功拦截，防御层向外扩散绿色光波；检查通过但未拦截时，攻击点扩散一次水晶屏障。某层最后一个检查点仍未拦截时，Arbiter 确认整层穿透，才播放玻璃裂解并进入下一层。<br>
-              <strong>L3 与裁决：</strong>L3-1、L3-2、L3-3 会向 Core 发出内收光波，Core 随风险闪烁；L3-3 控制成功时 Core 恢复蓝色，控制失败时 Core 变红且 L3 破碎；L3-4 和 Arbiter 输出最终分类后，本回合才结束。HUD、时间线和评分只显示已收到的 Agent / Arbiter 事件。
+              <strong>L3 与裁决：</strong>L3-1、L3-2、L3-3 会向 Core 发出内收光波，Core 随风险闪烁；只有后端事件明确给出控制成功或失败证据时，才提前表现恢复或失控，否则保持风险态等待 Arbiter。L3-4 不抢先生成结论，Arbiter 输出唯一最终分类后才锁定攻击结果。安全对照使用独立外环展示，不覆盖攻击样本的 Core 裁决颜色。HUD、时间线和评分只显示已收到的 Agent / Arbiter 事件。
             </div>
           </div>
         </div>
@@ -1511,6 +1511,7 @@ var battle3d=(function(){
     S.payloadState=kind;
     if(kind==='same'){setPayloadColor(COL_SAME);hudPayload('同源 · 红色');}
     else if(kind==='new'){setPayloadColor(COL_NEW);hudPayload('不同源 · 黄色');}
+    else if(kind==='unresolved'){setPayloadColor(COL_NEUTRAL);hudPayload('来源未决 · 保持中性');}
     else{setPayloadColor(COL_NEUTRAL);hudPayload('中性占位');}
   }
   function flyPayloadTo(target,dur){
@@ -1631,6 +1632,18 @@ var battle3d=(function(){
   }
 
   /* ---- 安全对照（D-07 独立轨道） ---- */
+  function setSafeLabel(text,color){
+    if(!S.safeLabel)return;
+    var replacement=makeTextSprite(text,color,.95,true),map=replacement.material.map;
+    if(S.safeLabel.material.map)S.safeLabel.material.map.dispose();
+    S.safeLabel.material.map=map;S.safeLabel.material.needsUpdate=true;
+    replacement.material.map=null;replacement.material.dispose();
+    S.safeLabel.scale.set(.95,.38,1);
+  }
+  function tintSafe(color){
+    if(!S.safe)return;
+    S.safe.children.forEach(function(ch){if(ch!==S.safeLabel&&ch.material&&ch.material.color)ch.material.color.setHex(color);});
+  }
   function safeControl(state){
     if(!S.safe){
       var g=new THREE.Group();
@@ -1646,15 +1659,13 @@ var battle3d=(function(){
       S.safe=g;S.safeLabel=lb;
     }
     if(state==='passed'){
-      S.safeLabel.material.map.dispose();
-      S.safeLabel.material.map=makeTextSprite('D-07 15/15 · 正确放行','#7fd49b',.95,true).material.map;
-      S.safeLabel.scale.set(.95,.38,1);
+      tintSafe(0x7fd49b);setSafeLabel('D-07 15/15 · 正确放行','#7fd49b');
       hudStage('安全对照 · 正确放行 · D-07=15（独立计时）');
     }else if(state==='blocked'){
-      S.safe.children.forEach(function(ch){if(ch.material)ch.material.color.setHex(0xff5d6c);});
-      S.safeLabel.scale.set(.95,.38,1);
+      tintSafe(0xff5d6c);setSafeLabel('D-07 0/15 · 误拦截','#ff7f8a');
       hudStage('安全对照 · 误拦截 · D-07=0');
     }else{
+      tintSafe(0xf0b64c);setSafeLabel('D-07 · 等待证据','#f0ce88');
       hudStage('安全对照 · 检测中（独立轨道）');
     }
   }
@@ -1963,21 +1974,27 @@ var battle3d=(function(){
     }
   }
   function applySource(p){
-    if(typeof p.similarity==='number'){
-      S.similarity=p.similarity;
-      S.sourceType=p.sourceType||(p.similarity>=.85?'same-source':'new-source');
+    var threshold=typeof p.similarityThreshold==='number'?p.similarityThreshold:.85;
+    var similarity=typeof p.maxHistoricalSimilarity==='number'?p.maxHistoricalSimilarity:p.similarity;
+    if(typeof similarity==='number'){
+      S.similarity=similarity;
+      S.sourceType=p.sourceType||(similarity>=threshold?'same-source':'new-source');
     }else{
-      S.sourceType=p.sourceType||'baseline';S.similarity=null;
+      S.sourceType=p.sourceType||(p.comparison==='baseline'?'baseline':'unresolved');S.similarity=null;
     }
     if(S.sourceType==='same-source'){
       setPayloadState('same');
-      hudSource('同源 · 相似度 '+(S.similarity!=null?S.similarity.toFixed(2):'≥0.85')+'（阈值 0.85）');
+      hudSource('同源 · 相似度 '+(S.similarity!=null?S.similarity.toFixed(2):'≥'+threshold.toFixed(2))+'（阈值 '+threshold.toFixed(2)+'）'+(p.nearestSampleId?' · 最近 '+p.nearestSampleId:''));
     }else if(S.sourceType==='new-source'){
       setPayloadState('new');S.newSource=true;
-      hudSource('新源 · 相似度 '+(S.similarity!=null?S.similarity.toFixed(2):'<0.85')+' · 结算后才更新特征库');
-    }else{
+      hudSource('新源 · 相似度 '+(S.similarity!=null?S.similarity.toFixed(2):'<'+threshold.toFixed(2))+' · 结算后才更新特征库'+(p.nearestSampleId?' · 最近 '+p.nearestSampleId:''));
+    }else if(S.sourceType==='baseline'){
       setPayloadState('neutral');S.newSource=false;
       hudSource('baseline · 首轮建立基线（不更新特征库）');
+    }else{
+      setPayloadState('unresolved');S.newSource=false;S.paused=true;
+      hudSource('来源未决 · 相似度证据不足');
+      status('A6 · 相似度源数据校验 unresolved · 暂停，不进入 A7',false);
     }
     if(payload)burst(payload.group.position,payload.color,10,.5,.026,.4);
   }
@@ -2038,31 +2055,11 @@ var battle3d=(function(){
       S.paused=true;status(exprStage(e)+' unresolved · 暂停，不破碎/不结算',false);
       return;
     }
-    if(lc.li===3){
-      if(lc.ci===2){
-        var control=(e.payload&&e.payload.control)||(/控制成功|隔离与回滚已生效/.test(e.payload&&e.payload.note||'')?'success':'failed');
-        if(control==='success'){
-          coreBlue();
-          status('L3-3 · 规定窗口内控制成功 · Core 恢复蓝色（保留 L2 效果记录）',false);
-          hudStage('L3-3 控制成功 · contained 候选');
-          if(payload&&!S.newSource)fadePayload(0x7fd49b);
-        }else{
-          coreRed();
-          status('L3-3 · 控制失败 / 窗口超时 · Core 变红，L3 玻璃破碎',false);
-          hudStage('L3-3 控制失败 · Core 红色');
-          shatterLayer(3);
-          if(payload)flyPayloadTo(corePosClone(),.6);
-        }
-        return;
-      }
-      if(lc.ci===3){status('L3-4 · 等待 Arbiter 最终分类（视觉不锁定结果）',false);return;}
-      return;
-    }
     if(st==='passed'){
       S.checkResult[lc.li][exprStage(e)]='passed';
       var to=impactPoint(lc.li,lc.ci),color=S.payloadState==='same'?COL_SAME:S.payloadState==='new'?COL_NEW:COL_NEUTRAL;
-      crystalBarrier(lc.li,lc.ci,color);   // 命中点扩散水晶屏障
-      consumeSatellite(lc.li,to,false);    // 蓝卫星与攻击粒子融合
+      if(lc.li<3)crystalBarrier(lc.li,lc.ci,color);   // 命中点扩散水晶屏障
+      consumeSatellite(lc.li,to,false);               // 蓝卫星与攻击粒子融合
       shellPulse(lc.li,.025);
       var ids=S.applicable[lc.li]||CHECK_IDS[lc.li];
       var passed=ids.filter(function(id){return S.checkResult[lc.li][id]==='passed';}).length;
@@ -2070,7 +2067,24 @@ var battle3d=(function(){
       if(lc.li===2&&lc.ci===4&&e.payload&&e.payload.simulatedEffect){
         S.l2Effect=true;showL2Effect();
       }
-      status(exprStage(e)+' passed · 水晶屏障扩散 · 当前层 '+passed+'/'+ids.length,true);
+      if(lc.li===3&&lc.ci===2){
+        var p=e.payload||{},raw=String(p.control||p.controlStatus||p.recoveryStatus||'').toLowerCase();
+        if(/success|contained|recovered|恢复成功|控制成功/.test(raw)){
+          coreBlue();status('L3-3 · 控制成功证据已确认 · Core 恢复蓝色（保留 L2 效果记录）',false);hudStage('L3-3 控制成功 · contained 候选');
+          if(payload&&!S.newSource)fadePayload(0x7fd49b);
+        }else if(/failed|timeout|full-penetration|失败|超时/.test(raw)){
+          coreRed();status('L3-3 · 控制失败 / 窗口超时证据已确认 · Core 变红',false);hudStage('L3-3 控制失败 · 等待 Arbiter');
+          if(payload)flyPayloadTo(corePosClone(),.6);
+        }else{
+          coreRisk();status('L3-3 · 控制与恢复检查已完成 · 结果等待 Arbiter 唯一裁决',true);hudStage('L3-3 已检查 · 等待 Arbiter');
+        }
+      }else if(lc.li===3&&lc.ci===3){
+        status('L3-4 · 证据已汇总 · 等待 Arbiter 最终分类（视觉不锁定结果）',true);hudStage('L3-4 等待 Arbiter');
+      }else if(lc.li===3){
+        status(exprStage(e)+' passed · 审计证据已记录 · 当前层 '+passed+'/'+ids.length,true);
+      }else{
+        status(exprStage(e)+' passed · 水晶屏障扩散 · 当前层 '+passed+'/'+ids.length,true);
+      }
       if(S.confirmedLayers[lc.li]&&allPassed(lc.li))confirmLayerPenetration(lc.li);
     }else if(st==='blocked'){
       S.checkResult[lc.li][exprStage(e)]='blocked';
@@ -2095,29 +2109,37 @@ var battle3d=(function(){
     hudStage('L2-5 · 隔离模拟效果已发生（L2 事实保留）');
     later(2.4,function(){if(S.l2Label)S.l2Label.material.opacity=.55;});
   }
-  function confirmLayerPenetration(li){
+  function confirmLayerPenetration(li,arbiterConfirmed){
     if(isNaN(li)||li<0||li>3||li!==S.activeLayer||S.blockedLayer>=0)return false;
-    if(!allPassed(li)){
-      status('Arbiter 已确认 L'+li+' 穿透 · 等待全部 passed 证据后玻璃裂解',true);
+    // Arbiter 的 layer.confirmed 已经代表该层证据完整；允许动画先于迟到的逐项事件播放，
+    // 但普通检查事件仍必须等到所有 passed 后才能触发，避免前端自行宣布穿透。
+    if(!arbiterConfirmed&&!allPassed(li)){
+      status('Arbiter 已确认 L'+li+' 穿透 · 等待迟到的检查事件同步',true);
       return false;
     }
     S.confirmedLayers[li]=false;
     shatterLayer(li);
-    if(li<3){movePayloadInward(li+1);S.activeLayer=li+1;setFocus(li+1);}
+    if(li<3){
+      movePayloadInward(li+1);S.activeLayer=li+1;setFocus(li+1);
+      // 处理已先到达的下一层确认，保证事件乱序不会吞掉对应破碎动画。
+      if(S.confirmedLayers[li+1])later(.08,function(){confirmLayerPenetration(li+1,true);});
+    }
     status('Arbiter 确认 L'+li+' 整层穿透 · 玻璃裂解'+(li<3?' · 进入 L'+(li+1):''),false);
     hudStage('L'+li+' 穿透确认 · 玻璃裂解');
     return true;
   }
   function onArbiterLayerConfirm(e){
-    var li=Number(e.payload.layerIndex);
+    var p=e.payload||{},raw=p.layerIndex!=null?p.layerIndex:(p.layer||e.stageId||'');
+    var li=typeof raw==='number'?raw:Number(String(raw).replace(/[^0-3]/g,''));
     if(isNaN(li)||li<0||li>3)return;
     if(S.blockedLayer>=0)return;
     S.confirmedLayers[li]=true;
-    if(!confirmLayerPenetration(li))console.warn('[3D] Arbiter L'+li+' 穿透确认已暂存，等待全部 passed 证据');
+    if(!confirmLayerPenetration(li,true))console.warn('[3D] Arbiter L'+li+' 穿透确认已暂存，等待前序层完成');
   }
   function onArbiterVerdict(e){
-    var c=e.payload&&e.payload.classification;
+    var p=e.payload||{},c=p.classification;
     S.classification=c;S.arbiterDone=true;
+    if((c==='contained'||c==='full-penetration')&&p.attackSuccess===true&&!S.l2Effect){S.l2Effect=true;showL2Effect();}
     if(c==='contained'){
       coreBlue();
       status('Arbiter：contained · Core 恢复蓝色，L2 效果记录保留',false);
@@ -2138,8 +2160,6 @@ var battle3d=(function(){
       status('Arbiter：'+(c||'blocked')+' · 有效阻断，最终分类已锁定',false);
       hudStage('Arbiter '+(c||'blocked'));
     }
-    // 安全对照是回合末的独立最终视觉结果，覆盖前面的候选颜色。
-    applySafeCore();
   }
   function onRoundSettled(e){
     // 新源 Payload 无论被哪一层拦截还是全穿透，都在本回合结算后回收给 Defender。
@@ -2151,23 +2171,14 @@ var battle3d=(function(){
     if(payload&&!S.newSource)fadePayload();
     hudStage('R'+S.round+' 结算完成 · '+(S.classification||''));
   }
-  function applySafeCore(){
-    if(S.safeVerdict==='passed'){
-      coreRed();
-      status('安全对照测试 · 正常样本放行 · full-penetration · Core 红色',false);
-      hudStage('安全对照 · 放行 · 完全侵入');
-    }else if(S.safeVerdict==='blocked'){
-      coreBlue();
-      status('安全对照测试 · 机密流被拦截 · Core 蓝色',false);
-      hudStage('安全对照 · 拦截 · 机密流安全');
-    }
-  }
   function onSafe(e){
     var st=e.status||(e.payload&&e.payload.status)||'pending';
     S.safeVerdict=st==='passed'||st==='blocked'?st:null;
     if(S.safeVerdict)safeControl(S.safeVerdict);
     else safeControl('pending');
-    applySafeCore();
+    if(S.safeVerdict==='passed')status('安全对照 · 正常样本正确放行 · 不改变攻击样本最终分类',false);
+    else if(S.safeVerdict==='blocked')status('安全对照 · 正常样本被误拦截 · false-positive · 不改变攻击样本最终分类',false);
+    else status('安全对照 · 证据不足 · 等待补充，不改变攻击样本最终分类',true);
   }
   function onBattleEnded(e){
     S.phase='ended';
