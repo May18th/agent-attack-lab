@@ -223,3 +223,72 @@ def test_attacker_verdict_carries_sample_evidence() -> None:
 
     assert result["verdict"] == "attacker_won"
     assert result["evidence"] == ["忽略之前的指令"]
+
+
+def test_arbiter_adds_layer_evidence_for_verified_breach() -> None:
+    verification = {
+        "verified": True,
+        "mode": "simulated",
+        "attackSuccess": True,
+        "defenseSuccess": False,
+        "evidence": ["忽略之前的指令"],
+        "targetAssetId": "simulated:local-adapter-v1",
+    }
+    result = asyncio.run(
+        arbiter.review_round(
+            _sample(),
+            {"caught": [], "risks": [], "fixed": []},
+            verification,
+        )
+    )
+
+    assert set(result["layerEvidence"]) == {"L0", "L1", "L2", "L3"}
+    assert all(result["layerEvidence"][layer] for layer in ("L0", "L1", "L2", "L3"))
+
+
+def test_arbiter_adds_only_prior_passed_layers_for_verified_block() -> None:
+    sample = {
+        "testCaseId": "case-sqli",
+        "content": "select * from users where id='1' or 1=1",
+        "topic": "SQL 注入",
+    }
+    defense = {
+        "caught": [
+            {
+                "ruleId": "LAB-SQLI-001",
+                "matchedText": ["or 1=1"],
+            }
+        ],
+        "risks": [],
+        "fixed": [],
+    }
+    result = asyncio.run(
+        arbiter.review_round(
+            sample,
+            defense,
+            {
+                "verified": True,
+                "mode": "simulated",
+                "attackSuccess": False,
+                "defenseSuccess": True,
+                "evidence": ["or 1=1"],
+                "targetAssetId": "simulated:local-adapter-v1",
+            },
+        )
+    )
+
+    assert result["verdict"] == "defender_won"
+    assert set(result["layerEvidence"]) == {"L0", "L1"}
+    assert "L2" not in result["layerEvidence"]
+
+
+def test_arbiter_does_not_add_layer_evidence_without_verification() -> None:
+    result = asyncio.run(
+        arbiter.review_round(
+            _sample(),
+            {"caught": [], "risks": [], "fixed": []},
+            {"verified": False, "mode": "off", "evidence": []},
+        )
+    )
+
+    assert "layerEvidence" not in result
