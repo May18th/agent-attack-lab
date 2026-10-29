@@ -573,11 +573,13 @@ function scorePart(role: RoundScoreRole | undefined, key: 'processScore' | 'effe
 
 function eventRoundScore(event: BattleEvent): LiveRoundScore | null {
   const data = event.data
-  const raw = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : data
-  const attackerRole = raw.attacker && typeof raw.attacker === 'object' ? raw.attacker as RoundScoreRole : undefined
-  const defenderRole = raw.defender && typeof raw.defender === 'object' ? raw.defender as RoundScoreRole : undefined
-  const attacker = scoreValue(raw.attacker)
-  const defender = scoreValue(raw.defender)
+  const totals = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : {}
+  // arbiter.round.scored 同时返回完整角色评分对象和 scores 中的综合分数字。
+  // 实时评分需要优先保留完整对象，才能展示流程、效果、响应和逐项证据。
+  const attackerRole = data.attacker && typeof data.attacker === 'object' ? data.attacker as RoundScoreRole : undefined
+  const defenderRole = data.defender && typeof data.defender === 'object' ? data.defender as RoundScoreRole : undefined
+  const attacker = scoreValue(attackerRole) ?? scoreValue(totals.attacker)
+  const defender = scoreValue(defenderRole) ?? scoreValue(totals.defender)
   return attacker === null && defender === null ? null : { attacker, defender, attackerRole, defenderRole }
 }
 
@@ -627,6 +629,21 @@ function syncLiveRoundScore(round: number, scores: LiveRoundScore) {
   element('scoreScopeTitle').textContent = '实时评分 · 当前回合'
   element('scoreScopeNote').textContent = `当前展示第 ${round} 回合已结算的评分`
   element('scoreStatus').textContent = `第 ${round} 回合已结算`
+  const rounds = [...liveRoundScores.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([number, item]) => ({
+      round: number,
+      attacker: item.attackerRole,
+      defender: item.defenderRole,
+      scores: { attacker: item.attacker, defender: item.defender },
+    }))
+  window.dispatchEvent(new CustomEvent('battle-scores:update', {
+    detail: {
+      rounds,
+      latest: rounds.at(-1),
+      label: `第 ${round} 回合已结算`,
+    },
+  }))
 }
 
 function syncLiveScoreParts(attacker: RoundScoreRole | undefined, defender: RoundScoreRole | undefined) {
@@ -666,12 +683,19 @@ async function refreshBattleVisualizations(battleId: string) {
     renderLiveRoundScores()
     const latest = (result.rounds || []).filter((round) => scoreValue(round.attacker) !== null || scoreValue(round.defender) !== null).at(-1)
     if (latest) {
+      const attackerRole = latest.attacker && typeof latest.attacker === 'object' ? latest.attacker : undefined
+      const defenderRole = latest.defender && typeof latest.defender === 'object' ? latest.defender : undefined
+      const normalizedLatest = {
+        ...latest,
+        attacker: attackerRole,
+        defender: defenderRole,
+      }
       syncLiveScoreParts(
-        latest.attacker && typeof latest.attacker === 'object' ? latest.attacker : undefined,
-        latest.defender && typeof latest.defender === 'object' ? latest.defender : undefined,
+        attackerRole,
+        defenderRole,
       )
       window.dispatchEvent(new CustomEvent('battle-scores:update', {
-        detail: { rounds: result.rounds || [], latest, label: `第 ${latest.round} 回合已结算` },
+        detail: { rounds: result.rounds || [], latest: normalizedLatest, label: `第 ${latest.round} 回合已结算` },
       }))
     }
     publishBattleVisualizations(Array.isArray(result.rounds) ? result.rounds : [], 'ready')

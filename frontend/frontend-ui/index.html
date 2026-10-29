@@ -2672,7 +2672,7 @@ var battle3d=(function(){
     return '<div class="score-cols"><div class="score-col atk"><h5>Attacker · '+prefix+'各环节</h5><div class="score-subhead">流程规范 / 40</div>'+detailRows(ai.process,roundNo)+'<div class="score-subhead">A-06 分层穿透效果 / 60</div>'+detailRows(ai.effect,roundNo)+'<div class="score-subhead">响应 / 100</div>'+detailRows(ai.response,roundNo)+'<div class="score-row formula"><span>'+prefix+'综合分</span><b>'+scoreDisplay(atk,'base')+'×95% + '+scoreDisplay(atk,'response')+'×5% = '+scoreDisplay(atk,'weighted')+'</b></div></div><div class="score-col def"><h5>Defender · '+prefix+'各环节</h5><div class="score-subhead">流程规范 / 40</div>'+detailRows(di.process,roundNo)+'<div class="score-subhead">实际防御效果 / 60</div>'+detailRows(di.effect,roundNo)+'<div class="score-subhead">响应 / 100</div>'+detailRows(di.response,roundNo)+'<div class="score-row formula"><span>'+prefix+'综合分</span><b>'+scoreDisplay(def,'base')+'×95% + '+scoreDisplay(def,'response')+'×5% = '+scoreDisplay(def,'weighted')+'</b></div></div></div>';
   }
   function detailedScoreHTML(atk,def,isBattle,rounds){
-    if(rounds&&rounds.length)return rounds.map(function(round,index){var no=round.no||round.round||index+1,as=round.scores?round.scores.attacker:round.attacker,ds=round.scores?round.scores.defender:round.defender;if(!as&&!ds)return '';return '<section class="score-round-block"><h4 class="score-round-title">第 '+no+' 回合 · 各环节详细评分 <span class="score-round-summary">Attacker '+scoreDisplay(as,'weighted')+' / Defender '+scoreDisplay(ds,'weighted')+'</span></h4>'+scorePairDetailHTML(as,ds,no)+'</section>';}).join('');
+    if(rounds&&rounds.length)return rounds.map(function(round,index){var no=round.no||round.round||index+1,as=round.attacker||(round.scores&&round.scores.attacker),ds=round.defender||(round.scores&&round.scores.defender);if(!as&&!ds)return '';return '<section class="score-round-block"><h4 class="score-round-title">第 '+no+' 回合 · 各环节详细评分 <span class="score-round-summary">Attacker '+scoreDisplay(as,'weighted')+' / Defender '+scoreDisplay(ds,'weighted')+'</span></h4>'+scorePairDetailHTML(as,ds,no)+'</section>';}).join('');
     return scorePairDetailHTML(atk,def,null);
   }
   function renderInlineRoundScores(rounds){
@@ -2680,7 +2680,7 @@ var battle3d=(function(){
     list.innerHTML='';
     if(!rounds||!rounds.length){list.innerHTML='<div class="live-round-score-empty">等待回合结算</div>';return;}
     rounds.forEach(function(round,index){
-      var as=round.scores&&round.scores.attacker||{},ds=round.scores&&round.scores.defender||{};
+      var as=round.attacker||(round.scores&&round.scores.attacker)||{},ds=round.defender||(round.scores&&round.scores.defender)||{};
       var row=document.createElement('div');row.className='live-round-score-row';
       row.innerHTML='<span class="round-number">R'+(round.no||round.round||index+1)+'</span><span class="round-att"><span>Attacker</span><b>'+scoreDisplay(as,'weighted')+'</b></span><span class="round-def"><span>Defender</span><b>'+scoreDisplay(ds,'weighted')+'</b></span>';
       list.appendChild(row);
@@ -2731,8 +2731,8 @@ var battle3d=(function(){
   window.addEventListener('battle-scores:update',function(event){
     var detail=event.detail||{},rounds=Array.isArray(detail.rounds)?detail.rounds:[];
     var latest=detail.latest||rounds[rounds.length-1]||{};
-    var atk=latest.scores?latest.scores.attacker:latest.attacker;
-    var def=latest.scores?latest.scores.defender:latest.defender;
+    var atk=latest.attacker||(latest.scores&&latest.scores.attacker);
+    var def=latest.defender||(latest.scores&&latest.scores.defender);
     if(atk||def)setScoreboard(atk,def,detail.label||'评分已同步',false,rounds.length,rounds);
     else if(rounds.length)renderInlineRoundScores(rounds);
   });
