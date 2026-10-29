@@ -12,4 +12,4 @@ def test_summarize_output_falls_back_when_output_is_not_json_serializable() -> N
 def test_summarize_output_keeps_a_readable_json_summary() -> None:
     result = _summarize_output({"status": "complete"})
 
-    assert result == "已完成任务，结果摘要：{\"status\": \"complete\"}"
+    assert result == '已完成任务，结果摘要：{"status": "complete"}'

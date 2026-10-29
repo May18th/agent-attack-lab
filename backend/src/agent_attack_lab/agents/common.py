@@ -74,7 +74,7 @@ def _command_payload(command: TaskCommand) -> dict[str, Any]:
                 continue
             try:
                 payload = json.loads(text)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 payload = None
             if isinstance(payload, dict):
                 return payload
@@ -114,7 +114,7 @@ def _summarize_output(output: dict[str, Any]) -> str:
             if len(brief) > 600:
                 brief = brief[:600] + "…"
             return f"已完成任务，结果摘要：{brief}"
-    except (RecursionError, TypeError, ValueError):
+    except RecursionError, TypeError, ValueError:
         logger.debug("生成 Agent 文本摘要失败，保留结构化结果", exc_info=True)
     return "已完成任务，结果见结构化数据。"
 
