@@ -355,10 +355,14 @@
   .event-status.full-penetration,.event-status.failed{color:#ffb6b6;border-color:#874244;background:#2a171b}.event-status.full-penetration::before,.event-status.failed::before{background:#ff646e}
   .event-status.unresolved,.event-status.system-void{color:#f0ce88;border-color:#80692d;background:#2a2416}.event-status.unresolved::before,.event-status.system-void::before{background:#f0b64c}
   .event-status.skipped-by-block,.event-status.not-applicable{color:#a4abb3;border-color:#46515b;background:#1a2026}.event-status.skipped-by-block::before,.event-status.not-applicable::before{background:#77838e}
+  .event-disclosure{margin-top:7px;border-top:1px solid #283543;color:#8e9daa}
+  .event-disclosure>summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:6px;color:#8292a2;font-size:10px;cursor:pointer;list-style:none;user-select:none}
+  .event-disclosure>summary::-webkit-details-marker{display:none}.event-disclosure>summary::after{content:"展开 +";color:#75b9f2;white-space:nowrap}.event-disclosure[open]>summary::after{content:"收起 −"}
+  .event-disclosure>summary:focus-visible{outline:2px solid #69b8ff;outline-offset:2px;border-radius:3px}
   .event-audit{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px;color:#728294;font:10px ui-monospace,Consolas,monospace;overflow-wrap:anywhere;word-break:break-word}
   .event-detail{display:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 10px;border-top:1px solid #283543;margin-top:7px;padding-top:7px;color:#8e9daa;font-size:10px;line-height:1.5;text-align:left}
   .event-detail span{min-width:0;overflow-wrap:anywhere;word-break:break-word}.event-detail b{color:#c0ccd6;font-weight:700}
-  .event.is-expanded .event-detail{display:grid}.event[role="button"]{cursor:pointer}.event[role="button"]:focus-visible .card{outline:2px solid #69b8ff;outline-offset:2px}
+  .event-disclosure[open] .event-detail{display:grid}
   @keyframes timeline-status-pulse{0%,100%{opacity:1;box-shadow:0 0 0 rgba(240,182,76,0)}50%{opacity:.55;box-shadow:0 0 10px rgba(240,182,76,.18)}}
   @media(max-width:520px){.event-detail{grid-template-columns:1fr}}
   .dot{grid-column:2;grid-row:1;justify-self:center;margin-top:10px;width:12px;height:12px;border:3px solid #102033;border-radius:50%;background:var(--att)}.def .dot{background:#72b8ff}.judge .dot{display:none}
