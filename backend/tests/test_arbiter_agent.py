@@ -282,7 +282,7 @@ def test_arbiter_adds_only_prior_passed_layers_for_verified_block() -> None:
     assert "L2" not in result["layerEvidence"]
 
 
-def test_arbiter_does_not_add_layer_evidence_without_verification() -> None:
+def test_arbiter_confirms_passed_layers_without_claiming_target_breach() -> None:
     result = asyncio.run(
         arbiter.review_round(
             _sample(),
@@ -291,4 +291,5 @@ def test_arbiter_does_not_add_layer_evidence_without_verification() -> None:
         )
     )
 
-    assert "layerEvidence" not in result
+    assert result["verdict"] == "undetermined"
+    assert set(result["layerEvidence"]) == {"L0", "L1", "L2", "L3"}

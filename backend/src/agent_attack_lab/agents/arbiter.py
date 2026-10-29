@@ -72,27 +72,13 @@ def _layer_evidence(
 ) -> dict[str, list[str]]:
     """Build stable Arbiter references for layers supported by the round trace.
 
-    A layer confirmation is only meaningful when the trace has either an
-    evidence-backed blocking point (the preceding layers were passed) or a
-    verified target breach (all four layers were passed).  In particular, an
-    unverified clean sample must not manufacture confirmations merely because
-    the projection contains no local findings.
+    These references certify the ordered Defender checks represented by the
+    round trace.  They allow the next layer to start only after Arbiter has
+    confirmed the preceding layer.  They do not, by themselves, prove target
+    compromise; the final classification remains gated by target evidence and
+    the independent Arbiter verdict.
     """
     trace = derive_round_layer_trace(str(sample.get("topic") or ""), defense)
-    has_block = any(
-        check.get("status") == "blocked"
-        for layer in trace
-        for check in layer.get("checks", [])
-    )
-    verified_breach = (
-        verification.get("verified") is True
-        and verification.get("mode") in {"simulated", "live"}
-        and verification.get("attackSuccess") is True
-        and bool(verification.get("evidence"))
-    )
-    if not has_block and not verified_breach:
-        return {}
-
     fingerprint = sha256(
         "|".join(
             (

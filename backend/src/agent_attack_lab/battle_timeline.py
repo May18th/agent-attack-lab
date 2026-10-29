@@ -323,7 +323,8 @@ def emit_defense_and_arbiter_stages(
         and has_verified_effect
         and {"L0", "L1", "L2"}.issubset(confirmed_layers)
         else "full-penetration"
-        if target_breached or all_layers_passed
+        if target_breached
+        or (all_layers_passed and arbiter_classification == "full-penetration")
         else "unresolved"
         if arbiter_classification in {"contained", "full-penetration"}
         else arbiter_classification

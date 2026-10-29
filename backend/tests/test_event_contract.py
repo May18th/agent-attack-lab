@@ -221,6 +221,31 @@ def test_layer_confirmation_requires_arbiter_evidence_ids() -> None:
     }
 
 
+def test_layer_confirmations_do_not_replace_final_target_evidence() -> None:
+    emitted: list[tuple[str, str, dict]] = []
+    classification = emit_defense_and_arbiter_stages(
+        lambda event_type, status, data: emitted.append((event_type, status, data)),
+        round_number=1,
+        topic="通用安全测试",
+        defense={"caught": [], "risks": [], "fixed": []},
+        verification={"verified": False, "mode": "live", "evidence": []},
+        arbiter_review={
+            "verdict": "undetermined",
+            "layerEvidence": {
+                layer: [f"evidence-{layer}"] for layer in ("L0", "L1", "L2", "L3")
+            },
+        },
+        correlation_id="call-1",
+    )
+
+    assert classification == "unresolved"
+    assert [
+        data["layer"]
+        for event_type, _, data in emitted
+        if event_type == "arbiter.layer.confirmed"
+    ] == ["L0", "L1", "L2", "L3"]
+
+
 def test_similarity_reports_baseline_and_unresolved_missing_payload() -> None:
     emitted: list[tuple[str, str, dict]] = []
     emit_attack_stages(
