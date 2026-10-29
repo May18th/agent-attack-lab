@@ -110,6 +110,16 @@ def test_arbiter_verdict_names_the_exact_blocking_check() -> None:
     ]
     assert emitted_checks[-1] == "L2-2"
     assert "L2-3" not in emitted_checks
+    assert [
+        item[2]["stageId"]
+        for item in emitted
+        if item[0] == "defense.layer.started"
+    ] == ["L0", "L1", "L2"]
+    assert not any(
+        item[0] == "defense.check.started" and item[2]["stageId"] == "L2-3"
+        for item in emitted
+    )
+    assert [item[0] for item in emitted][-1] == "arbiter.verdict"
 
 
 def test_similarity_check_is_an_arbiter_event_between_a5_and_a7() -> None:
