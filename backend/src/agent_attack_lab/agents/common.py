@@ -11,13 +11,6 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-)
-logger = logging.getLogger("agent_attack_lab.agents.common")
-
 from acps_sdk.aip import (
     Product,
     StructuredDataItem,
@@ -32,10 +25,16 @@ from acps_sdk.aip.aip_rpc_server import (
     TaskManager,
     handle_rpc_request,
 )
+from fastapi import FastAPI, HTTPException, Request
 
 from agent_attack_lab import amp
 from agent_attack_lab.agents.llm_runtime import is_configured as llm_configured
 from agent_attack_lab.aip_compat import server_identity_options
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
+logger = logging.getLogger("agent_attack_lab.agents.common")
 
 
 # 平台协作入口（如叮当）派发的是自然语言指令，而不是 ACS 约定的结构化字段。
@@ -75,7 +74,7 @@ def _command_payload(command: TaskCommand) -> dict[str, Any]:
                 continue
             try:
                 payload = json.loads(text)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 payload = None
             if isinstance(payload, dict):
                 return payload
@@ -115,8 +114,8 @@ def _summarize_output(output: dict[str, Any]) -> str:
             if len(brief) > 600:
                 brief = brief[:600] + "…"
             return f"已完成任务，结果摘要：{brief}"
-    except Exception:  # 摘要失败不影响主产物
-        pass
+    except RecursionError, TypeError, ValueError:
+        logger.debug("生成 Agent 文本摘要失败，保留结构化结果", exc_info=True)
     return "已完成任务，结果见结构化数据。"
 
 
