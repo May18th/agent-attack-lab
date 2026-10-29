@@ -88,6 +88,38 @@ def _command_payload(command: TaskCommand) -> dict[str, Any]:
     raise ValueError("AIP Start 命令缺少 JSON 输入")
 
 
+def _summarize_output(output: dict[str, Any]) -> str:
+    """把智能体的结构化输出压缩成一段平台可直接展示的文本摘要。"""
+    try:
+        samples = output.get("samples") if isinstance(output, dict) else None
+        if isinstance(samples, list) and samples:
+            lines: list[str] = []
+            for idx, sample in enumerate(samples[:3], start=1):
+                if not isinstance(sample, dict):
+                    continue
+                head = sample.get("scenario") or sample.get("tactic") or "测试样本"
+                objective = sample.get("objective") or ""
+                content = str(sample.get("content") or "").strip()
+                lines.append(f"{idx}. 场景：{head}")
+                if objective:
+                    lines.append(f"   检查目标：{objective}")
+                if content:
+                    lines.append(f"   测试文本：{content[:300]}")
+            extra = len(samples) - 3
+            if extra > 0:
+                lines.append(f"（另有 {extra} 条样本，详见结构化数据）")
+            return "\n".join(lines) or "已完成任务，结果见结构化数据。"
+
+        if isinstance(output, dict) and output:
+            brief = json.dumps(output, ensure_ascii=False)
+            if len(brief) > 600:
+                brief = brief[:600] + "…"
+            return f"已完成任务，结果摘要：{brief}"
+    except Exception:  # 摘要失败不影响主产物
+        pass
+    return "已完成任务，结果见结构化数据。"
+
+
 def create_agent_app(
     name: str,
     process: Callable[[dict[str, Any]], dict[str, Any]],
@@ -119,13 +151,16 @@ def create_agent_app(
         if inspect.isawaitable(output):
             output = await output
         data_item = StructuredDataItem(data=output)
+        # 协作平台（如叮当）整合产物时读取 TextDataItem 正文；只给结构化数据
+        # 会被判为"未提供文本正文"而无法展示。附带一段可读摘要作为正文。
+        text_item = TextDataItem(text=_summarize_output(output))
         TaskManager.set_products(
             command.taskId,
             [
                 Product(
                     id=f"product-{uuid.uuid4()}",
                     name=f"{name}-result",
-                    dataItems=[data_item],
+                    dataItems=[data_item, text_item],
                 )
             ],
         )
