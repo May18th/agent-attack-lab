@@ -132,7 +132,8 @@ ensure_amp_dependency() {
 ensure_pdf_dependency() {
   # venv 在部署流程之外创建，新增的 Python 依赖不会自动进环境。
   # reportlab 缺失时导出接口只会 503（后台表现为「服务暂时不可用」），这里幂等补齐。
-  if "$python_bin" -c 'import reportlab' >/dev/null 2>&1; then
+  if "$python_bin" -c 'import reportlab' >/dev/null 2>&1 \
+    && "$python_bin" -c 'import fontTools' >/dev/null 2>&1; then
     return 0
   fi
   local uv_bin=""
@@ -142,14 +143,19 @@ ensure_pdf_dependency() {
     uv_bin="$HOME/.local/bin/uv"
   fi
   if [[ -n "$uv_bin" ]]; then
-    "$uv_bin" pip install --python "$python_bin" 'reportlab>=4.0' >&2 || true
+    "$uv_bin" pip install --python "$python_bin" 'reportlab>=4.0' 'fonttools>=4' >&2 || true
   else
-    "$python_bin" -m pip install 'reportlab>=4.0' >&2 || true
+    "$python_bin" -m pip install 'reportlab>=4.0' 'fonttools>=4' >&2 || true
   fi
   if "$python_bin" -c 'import reportlab' >/dev/null 2>&1; then
     printf 'installed reportlab for PDF export\n'
   else
     printf 'WARNING: reportlab missing; export.pdf will return 503\n' >&2
+  fi
+  if "$python_bin" -c 'import fontTools' >/dev/null 2>&1; then
+    printf 'installed fontTools for variable font instancing\n'
+  else
+    printf 'WARNING: fontTools missing; bold weight will look flat\n' >&2
   fi
 }
 
@@ -163,6 +169,31 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 TTFont("probe", sys.argv[1])
 PY
+}
+
+instantiate_pdf_font() {
+  # 下载到的是可变字体，只有默认字重；直接排版会全篇一个粗细，标题和小节标题
+  # 都不显眼。这里用 fontTools 拆成 400 / 700 两个静态实例，粗体才是真的粗。
+  local source=$1
+  local dir
+  dir=$(dirname "$source")
+  if ! "$python_bin" -c 'import fontTools' >/dev/null 2>&1; then
+    printf 'WARNING: fontTools missing; keep variable font, bold will look flat\n' >&2
+    return 0
+  fi
+  local pair weight target
+  for pair in "400:Regular" "700:Bold"; do
+    weight=${pair%%:*}
+    target="$dir/NotoSansSC-${pair##*:}.ttf"
+    [[ -s "$target" ]] && continue
+    if "$python_bin" -m fontTools.varLib.instancer "$source" "wght=$weight" \
+      --output "$target" >/dev/null 2>&1 && pdf_font_is_usable "$target"; then
+      printf 'instantiated %s\n' "$target"
+    else
+      rm -f "$target"
+      printf 'WARNING: failed to instantiate wght=%s from %s\n' "$weight" "$source" >&2
+    fi
+  done
 }
 
 ensure_pdf_font() {
@@ -179,11 +210,20 @@ ensure_pdf_font() {
       return 0
     fi
   fi
-  # 幂等：已有任意可用字体文件就跳过，避免每次部署重复下载 10MB。
-  if compgen -G "$font_dir/*.ttf" >/dev/null || compgen -G "$font_dir/*.ttc" >/dev/null \
-    || compgen -G "$font_dir/*.otf" >/dev/null; then
-    printf 'PDF font already present in %s\n' "$font_dir"
+  # 幂等：Regular + Bold 静态实例齐了就不动；只有可变字体时继续往下补实例化。
+  if [[ -s "$font_dir/NotoSansSC-Regular.ttf" && -s "$font_dir/NotoSansSC-Bold.ttf" ]]; then
+    printf 'PDF font ready (Regular + Bold)\n'
     return 0
+  fi
+
+  # 之前已经下载过可变字体就别重复下 18MB，直接补做实例化。
+  local existing
+  existing=$(find "$font_dir" -maxdepth 1 -type f -name '*.ttf' 2>/dev/null | head -1)
+  if [[ -n "$existing" ]]; then
+    instantiate_pdf_font "$existing"
+    if [[ -s "$font_dir/NotoSansSC-Regular.ttf" ]]; then
+      return 0
+    fi
   fi
 
   local url name target
@@ -200,6 +240,7 @@ ensure_pdf_font() {
       && pdf_font_is_usable "$target.part"; then
       mv "$target.part" "$target"
       printf 'downloaded PDF font from %s\n' "$url"
+      instantiate_pdf_font "$target"
       return 0
     fi
     printf 'discarded unusable font from %s\n' "$url" >&2

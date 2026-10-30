@@ -89,7 +89,19 @@ jobs:
             echo "(environ 不可读)"
           fi
 
-      - name: 近期异常日志
+      - name: 在服务环境生成样例 PDF 并回传
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          exec_start=$(systemctl --user show agent-attack-lab-api.service -p ExecStart --value)
+          backend_dir=$(printf '%s' "$exec_start" | grep -oE '/[^ ]*/backend/scripts/start-service\.sh' | head -1 | sed 's#/scripts/start-service\.sh##')
+          py="$backend_dir/.venv/bin/python"
+          echo "python=$py"
+          cd "$backend_dir" || exit 0
+          PYTHONPATH="$backend_dir/src" "$py" scripts/probe_pdf_export.py --part summary --base64
+
         shell: bash
         run: |
           set +e

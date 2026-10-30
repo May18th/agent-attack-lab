@@ -154,10 +154,15 @@ def test_app_font_dir_takes_priority_over_system_paths(tmp_path, monkeypatch) ->
     bundled.write_bytes(b"not-a-real-font")
     monkeypatch.setattr(survey_pdf, "_APP_FONT_DIR", tmp_path)
 
+    bold = tmp_path / "NotoSansSC-Bold.ttf"
+    bold.write_bytes(b"not-a-real-font")
     candidates = survey_pdf._font_candidates()
 
-    # 自带字体排在最前，先于任何系统路径被尝试。
+    # 自带字体排在最前，且正文必须避开 Bold（否则整篇都会变粗）。
     assert candidates[0][0] == str(bundled)
+    assert all("Bold" not in path for path, _ in candidates[:3])
+    # 粗体候选以自带 Bold 开头。
+    assert survey_pdf._bold_candidates()[0][0] == str(bold)
     # 非字体文件不参与候选。
     (tmp_path / "readme.txt").write_text("x", encoding="utf-8")
     assert all(not path.endswith(".txt") for path, _ in survey_pdf._font_candidates())

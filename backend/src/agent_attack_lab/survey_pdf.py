@@ -93,15 +93,41 @@ FONT_BOLD = "SurveyCJK-Bold"
 
 
 def _app_font_candidates() -> list[tuple[str, int]]:
-    """目录里自带的字体，优先于系统路径使用。"""
+    """目录里自带的字体，优先于系统路径使用。
+
+    部署时会把可变字体实例化成 ``NotoSansSC-Regular.ttf`` 与 ``NotoSansSC-Bold.ttf``；
+    正文字体必须避开 Bold，也要让静态实例优先于原始可变字体（后者只有默认字重，
+    拿来当正文会显得发细）。
+    """
+
+    def rank(path: str) -> int:
+        name = os.path.basename(path).lower()
+        if "bold" in name:
+            return 3
+        if "[" in name:  # 可变字体原文件
+            return 2
+        if "regular" in name:
+            return 0
+        return 1
+
     if not _APP_FONT_DIR.is_dir():
         return []
     found = [
         str(path)
-        for path in sorted(_APP_FONT_DIR.iterdir())
+        for path in _APP_FONT_DIR.iterdir()
         if path.suffix.lower() in _FONT_EXTENSIONS and path.is_file()
     ]
-    return [(path, 0) for path in found]
+    return [(path, 0) for path in sorted(found, key=lambda item: (rank(item), item))]
+
+
+def _bold_candidates() -> tuple[tuple[str, int], ...]:
+    """粗体优先用自带目录里的 Bold 实例，其次才是系统路径。"""
+    bundled = [
+        (path, 0)
+        for path, _sub in _app_font_candidates()
+        if "bold" in os.path.basename(path).lower()
+    ]
+    return tuple(bundled) + _BOLD_CANDIDATES
 
 
 def _system_font_candidates() -> list[tuple[str, int]]:
@@ -125,9 +151,16 @@ def _system_font_candidates() -> list[tuple[str, int]]:
 
 
 def _font_candidates() -> tuple[tuple[str, int], ...]:
-    """应用自带字体 → 固定路径 → 系统扫描，越靠前越优先。"""
+    """应用自带字体 → 固定路径 → 系统扫描，越靠前越优先。
+
+    Bold 只用于 ``_bold_candidates()``：混进正文候选会让整篇变成粗体。
+    """
     ordered: list[tuple[str, int]] = []
-    ordered += _app_font_candidates()
+    ordered += [
+        item
+        for item in _app_font_candidates()
+        if "bold" not in os.path.basename(item[0]).lower()
+    ]
     ordered += list(_FIXED_CANDIDATES)
     ordered += _system_font_candidates()
     seen: set[str] = set()
@@ -166,7 +199,13 @@ def ensure_font() -> None:
     override = os.getenv("AGENT_PDF_FONT", "").strip()
     if override and os.path.exists(override):
         pdfmetrics.registerFont(TTFont(FONT_NAME, override))
-        pdfmetrics.registerFont(TTFont(FONT_BOLD, override))
+        bold_override = os.getenv("AGENT_PDF_FONT_BOLD", "").strip()
+        bold_path = (
+            bold_override
+            if bold_override and os.path.exists(bold_override)
+            else override
+        )
+        pdfmetrics.registerFont(TTFont(FONT_BOLD, bold_path))
         return
     candidates = _font_candidates()
     if not _register(FONT_NAME, candidates):
@@ -174,7 +213,7 @@ def ensure_font() -> None:
             "未找到可用的中文字体：请安装 Noto Sans CJK，把字体放到 backend/.fonts/，"
             "或用 AGENT_PDF_FONT 指定 TTF/TTC 路径"
         )
-    if not _register(FONT_BOLD, _BOLD_CANDIDATES):
+    if not _register(FONT_BOLD, _bold_candidates()):
         # 没有独立粗体就复用正文同款字体，保证加粗样式不报错，观感损失可接受。
         first = next((path for path, _sub in candidates if os.path.exists(path)), None)
         if first is not None:
@@ -634,16 +673,19 @@ def build_survey_pdf(
             for title, items in blocks:
                 total = sum(value for _, value in items) or 1
                 bars = [_Bar(label, value, total, width) for label, value in items]
+                if not bars:
+                    story.append(Paragraph(title, styles["body"]))
+                    story.append(Spacer(1, 10))
+                    continue
+                # 只把「标题 + 前两条」绑在一起，避免标题孤立在页尾；
+                # 剩下的条允许跨页，这样不会因为整块塞不下而在页底留一大片空白。
                 story.append(
                     KeepTogether(
-                        [
-                            Paragraph(title, styles["body"]),
-                            Spacer(1, 3),
-                            *bars,
-                            Spacer(1, 10),
-                        ]
+                        [Paragraph(title, styles["body"]), Spacer(1, 3), *bars[:2]]
                     )
                 )
+                story.extend(bars[2:])
+                story.append(Spacer(1, 10))
 
             ranking = _ranking_avg(rows)
             if ranking:

@@ -25,6 +25,7 @@ dependencies = [
     # 未安装时 amp.py 自动退化为只写本地 NDJSON，由 Fluent Bit 转发。
     "kafka-python>=3.0",
     "reportlab>=5.1.0",
+    "fonttools>=4.68.0",
 ]
 
 # Production Wutong wheels are intentionally not a repository dependency:
