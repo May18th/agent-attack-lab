@@ -100,7 +100,14 @@ jobs:
           py="$backend_dir/.venv/bin/python"
           echo "python=$py"
           cd "$backend_dir" || exit 0
-          PYTHONPATH="$backend_dir/src" "$py" scripts/probe_pdf_export.py --part summary --base64
+          PYTHONPATH="$backend_dir/src" "$py" scripts/probe_pdf_export.py --part summary --out /tmp/probe-summary.pdf
+
+      - name: 上传样例 PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-pdf
+          path: /tmp/probe-summary.pdf
+          if-no-files-found: error
 
       - name: 近期异常日志
         shell: bash
