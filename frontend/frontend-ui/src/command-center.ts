@@ -1,7 +1,6 @@
 import { parseSseData, reconnectDelay } from './command-center-stream'
 import {
   buildBattleVisualizations,
-  LiveBattleLifecycleProjector,
   LiveBattleTimelineProjector,
   type BattleVisualizationRound,
 } from './command-center-visualizations'
@@ -137,15 +136,10 @@ const state = {
 
 let visualizationRequestGeneration = 0
 let liveTimelineProjector = new LiveBattleTimelineProjector()
-let liveLifecycleProjector = new LiveBattleLifecycleProjector()
-type TimelinePlaybackItem = { ready: Promise<void>; render: () => void }
-type ThreePlaybackItem = { event: BattleEvent; round: number; resolve: () => void }
+type TimelinePlaybackItem = { ready: Promise<void>; render: () => void | Promise<void> }
 let slowPlayback = false
 let timelinePlaybackQueue: TimelinePlaybackItem[] = []
 let timelinePlaybackRunning = false
-const pendingAnimationResolvers = new Set<() => void>()
-let threePlaybackQueue: ThreePlaybackItem[] = []
-let threePlaybackRunning = false
 type LiveRoundScore = {
   attacker: number | null
   defender: number | null
@@ -153,6 +147,8 @@ type LiveRoundScore = {
   defenderRole?: RoundScoreRole
 }
 const liveRoundScores = new Map<number, LiveRoundScore>()
+
+const pendingAnimationResolvers = new Set<() => void>()
 
 function animationWindowMs(type: string) {
   if (type.includes('layer')) return 1100
@@ -175,20 +171,6 @@ function waitFor3dAnimation(type: string): Promise<void> {
   })
 }
 
-function drain3dPlayback() {
-  if (threePlaybackRunning) return
-  threePlaybackRunning = true
-  void (async () => {
-    while (threePlaybackQueue.length) {
-      const item = threePlaybackQueue.shift()!
-      emit3dEvent(item.event, item.round)
-      if (slowPlayback) await waitFor3dAnimation(item.event.type)
-      item.resolve()
-    }
-    threePlaybackRunning = false
-  })()
-}
-
 function drainTimelinePlayback() {
   if (timelinePlaybackRunning) return
   timelinePlaybackRunning = true
@@ -196,13 +178,13 @@ function drainTimelinePlayback() {
     while (timelinePlaybackQueue.length) {
       const item = timelinePlaybackQueue.shift()!
       if (slowPlayback) await item.ready
-      item.render()
+      await item.render()
     }
     timelinePlaybackRunning = false
   })()
 }
 
-function enqueueTimelinePlayback(render: () => void, ready: Promise<void>) {
+function enqueueTimelinePlayback(render: () => void | Promise<void>, ready: Promise<void> = Promise.resolve()) {
   timelinePlaybackQueue.push({ render, ready })
   drainTimelinePlayback()
 }
@@ -211,13 +193,12 @@ function setSlowPlayback(enabled: boolean) {
   slowPlayback = enabled
   if (!enabled) {
     pendingAnimationResolvers.forEach((resolve) => resolve())
-    drain3dPlayback()
     drainTimelinePlayback()
   }
 }
 
 async function waitForTimelinePlayback() {
-  while (timelinePlaybackRunning || timelinePlaybackQueue.length || threePlaybackRunning || threePlaybackQueue.length) {
+  while (timelinePlaybackRunning || timelinePlaybackQueue.length) {
     await new Promise<void>((resolve) => window.setTimeout(resolve, 20))
   }
 }
@@ -935,11 +916,9 @@ async function startBattle() {
 function beginLiveBattle(battle: Battle) {
   state.streamSeen.clear()
   timelinePlaybackQueue = []
-  threePlaybackQueue = []
   pendingAnimationResolvers.forEach((resolve) => resolve())
   state.selected = battle
   liveTimelineProjector = new LiveBattleTimelineProjector()
-  liveLifecycleProjector = new LiveBattleLifecycleProjector()
   liveRoundScores.clear()
   renderLiveRoundScores()
   publishBattleVisualizations([], 'loading')
@@ -1041,17 +1020,15 @@ function waitForReconnect(delay: number, signal: AbortSignal) {
 
 function renderLiveEvent(event: BattleEvent) {
   const round = Number(event.data.round || 0)
-  // 3D 事件先进入串行播放队列；时间线视觉项共享同一个完成信号。
-  const ready = bridge3dEvent(event, round)
   if (event.type === 'arbiter.round.score' || event.type === 'arbiter.round.scored' || event.type === 'round.settled') {
     const scores = eventRoundScore(event)
     if (scores) {
-      if (slowPlayback) enqueueTimelinePlayback(() => syncLiveRoundScore(round, scores), ready)
+      if (slowPlayback) enqueueTimelinePlayback(() => syncLiveRoundScore(round, scores))
       else syncLiveRoundScore(round, scores)
     }
   }
   if (event.type === 'attack.sample.generated') {
-    if (slowPlayback) enqueueTimelinePlayback(() => appendLivePayload(event, round), ready)
+    if (slowPlayback) enqueueTimelinePlayback(() => appendLivePayload(event, round))
     else appendLivePayload(event, round)
   }
   const entries = liveTimelineProjector.push(event)
@@ -1070,18 +1047,31 @@ function renderLiveEvent(event: BattleEvent) {
       window.dispatchEvent(new CustomEvent('battle-timeline:round', {
         detail: { round: entry.round, total },
       }))
-      if (slowPlayback) enqueueTimelinePlayback(publishRound, ready)
+      if (slowPlayback) enqueueTimelinePlayback(publishRound)
       else publishRound()
       continue
     }
     const entryRound = Number(entry.event.data.round || round)
     const timing = eventTiming(entry.event)
     const evidenceIds = timelineEvidenceIds(entry.event)
-    const title = eventTitle(entry.event)
-    const description = eventDescription(entry.event)
-    const publishEntry = () => {
+    const penetrated = entry.variant === 'penetrated'
+    const title = penetrated ? penetrationTitle(entry.event) : eventTitle(entry.event)
+    const description = penetrated ? penetrationDescription(entry.event) : eventDescription(entry.event)
+    const publishEntry = async () => {
       appendTimeline(entry.side, entry.key, entry.event, title, description, timing, evidenceIds)
       element('liveStatus').textContent = title
+      // 3D 只同步回合时间线：事件卡出现的那一刻才驱动对应动画。
+      window.dispatchEvent(new CustomEvent('battle-timeline:card', {
+        detail: {
+          round: entryRound,
+          side: entry.side,
+          title,
+          description,
+          stageId: entry.event.data.stageId || entry.event.type,
+          status: entry.event.status || entry.event.data.status || '',
+        },
+      }))
+      if (slowPlayback) await waitFor3dAnimation(entry.event.type)
     }
     // 角色日志保持实时：它不等待慢速播放，也不改变后端时间戳。
     window.dispatchEvent(new CustomEvent('battle-timeline:entry', {
@@ -1099,14 +1089,25 @@ function renderLiveEvent(event: BattleEvent) {
         responseMs: timing.responseMs,
       },
     }))
-    if (slowPlayback) enqueueTimelinePlayback(publishEntry, ready)
-    else publishEntry()
+    if (slowPlayback) enqueueTimelinePlayback(publishEntry)
+    else void publishEntry()
   }
   if (event.type === 'round.completed') {
     const refresh = () => { void refreshBattleVisualizations(event.battleId) }
-    if (slowPlayback) enqueueTimelinePlayback(refresh, ready)
+    if (slowPlayback) enqueueTimelinePlayback(refresh)
     else refresh()
   }
+}
+
+function penetrationTitle(event: BattleEvent) {
+  const layer = Number(event.data.layerIndex ?? String(event.data.stageId || event.data.layer || '').replace(/[^0-3]/g, ''))
+  return `${Number.isFinite(layer) && layer >= 0 ? `L${layer}` : (String(event.data.stageId || 'Ln'))} 已穿透`
+}
+
+function penetrationDescription(event: BattleEvent) {
+  const layer = Number(event.data.layerIndex ?? String(event.data.stageId || event.data.layer || '').replace(/[^0-3]/g, ''))
+  if (layer === 3) return 'payload 融入 Core · L3 球壳破裂 · Core 由蓝色变为红色'
+  return `payload 来到下一层 L${layer + 1} · 本层全部必要检测已通过且未被拦截`
 }
 
 function appendLivePayload(event: BattleEvent, round: number) {
@@ -1483,34 +1484,6 @@ function eventDescription(event: BattleEvent) {
   if (event.type === 'battle.completed') return `全部有效回合已完成，整局结果已保存至历史记录`
   if (event.type === 'battle.failed') return String(data.error || '后端执行失败')
   return `状态：${event.status}`
-}
-
-function emit3dEvent(event: BattleEvent, round: number) {
-  const bus = window.BattleEventBus
-  if (!bus) return
-  const projected = liveLifecycleProjector.push(event)
-  projected.forEach((item, index) => {
-    bus.emit({
-      ...item,
-      round: item.round || round,
-      source: 'live',
-      mock: false,
-      status: item.status || event.status,
-      eventId: `backend-${event.id}-${index}`,
-      occurredAt: event.createdAt,
-    })
-  })
-}
-
-function bridge3dEvent(event: BattleEvent, round: number): Promise<void> {
-  if (!slowPlayback) {
-    emit3dEvent(event, round)
-    return Promise.resolve()
-  }
-  return new Promise((resolve) => {
-    threePlaybackQueue.push({ event, round, resolve })
-    drain3dPlayback()
-  })
 }
 
 async function finishLiveBattle(event: BattleEvent) {

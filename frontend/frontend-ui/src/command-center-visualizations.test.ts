@@ -214,6 +214,10 @@ describe('live battle visualizations', () => {
         kind: 'event', side: 'judge', event: event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }),
         key: 'battle-1:1:arbiter-layer:L0', update: false,
       },
+      {
+        kind: 'event', side: 'att', event: event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }),
+        key: 'battle-1:1:arbiter-layer:L0:penetrated', update: false, variant: 'penetrated',
+      },
     ])
   })
 
@@ -235,7 +239,35 @@ describe('live battle visualizations', () => {
         kind: 'event', side: 'judge', event: event('arbiter.layer.confirmed', 2, { stageId: 'L0' }),
         key: 'battle-1:1:arbiter-layer:L0', update: true,
       },
+      {
+        kind: 'event', side: 'att', event: event('arbiter.layer.confirmed', 2, { stageId: 'L0' }),
+        key: 'battle-1:1:arbiter-layer:L0:penetrated', update: false, variant: 'penetrated',
+      },
     ])
+  })
+
+  it('hides safe-control cards unless the round is a full penetration', () => {
+    const projector = new LiveBattleTimelineProjector()
+    const event = (type: string, sequence: number, data: Record<string, unknown>): BattleTimelineEvent => ({
+      id: `event-${sequence}`,
+      battleId: 'battle-1',
+      type,
+      sequence,
+      status: 'completed',
+      createdAt: `2026-10-26T00:00:0${sequence}Z`,
+      data: { round: 1, ...data },
+    })
+
+    // 拦截回合：安全对照事件卡全部隐藏
+    expect(projector.push(event('arbiter.verdict', 1, { classification: 'blocked' }))).toHaveLength(2) // 回合标记 + 最终分类卡
+    expect(projector.push(event('arbiter.safe_control.started', 2, {}))).toEqual([])
+    expect(projector.push(event('defense.safe_control', 3, {}))).toEqual([])
+    expect(projector.push(event('arbiter.safe_control.verdict', 4, {}))).toEqual([])
+    // 完整穿透回合：安全对照事件卡保留
+    expect(projector.push(event('arbiter.verdict', 5, { round: 2, classification: 'full-penetration' }))).toHaveLength(2)
+    expect(projector.push(event('arbiter.safe_control.started', 6, { round: 2 }))).toHaveLength(1)
+    expect(projector.push(event('defense.safe_control', 7, { round: 2 }))).toHaveLength(1)
+    expect(projector.push(event('arbiter.safe_control.verdict', 8, { round: 2 }))).toHaveLength(1)
   })
 
   it('keeps terminal battle results while excluding non-canonical sample events', () => {

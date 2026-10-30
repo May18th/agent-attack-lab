@@ -63,6 +63,8 @@ export type BattleTimelineEntry =
       event: BattleTimelineEvent
       key: string
       update: boolean
+      /** penetrated：由 arbiter.layer.confirmed 合成的 ATTACKER「Ln 已穿透」卡 */
+      variant?: 'penetrated'
     }
 
 export type BattleLifecycleEvent = {
@@ -194,11 +196,26 @@ function logicalTimelineStage(type: string, stageId: string, data: Record<string
 export class LiveBattleTimelineProjector {
   private readonly renderedRounds = new Set<number>()
   private readonly renderedStages = new Set<string>()
+  /** 每回合最终分类：安全对照事件卡只在完整穿透（full-penetration）回合出现 */
+  private readonly roundClassification = new Map<number, string>()
+
+  private isSafeControlEvent(type: string): boolean {
+    return type === 'arbiter.safe_control.started'
+      || type === 'arbiter.safe_control'
+      || type === 'arbiter.safe_control.verdict'
+      || type === 'defense.safe_control'
+  }
 
   push(event: BattleTimelineEvent): BattleTimelineEntry[] {
     const round = Number(event.data.round || 0)
     const entries: BattleTimelineEntry[] = []
+    const classification = typeof event.data.classification === 'string' ? event.data.classification : ''
+    if ((event.type === 'arbiter.verdict' || event.type === 'round.settled') && classification) {
+      this.roundClassification.set(round, classification)
+    }
     if (!shouldRenderBattleTimelineEvent(event.type, event.data)) return entries
+    // 只有完整穿透回合才展示安全对照（启动安全对照 / D-07 结果 / 特征库动作）事件卡
+    if (this.isSafeControlEvent(event.type) && this.roundClassification.get(round) !== 'full-penetration') return entries
     if (round > 0 && !this.renderedRounds.has(round)) {
       this.renderedRounds.add(round)
       entries.push({ kind: 'round', round })
@@ -214,6 +231,17 @@ export class LiveBattleTimelineProjector {
       : event.type.startsWith('agent.call.') && agentRole === 'attacker' ? 'att'
       : /^A[1-8]$/.test(stageId) ? 'att' : 'def'
     entries.push({ kind: 'event', side, event, key: stageKey, update })
+    // 层确认卡之后追加 ATTACKER「Ln 已穿透」卡：payload 来到下一层 / 融入 Core
+    if (event.type === 'arbiter.layer.confirmed') {
+      entries.push({
+        kind: 'event',
+        side: 'att',
+        event,
+        key: `${stageKey}:penetrated`,
+        update: false,
+        variant: 'penetrated',
+      })
+    }
     return entries
   }
 }
