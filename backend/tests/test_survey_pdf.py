@@ -146,3 +146,23 @@ def test_counts_and_ranking_use_stored_answers() -> None:
     ranking = survey_pdf._ranking_avg(rows)
     assert [name for name, _ in ranking[:2]] == ["A", "B"]
     assert ranking[0][1] == 1.5
+
+
+def test_app_font_dir_takes_priority_over_system_paths(tmp_path, monkeypatch) -> None:
+    """生产机常常没有任何系统级中文字体，此时必须能用应用自带的 .fonts。"""
+    bundled = tmp_path / "NotoSansCJKsc-Regular.otf"
+    bundled.write_bytes(b"not-a-real-font")
+    monkeypatch.setattr(survey_pdf, "_APP_FONT_DIR", tmp_path)
+
+    candidates = survey_pdf._font_candidates()
+
+    # 自带字体排在最前，先于任何系统路径被尝试。
+    assert candidates[0][0] == str(bundled)
+    # 非字体文件不参与候选。
+    (tmp_path / "readme.txt").write_text("x", encoding="utf-8")
+    assert all(not path.endswith(".txt") for path, _ in survey_pdf._font_candidates())
+
+
+def test_app_font_dir_missing_is_not_an_error(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(survey_pdf, "_APP_FONT_DIR", tmp_path / "nope")
+    assert survey_pdf._app_font_candidates() == []

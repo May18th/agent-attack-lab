@@ -21,6 +21,7 @@ import os
 from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from reportlab.lib import colors
@@ -50,7 +51,7 @@ ACCENT = colors.HexColor("#0F766E")
 RULE = colors.HexColor("#E5E7EB")
 FILL = colors.HexColor("#F3F4F6")
 
-_FONT_CANDIDATES: tuple[tuple[str, int], ...] = (
+_FIXED_CANDIDATES: tuple[tuple[str, int], ...] = (
     (r"C:\Windows\Fonts\msyh.ttc", 0),
     (r"C:\Windows\Fonts\msyh.ttf", 0),
     (r"C:\Windows\Fonts\simhei.ttf", 0),
@@ -59,6 +60,8 @@ _FONT_CANDIDATES: tuple[tuple[str, int], ...] = (
     ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 0),
     ("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf", 0),
     ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 0),
+    ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0),
+    ("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", 0),
     ("/System/Library/Fonts/PingFang.ttc", 0),
 )
 _BOLD_CANDIDATES: tuple[tuple[str, int], ...] = (
@@ -68,8 +71,73 @@ _BOLD_CANDIDATES: tuple[tuple[str, int], ...] = (
     ("/System/Library/Fonts/PingFang.ttc", 0),
 )
 
+# 应用自带字体目录：部署脚本会把 Noto Sans CJK 下到这里，release 之间通过软链共享。
+# 这样生产机即使没有任何系统级中文字体，也能出中文 PDF。
+_APP_FONT_DIR = Path(__file__).resolve().parents[2] / ".fonts"
+_FONT_EXTENSIONS = (".ttf", ".ttc", ".otf")
+# 名字里带这些片段的字体基本都覆盖简体中文，用于兜底扫描非标准安装路径。
+_CJK_FONT_HINTS = (
+    "cjk",
+    "noto",
+    "wqy",
+    "hei",
+    "song",
+    "yahei",
+    "msyh",
+    "pingfang",
+    "deng",
+)
+
 FONT_NAME = "SurveyCJK"
 FONT_BOLD = "SurveyCJK-Bold"
+
+
+def _app_font_candidates() -> list[tuple[str, int]]:
+    """目录里自带的字体，优先于系统路径使用。"""
+    if not _APP_FONT_DIR.is_dir():
+        return []
+    found = [
+        str(path)
+        for path in sorted(_APP_FONT_DIR.iterdir())
+        if path.suffix.lower() in _FONT_EXTENSIONS and path.is_file()
+    ]
+    return [(path, 0) for path in found]
+
+
+def _system_font_candidates() -> list[tuple[str, int]]:
+    """在常见字体根目录里按名字找中文字体，兼容非标准安装位置。"""
+    roots = ("/usr/share/fonts", "/usr/local/share/fonts", str(Path.home() / ".fonts"))
+    found: list[str] = []
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for current, _dirs, files in os.walk(root):
+            # 目录层级过深没意义，限制一下避免在怪异的挂载点上卡住。
+            if current.count(os.sep) - root.count(os.sep) > 3:
+                continue
+            for name in files:
+                lower = name.lower()
+                if not lower.endswith(_FONT_EXTENSIONS):
+                    continue
+                if any(hint in lower for hint in _CJK_FONT_HINTS):
+                    found.append(os.path.join(current, name))
+    return [(path, 0) for path in sorted(found)]
+
+
+def _font_candidates() -> tuple[tuple[str, int], ...]:
+    """应用自带字体 → 固定路径 → 系统扫描，越靠前越优先。"""
+    ordered: list[tuple[str, int]] = []
+    ordered += _app_font_candidates()
+    ordered += list(_FIXED_CANDIDATES)
+    ordered += _system_font_candidates()
+    seen: set[str] = set()
+    unique: list[tuple[str, int]] = []
+    for item in ordered:
+        if item[0] in seen:
+            continue
+        seen.add(item[0])
+        unique.append(item)
+    return tuple(unique)
 
 
 class PdfFontUnavailable(RuntimeError):
@@ -100,12 +168,18 @@ def ensure_font() -> None:
         pdfmetrics.registerFont(TTFont(FONT_NAME, override))
         pdfmetrics.registerFont(TTFont(FONT_BOLD, override))
         return
-    if not _register(FONT_NAME, _FONT_CANDIDATES):
+    candidates = _font_candidates()
+    if not _register(FONT_NAME, candidates):
         raise PdfFontUnavailable(
-            "未找到可用的中文字体，请安装 Noto Sans CJK 或用 AGENT_PDF_FONT 指定 TTF/TTC 路径"
+            "未找到可用的中文字体：请安装 Noto Sans CJK，把字体放到 backend/.fonts/，"
+            "或用 AGENT_PDF_FONT 指定 TTF/TTC 路径"
         )
     if not _register(FONT_BOLD, _BOLD_CANDIDATES):
-        pdfmetrics.registerFont(TTFont(FONT_BOLD, _FONT_CANDIDATES[0][0]))
+        # 没有独立粗体就复用正文同款字体，保证加粗样式不报错，观感损失可接受。
+        first = next((path for path, _sub in candidates if os.path.exists(path)), None)
+        if first is not None:
+            kwargs = {"subfontIndex": 0} if first.lower().endswith(".ttc") else {}
+            pdfmetrics.registerFont(TTFont(FONT_BOLD, first, **kwargs))
 
 
 # ---------------------------------------------------------------- 样式
