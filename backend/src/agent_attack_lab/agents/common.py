@@ -30,10 +30,10 @@ from fastapi import FastAPI, HTTPException, Request
 from agent_attack_lab import amp
 from agent_attack_lab.agents.llm_runtime import is_configured as llm_configured
 from agent_attack_lab.aip_compat import server_identity_options
+from agent_attack_lab.logging_setup import configure_logging
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-)
+configure_logging()
+
 logger = logging.getLogger("agent_attack_lab.agents.common")
 
 

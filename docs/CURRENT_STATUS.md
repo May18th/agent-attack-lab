@@ -18,11 +18,12 @@
 
 - 模型定位、六个角色、完整环境变量与降级链路已单独整理到 [`LLM_INTEGRATION_STATUS.md`](LLM_INTEGRATION_STATUS.md)。本次是文档整理与代码修复，未改动任何运行环境配置。
 - 该文补充了三处此前未记录的细节：受控靶标只读全局 `AGENT_LLM_*`（无角色前缀）；角色前缀半配会静默跳过全局配置而不回退；裁决 / 战报 / 规则候选三个开关默认关闭，需显式置 1。
-- 修复 `agents/arbiter.py` 中 `except OverflowError, ValueError:` 的 Python 2 语法错误（Python 3 下为 SyntaxError，会连带 `battle_runner` 导入失败）。2026-10-30 已验证：`py_compile` 与 `compileall src` 通过、`battle_runner` 可导入。
+- `agents/arbiter.py` 的 `except OverflowError, ValueError:` **不是语法错误**：项目为 Python 3.14，PEP 758 允许 `except` 不加括号。已改为显式元组，仅为不再依赖 3.14 新语法，行为不变。此前"Python 2 语法错误导致 `battle_runner` 起不来"的记录是误判，作废。
 - 修复 `llm_runtime._selected_prefix()` 的角色前缀半配问题：原先角色前缀只填一个变量就会切到该前缀并判定为未配置，静默吃掉已配好的 `AGENT_LLM_*`；现改为三项齐全才使用角色前缀，否则回落全局并输出一次 `role_llm_config_incomplete` warning。
 - 新增 `AGENT_ATTACKER_LLM_ENABLED` / `AGENT_DEFENDER_LLM_ENABLED`（缺省开启，设 0 走规则），替代此前"故意填坏角色变量"的隐式关闭方式。`tests/test_llm_runtime.py` 与 `tests/test_llm_agents.py` 已覆盖两类变更的全部情形，全量测试 `307 passed, 5 skipped`（exit=0）。
 - **生产已接入模型（2026-10-30 定论）**：`ExecStart` 走 `scripts/start-service.sh`，`.env` 已 `export` 进进程，`/proc/<MainPID>/environ` 中 `AGENT_LLM_MODEL=deepseek-chat`、`AGENT_LLM_BASE_URL`、`AGENT_LLM_API_KEY` 及三个 `*_ENABLED` 均非空。公开只读 `/battles?limit=100` 返回 70 场战局，69 场 `agentSource=acp-llm`，最近一场 `2026-10-30T01:31:56Z`；出现 `verdict=attacker_won`，该判定要求靶标验证证据，说明受控靶标模型同样在调用。**上方 2026-10-18「不接入外部 LLM/API」的观测已被本条推翻。**
-- **日志不可用于判断模型使用（已修，待部署）**：`start-service.sh:56` 原以 `--log-level warning` 启动，压掉 access log 与应用 INFO 日志，`model_call_completed` 等记录不落盘。`journalctl` 查得 0 条属日志级别所致，本轮曾据此误判，已由上述证据纠正。现改为 `--log-level info --no-access-log`，并同步 `start-agents.ps1`、`scripts/admin-workbench.ps1`、`deploy/agent-attack-lab-preview.service`；`tests/test_start_service.py` 新增断言防止回退。全量测试 `308 passed, 5 skipped`（exit=0）。**尚未部署，需重启服务后在生产生效。**
+- **日志级别修复已在生产生效（2026-10-30 验证）**：三个服务进程 `cmdline` 均为 `--log-level info --no-access-log`，`journalctl` 出现 `INFO: Application startup complete`，release 目录中仅当时在跑的 release（`b585460`）脚本带新参数。此前 `journalctl` 查得 0 条是级别所致，已由上述证据纠正。
+- **日志级别只是必要条件，应用 logger 还需初始化（2026-10-30 补修）**：uvicorn 的 `--log-level` 只管 `uvicorn*` 三个 logger，不设根 logger 级别也不装 handler。`service.py` 原先只取 `logging.getLogger("agent_attack_lab")`，api 进程的应用 INFO 因此全被丢弃——同一战局中 `attacker` 与 `defender` 各记 17 条 `model_call_completed`，api 记 0 条，而该战局 4 轮均为 `verificationMode=live`、每轮靶标耗时 1.7~2.5 秒。差异源于 `agents/common.py` 的 `logging.basicConfig`，attacker / defender 导入它时顺带打开了日志。现新增 `logging_setup.configure_logging()`（装根 handler + 调包 logger 到 INFO，不动根级别），`service.py` 与 `agents/common.py` 统一调用，`tests/test_logging_setup.py` 覆盖 6 种情形。全量测试 `338 passed, 5 skipped`（exit=0，rebase 到 `cc78737` 后的基线）。**此项待部署后在生产生效。**
 
 ## 本地状态（2026-10-15，历史）
 

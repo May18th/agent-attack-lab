@@ -148,13 +148,18 @@ cd D:\梧桐\backend
 
 ## 八、已知事项
 
-- `agents/arbiter.py:142` 曾为 Python 2 写法 `except OverflowError, ValueError:`，Python 3 下是 SyntaxError 且会连带 `battle_runner` 导入失败，已改为元组形式。**2026-10-30 已验证**：`python -m py_compile` 通过，`compileall src` 通过，`battle_runner` / `review_round` 可正常导入。
+- `agents/arbiter.py` 的 `except OverflowError, ValueError:` **不是缺陷**。项目为 Python 3.14（`pyproject.toml` 要求 `>=3.14`），PEP 758 自 3.14 起允许 `except` 捕获多个异常时不加括号。2026-10-30 已把该行改成显式元组 `except (OverflowError, ValueError):`，目的只是不再依赖 3.14 的新语法，行为不变。此前"Python 2 语法错误导致 `battle_runner` 起不来"的判断是误判，已作废。
 - `_selected_prefix()` 半配回落已于 2026-10-30 修复，`tests/test_llm_runtime.py` 覆盖三种情形（半配回落、半配且无全局、完整角色优先生效）。
 - 攻击、防守已补 `AGENT_ATTACKER_LLM_ENABLED` / `AGENT_DEFENDER_LLM_ENABLED`，缺省开启以保证现有部署行为不变，`tests/test_llm_agents.py` 覆盖三类情形（缺省调模型、设 0 走规则、设 1 且配置完整调模型）。后端全量测试 `307 passed, 5 skipped`（exit=0）。
 - 此前"填坏角色变量来关闭单角色模型"的隐式用法随半配修复一起失效，现由上述两个开关正式替代。
-- **可观测性缺陷已修（2026-10-30，待部署生效）**：`start-service.sh` 原用 `--log-level warning` 启动，模型调用、降级、请求日志全部不落盘。本轮排查因此走了弯路——先按 `journalctl` 的 0 条误判"未调用"，实际生产在用模型。
-  现改为 `--log-level info --no-access-log`：应用 INFO 落盘，访问日志单独关闭避免刷满 journal。同一参数已在 `start-agents.ps1`、`scripts/admin-workbench.ps1`、`deploy/agent-attack-lab-preview.service` 同步。`tests/test_start_service.py` 新增断言钉住这两个参数，防止改回 `warning`。
-  **改动只在仓库内，需经部署流程重启服务后才在生产生效**；生效需 uvicorn ≥0.19（本地实测 0.54.0 支持 `--no-access-log`）。
+- **可观测性：日志级别已修并在生产生效（2026-10-30 验证）**。`start-service.sh` 原用 `--log-level warning`，模型调用日志全部不落盘；现改为 `--log-level info --no-access-log`，同一参数在 `start-agents.ps1`、`scripts/admin-workbench.ps1`、`deploy/agent-attack-lab-preview.service` 同步，`tests/test_start_service.py` 钉住这两个参数。
+  生产验证三条：进程 `cmdline` 三个服务均为 `--log-level info --no-access-log`；`journalctl` 出现 `INFO: Application startup complete`；release 目录中只有当时在跑的 release（`b585460`）脚本带新参数，旧 release 保持 `warning`。
+
+- **只改 `--log-level` 不够：应用日志还需显式初始化（2026-10-30 补修）**。uvicorn 的 `--log-level` 只作用于 `uvicorn` / `uvicorn.error` / `uvicorn.access` 三个 logger，不改变根 logger 的级别，也不给根 logger 装 handler。`service.py` 此前只写了 `logger = logging.getLogger("agent_attack_lab")`，既没设级别也没装 handler，于是 api 进程里的 `logger.info` 全被根 logger 的默认 `WARNING` 丢掉。
+  实测症状：同一时刻 `attacker` 与 `defender` 各记录 **17 条** `model_call_completed`，而 **api 记录 0 条**——尽管该战局 4 轮全部 `verificationMode=live`、每轮靶标耗时 1.7~2.5 秒，说明靶标模型确实被调用。差异来自 `agents/common.py` 里的 `logging.basicConfig(level=INFO)`：attacker / defender 导入它时顺带把日志打开了，api 没有等价调用。
+  现新增 `logging_setup.configure_logging()`：根 logger 无 handler 时装一个，并把 `agent_attack_lab` 包 logger 调到 INFO；**不改根 logger 级别**，避免把 httpx / openai 的 INFO 噪音一起放出来。`service.py` 与 `agents/common.py` 均改为调用它，`tests/test_logging_setup.py` 覆盖 6 种情形。本地后端的全量测试为 `338 passed, 5 skipped`（exit=0，rebase 到 `cc78737` 后的基线）。
+
+- **一个排查口径**：判断"部署是否生效"优先读 `/proc/$(MainPID)/cmdline`，它不受日志级别、时间窗口、journal 权限影响；判断"模型是否被调用"看业务数据（`verificationMode`、`elapsedMs`、`attackerOut.agentSource`），日志只能证明"有没有打印"。
 - **本机开发环境：配置完整，历史跑通过，近期无调用记录**。2026-10-30 核对 `backend/.env`，已配置全局 `AGENT_LLM_BASE_URL=https://api.deepseek.com/v1`、`AGENT_LLM_MODEL=deepseek-chat`、`AGENT_LLM_API_KEY`（非空）以及三个 `*_ENABLED=1`，按配置判定六个角色全部为「已启用」，且全部走全局前缀。
   实际调用证据来自本机战局库而非配置：`battles.sqlite3` 共 87 场战局，其中 **13 场** `attackerOut/defenderOut` 带 `agentSource=acp-llm` 与 `agentMode: llm`，时间全部落在 **2026-10-07 16:34–17:44**；此后到本文更新时间没有新的模型调用痕迹，`.data/*.log` 里也没有任何 `model_call_completed` / `model_text_completed` 记录。因此准确表述是「配置可用、历史上跑通过」，不能据此断言「当前正在调用」。
 - **生产环境已接入并在使用（2026-10-30 定论）**。三条独立证据：
@@ -162,4 +167,4 @@ cd D:\梧桐\backend
   2. 业务数据：公开只读接口 `/battles?limit=100` 返回 70 场战局，其中 **69 场 `attackerOut.agentSource=acp-llm`**；最近一场时间为 `2026-10-30T01:31:56Z`（北京时间 09:31）。`acp-llm` 是对端 Agent 自报的模型使用声明。
   3. 判定链路：战局中出现 `verdict=attacker_won`。该判定要求靶标验证提供 `verified=true` 与证据（`agents/arbiter.py:169` 会拒绝无证据的 `attacker_won`），而靶标验证由 `targets/controlled_target.py` 调用**全局** `AGENT_LLM_*` 完成。据此可推断受控靶标模型同样在调用。
 
-- **不要用 journal 判断生产是否调用模型**：`start-service.sh:56` 以 `--log-level warning` 启动 uvicorn，会把 access log 与应用的 `logger.info` 一并压掉，而 `llm_runtime.py` 的 `model_call_completed` / `model_text_completed` 正是 INFO 级别。因此 `journalctl ... | grep -c model_call` 返回 0 只代表"没打印"，不代表"没调用"。2026-10-30 曾据此得出错误初判，后经上述三条证据推翻。
+- **不要只用 journal 判断生产是否调用模型**：日志级别或 logger 初始化任一环节不到位，`model_call_completed` 就不会出现，而模型其实调用了。2026-10-30 两次踩这个坑——第一次是 `--log-level warning`，第二次是 `--log-level info` 已生效但 api 进程未初始化应用 logger。判定生产是否在用模型，请优先看业务数据：`defenderOut.verificationMode=live`、每轮 `elapsedMs`、`attackerOut.agentSource=acp-llm`。
