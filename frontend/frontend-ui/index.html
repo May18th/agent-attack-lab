@@ -1678,9 +1678,27 @@ var battle3d=(function(){
     S.safe=null;S.safeLabel=null;
   }
 
-  /* ---- 银河音效引擎（默认关闭；玻璃裂解仅在 Arbiter 确认穿透后触发） ---- */
-  var audioCtx=null,soundOn=false,soundBtn=document.getElementById('battleSound');
+  /* ---- 银河音效引擎（默认开启，首次交互自动解锁；玻璃裂解仅在 Arbiter 确认穿透后触发） ---- */
+  var SOUND_PREF_KEY='agentLabSound';
+  function loadSoundPref(){
+    try{var v=localStorage.getItem(SOUND_PREF_KEY);if(v==='off')return false;if(v==='on')return true;}catch(err){}
+    return true; /* 默认开启：演示页面打开后点任意位置即出声 */
+  }
+  var audioCtx=null,soundOn=loadSoundPref(),soundBtn=document.getElementById('battleSound');
   var audioBus=null,audioVerb=null,audioDelay=null,ambient=null,NOISE=null;
+  function saveSoundPref(){try{localStorage.setItem(SOUND_PREF_KEY,soundOn?'on':'off');}catch(err){}}
+  /* 浏览器自动播放限制：AudioContext 必须在用户手势里创建/恢复。
+     这里监听首次任意交互（pointerdown/keydown），若音效开关为开则自动解锁并启动氛围声。 */
+  function unlockBattleAudio(){
+    if(!soundOn)return;
+    if(!audioCtx){
+      if(!ensureAudio())return;
+    }
+    if(audioCtx.state==='suspended'){audioCtx.resume();}
+    startAmbient();
+  }
+  document.addEventListener('pointerdown',unlockBattleAudio,true);
+  document.addEventListener('keydown',unlockBattleAudio,true);
 
   function noiseBuffer(sec){
     var len=Math.floor(audioCtx.sampleRate*sec),buf=audioCtx.createBuffer(1,len,audioCtx.sampleRate),d=buf.getChannelData(0);
@@ -1758,10 +1776,15 @@ var battle3d=(function(){
   }
 
   if(soundBtn){
+    /* 初始化按钮状态：音效默认开启（或沿用上次的选择） */
+    soundBtn.classList.toggle('on',soundOn);
+    soundBtn.textContent='音效：'+(soundOn?'开':'关');
+    soundBtn.setAttribute('aria-pressed',String(soundOn));
     soundBtn.addEventListener('pointerdown',function(e){e.stopPropagation();});
     soundBtn.addEventListener('click',function(e){
       e.stopPropagation();
       soundOn=!soundOn;
+      saveSoundPref();
       soundBtn.classList.toggle('on',soundOn);
       soundBtn.textContent='音效：'+(soundOn?'开':'关');
       soundBtn.setAttribute('aria-pressed',String(soundOn));
