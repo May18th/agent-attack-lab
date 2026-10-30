@@ -327,6 +327,26 @@ def _clip(text: str, limit: int) -> str:
 # ---------------------------------------------------------------- 统计
 
 
+# 团队联调时会往问卷里灌测试提交，这些进报告会污染"原话摘录"，甚至让结论失真。
+# 只用**明确的标记词**判定，避免把真实回答（比如"做过压力测试"）误删。
+_SELF_TEST_MARKERS = ("自测", "请忽略", "验证提交", "测试数据", "测试提交", "测试样本")
+_TEXT_KEYS = ("q2_method", "q2_pain_point", "q4_can_judge", "q5_concern", "q6_must_fix")
+
+
+def split_self_test(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """把明显的自测提交分出来，返回 (有效, 被排除)。"""
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for row in rows:
+        blob = " ".join(str(row.get(key) or "") for key in _TEXT_KEYS)
+        (dropped if any(mark in blob for mark in _SELF_TEST_MARKERS) else kept).append(
+            row
+        )
+    return kept, dropped
+
+
 def _counts(rows: list[dict[str, Any]], key: str) -> list[tuple[str, int]]:
     counter = Counter((row.get(key) or "未填") for row in rows)
     return sorted(counter.items(), key=lambda item: (-item[1], str(item[0])))
@@ -569,6 +589,14 @@ def _footer(canvas: Any, doc: BaseDocTemplate) -> None:
     canvas.restoreState()
 
 
+def _sample_note(total: int, dropped: int) -> str:
+    """分母说明：有排除项时如实写出来，避免读者对不上总数。"""
+    base = f"百分比以当前 {total} 份有效样本为分母，样本量不足时请勿外推为总体结论。"
+    if dropped:
+        return base + f"（另有 {dropped} 份自测/测试提交已排除，未参与任何统计。）"
+    return base
+
+
 def build_survey_pdf(
     rows: list[dict[str, Any]],
     generated_at: str | None = None,
@@ -582,6 +610,8 @@ def build_survey_pdf(
     """
     if part not in {"all", "summary", "detail"}:
         raise ValueError(f"unsupported part: {part}")
+    # 自测提交不进报告，但在页面上如实注明排除了多少份，口径可追溯。
+    rows, dropped_rows = split_self_test(rows)
     ensure_font()
     styles = _styles()
     buffer = io.BytesIO()
@@ -622,15 +652,28 @@ def build_survey_pdf(
     ]
 
     if not rows:
-        story += [
-            Paragraph("尚未收到任何问卷提交。", styles["h2"]),
-            Spacer(1, 8),
-            Paragraph(
-                "问卷页位于 <b>/survey</b>，提交后写入 <b>.data/survey/responses.jsonl</b>；"
-                "本报告按当前存储内容生成，为空即表示没有回收数据。",
-                styles["body"],
-            ),
-        ]
+        if dropped_rows:
+            # 全部都是自测提交：要说清楚"有数据但不可用"，不能显示成"没收到问卷"。
+            story += [
+                Paragraph("目前没有可分析的有效问卷。", styles["h2"]),
+                Spacer(1, 8),
+                Paragraph(
+                    f"已收到 {len(dropped_rows)} 份提交，但全部被判定为自测/测试提交"
+                    "（含「自测」「请忽略」「验证提交」等标记），因此不纳入统计。"
+                    "请用真实受访者的回答替换后再导出。",
+                    styles["body"],
+                ),
+            ]
+        else:
+            story += [
+                Paragraph("尚未收到任何问卷提交。", styles["h2"]),
+                Spacer(1, 8),
+                Paragraph(
+                    "问卷页位于 <b>/survey</b>，提交后写入 <b>.data/survey/responses.jsonl</b>；"
+                    "本报告按当前存储内容生成，为空即表示没有回收数据。",
+                    styles["body"],
+                ),
+            ]
     else:
         show_summary = part in {"all", "summary"}
         show_detail = part in {"all", "detail"}
@@ -664,7 +707,7 @@ def build_survey_pdf(
                 _kpi_table(rows, styles),
                 Spacer(1, 4),
                 Paragraph(
-                    "百分比以当前样本为分母，样本量不足时请勿外推为总体结论。",
+                    _sample_note(len(rows), len(dropped_rows)),
                     styles["small"],
                 ),
                 Spacer(1, 16),

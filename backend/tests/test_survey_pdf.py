@@ -43,6 +43,11 @@ def _payload(**overrides):
     return data
 
 
+def _pdf_pages(pdf: bytes) -> int:
+    """粗略数页数：每个页面对象各有一个 ``/Type /Page``，``/Pages`` 节点会多算一次。"""
+    return max(pdf.count(b"/Type /Page") - 1, 0)
+
+
 def test_pdf_export_requires_auth(client, monkeypatch) -> None:
     monkeypatch.setattr(config, "api_key", "secret-key")
     client.post("/api/survey/submit", json=_payload())
@@ -112,9 +117,11 @@ def test_pdf_export_splits_summary_and_detail(client, monkeypatch, cjk_font) -> 
     assert detail.headers["content-disposition"].endswith('survey-detail.pdf"')
     assert both.headers["content-disposition"].endswith('survey-report.pdf"')
     assert summary.content.startswith(b"%PDF-") and detail.content.startswith(b"%PDF-")
-    # 两份内容不同且都不是空壳，合并版页数最多
+    # 两份内容不同且都不是空壳；合并版含汇总 + 明细，页数不应少于任一单独版本。
+    # 不比较字节数：PDF 体积受字体子集影响，跟内容多少不是单调关系。
     assert summary.content != detail.content
-    assert len(both.content) > len(summary.content)
+    assert _pdf_pages(both.content) >= _pdf_pages(summary.content)
+    assert _pdf_pages(both.content) >= _pdf_pages(detail.content)
 
 
 def test_pdf_export_rejects_unknown_part(client, monkeypatch) -> None:
@@ -171,3 +178,23 @@ def test_app_font_dir_takes_priority_over_system_paths(tmp_path, monkeypatch) ->
 def test_app_font_dir_missing_is_not_an_error(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(survey_pdf, "_APP_FONT_DIR", tmp_path / "nope")
     assert survey_pdf._app_font_candidates() == []
+
+
+def test_self_test_submissions_are_excluded_and_counted() -> None:
+    """团队自测提交不能进报告，也不能悄悄消失——要能数出来并写进说明。"""
+    kept = {"q2_method": "自建提示词回归集", "q2_pain_point": "看不到证据"}
+    marked = {"q2_method": "【自测】验证提交链路，请忽略", "q2_pain_point": "无"}
+    ignored = {"q2_method": "跑一轮再看", "q6_must_fix": "请忽略这条"}
+    legit = {"q2_method": "没事做过压力测试", "q2_pain_point": "缺流程"}
+
+    survivors, dropped = survey_pdf.split_self_test([kept, marked, ignored, legit])
+
+    assert survivors == [kept, legit]
+    assert dropped == [marked, ignored]
+
+
+def test_sample_note_mentions_excluded_rows_only_when_present() -> None:
+    assert survey_pdf._sample_note(40, 0).endswith("请勿外推为总体结论。")
+    note = survey_pdf._sample_note(38, 2)
+    assert "38 份有效样本" in note
+    assert "2 份自测/测试提交已排除" in note
