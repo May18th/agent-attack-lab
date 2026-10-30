@@ -1,0 +1,80 @@
+name: 诊断 LLM 回退
+
+# 只读诊断：确认生产进程的日志级别是否已按 b585460 生效，
+# 并抓取防守方 "LLM defense fell back to local rules" 的真实异常原因。
+# 不修改任何配置、不写 .env、不创建战局。
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "回看多少分钟日志"
+        required: false
+        default: "90"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: 读取服务日志
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    steps:
+      - name: 进程启动参数与 LLM 环境（脱敏）
+        shell: bash
+        run: |
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          echo "== 单元 =="
+          systemctl --user is-active agent-attack-lab-api.service agent-attack-lab-attacker.service agent-attack-lab-defender.service || true
+          echo "== API ExecStart =="
+          systemctl --user show agent-attack-lab-api.service -p ExecStart --value | tr ';' '\n' | head -5
+          echo "== 进程 environ 中的 LLM 变量（只打印键名与是否为空） =="
+          pid=$(systemctl --user show agent-attack-lab-api.service -p MainPID --value)
+          if [ -n "${pid:-}" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/environ" ]; then
+            tr '\0' '\n' < "/proc/$pid/environ" \
+              | grep -E '^AGENT_(LLM|ATTACKER_LLM|DEFENDER_LLM|ARBITER_LLM|REPORT_LLM|RULE_LLM|TARGET_)' \
+              | sed -E 's/^(.*(KEY|TOKEN|SECRET)[A-Z_]*)=.*/\1=<redacted>/' \
+              | sed -E 's/^(AGENT_LLM_API_KEY)=.*/\1=<redacted>/' || true
+          else
+            echo "environ 不可读 (pid=${pid:-none})"
+          fi
+          echo "== 生效的角色开关（api 进程） =="
+          if [ -n "${pid:-}" ] && [ -r "/proc/$pid/environ" ]; then
+            tr '\0' '\n' < "/proc/$pid/environ" | grep -E '_LLM_ENABLED=' || echo "(无显式开关)"
+          fi
+
+      - name: 防守方回退统计与原因
+        shell: bash
+        run: |
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          MIN="${{ inputs.minutes }}"
+          echo "== defender 单元近 ${MIN}min 回退次数 =="
+          journalctl --user -u agent-attack-lab-defender --since "-${MIN}min" --no-pager 2>/dev/null \
+            | grep -c "fell back to local rules" || echo 0
+          echo "== 回退原因分布（末 40 条） =="
+          journalctl --user -u agent-attack-lab-defender --since "-${MIN}min" --no-pager 2>/dev/null \
+            | grep "fell back to local rules" | sed -E 's/.*fell back to local rules \(([^)]*)\).*/\1/' \
+            | sort | uniq -c | sort -rn | head -20 || echo "(无回退日志)"
+          echo "== 末 10 条原文 =="
+          journalctl --user -u agent-attack-lab-defender --since "-${MIN}min" --no-pager 2>/dev/null \
+            | grep "fell back to local rules" | tail -10 || true
+          echo "== 模型调用成功记录 =="
+          journalctl --user -u agent-attack-lab-defender --since "-${MIN}min" --no-pager 2>/dev/null \
+            | grep -icE "model_call_completed|model call completed" || echo 0
+
+      - name: 日志级别是否已生效
+        shell: bash
+        run: |
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          echo "== api 单元里 INFO 级记录条数（近 30min） =="
+          journalctl --user -u agent-attack-lab-api --since "-30min" --no-pager -p info 2>/dev/null | wc -l || echo 0
+          echo "== api 单元里是否存在 access log（应约为 0） =="
+          journalctl --user -u agent-attack-lab-api --since "-30min" --no-pager 2>/dev/null \
+            | grep -cE '"GET /|"POST /' || echo 0
+          echo "== 一条样本来证明 INFO 已落盘 =="
+          journalctl --user -u agent-attack-lab-api --since "-30min" --no-pager 2>/dev/null \
+            | grep -viE 'Started|Stopping|Stopped|Deactivated|Succeeded|Consumed' | tail -5 || true
