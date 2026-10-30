@@ -55,11 +55,11 @@ _FONT_CANDIDATES: tuple[tuple[str, int], ...] = (
     (r"C:\Windows\Fonts\msyh.ttf", 0),
     (r"C:\Windows\Fonts\simhei.ttf", 0),
     (r"C:\Windows\Fonts\Deng.ttf", 0),
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
-    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-    "/System/Library/Fonts/PingFang.ttc",
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf", 0),
+    ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 0),
+    ("/System/Library/Fonts/PingFang.ttc", 0),
 )
 _BOLD_CANDIDATES: tuple[tuple[str, int], ...] = (
     (r"C:\Windows\Fonts\msyhbd.ttc", 0),
@@ -77,7 +77,9 @@ class PdfFontUnavailable(RuntimeError):
 
 
 def _register(name: str, candidates: Iterable[tuple[str, int]]) -> bool:
-    for path, subfont in candidates:
+    for item in candidates:
+        # 允许 (path, subfontIndex) 或裸 path 两种写法，写错也不会在 unpack 处崩。
+        path, subfont = item if isinstance(item, tuple) else (item, 0)
         if not os.path.exists(path):
             continue
         try:
