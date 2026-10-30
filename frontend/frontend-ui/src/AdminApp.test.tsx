@@ -7,7 +7,7 @@ import { PRESET_THEMES, THEME_STORAGE_KEY } from './themes'
 
 vi.mock('./adminApi', async () => {
   const actual = await vi.importActual<typeof import('./adminApi')>('./adminApi')
-  return { ...actual, getAdminSession: vi.fn(), loginAdminSession: vi.fn(), logoutAdminSession: vi.fn(), getAdminDashboardSummary: vi.fn(), getAdminMetrics: vi.fn(), listAdminBattles: vi.fn(), getAdminExternalCases: vi.fn(), getAdminBattleDetail: vi.fn(), getAdminBattleScore: vi.fn(), getAdminBattleEvents: vi.fn(), getAdminBattleRounds: vi.fn(), getAdminBattleAudit: vi.fn(), getAdminReport: vi.fn(), retryAdminBattle: vi.fn(), cancelAdminBattle: vi.fn(), deleteAdminBattle: vi.fn(), createAdminBattle: vi.fn(), listAdminSamples: vi.fn(), createAdminSample: vi.fn(), updateAdminSample: vi.fn(), deleteAdminSample: vi.fn(), listAdminRules: vi.fn(), createAdminRule: vi.fn(), updateAdminRule: vi.fn(), deleteAdminRule: vi.fn(), listAdminAuditLogs: vi.fn(), seedAdminLibrary: vi.fn(), exportAdminSurveyCsv: vi.fn() }
+  return { ...actual, getAdminSession: vi.fn(), loginAdminSession: vi.fn(), logoutAdminSession: vi.fn(), getAdminDashboardSummary: vi.fn(), getAdminMetrics: vi.fn(), listAdminBattles: vi.fn(), getAdminExternalCases: vi.fn(), getAdminBattleDetail: vi.fn(), getAdminBattleScore: vi.fn(), getAdminBattleEvents: vi.fn(), getAdminBattleRounds: vi.fn(), getAdminBattleAudit: vi.fn(), getAdminReport: vi.fn(), retryAdminBattle: vi.fn(), cancelAdminBattle: vi.fn(), deleteAdminBattle: vi.fn(), createAdminBattle: vi.fn(), listAdminSamples: vi.fn(), createAdminSample: vi.fn(), updateAdminSample: vi.fn(), deleteAdminSample: vi.fn(), listAdminRules: vi.fn(), createAdminRule: vi.fn(), updateAdminRule: vi.fn(), deleteAdminRule: vi.fn(), listAdminAuditLogs: vi.fn(), seedAdminLibrary: vi.fn(), exportAdminSurveyCsv: vi.fn(), exportAdminSurveyPdf: vi.fn(), exportAdminBattlesPdf: vi.fn() }
 })
 
 const battle = { id: 'b-1', difficulty: 'high' as const, topic: '测试战局', status: 'failed', createdAt: '2026-10-18T00:00:00Z', attackerOut: { samples: [] }, defenderOut: [] }
@@ -622,10 +622,50 @@ describe('AdminApp', () => {
     await screen.findByRole('tab', { name: /^总览/ })
     fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
 
-    fireEvent.click(screen.getByRole('button', { name: '导出调查问卷（CSV）' }))
+    fireEvent.click(screen.getByRole('button', { name: '导出问卷（CSV）' }))
 
     await waitFor(() => expect(adminApi.exportAdminSurveyCsv).toHaveBeenCalledTimes(1))
     expect(await screen.findByText('已导出 3 份问卷：survey-responses.csv')).toBeInTheDocument()
     expect(createObjectURL).toHaveBeenCalledTimes(1)
+  })
+
+  it('exports the survey summary and detail PDF as two separate files', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.exportAdminSurveyPdf).mockResolvedValue({ blob: new Blob(['%PDF-1.7']), filename: 'survey-summary.pdf', total: 3 })
+    const createObjectURL = vi.fn(() => 'blob:survey-pdf')
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+    render(<AdminApp />)
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: '导出问卷汇总（PDF）' }))
+
+    await waitFor(() => expect(adminApi.exportAdminSurveyPdf).toHaveBeenCalledWith('summary'))
+    expect(await screen.findByText('已导出 3 份问卷的问卷汇总报告：survey-summary.pdf')).toBeInTheDocument()
+  })
+
+  it('exports the battle list PDF from the management module', async () => {
+    vi.mocked(adminApi.getAdminSession).mockResolvedValue({ enabled: true, authenticated: true })
+    vi.mocked(adminApi.getAdminDashboardSummary).mockResolvedValue({ totalBattles: 0 } as never)
+    vi.mocked(adminApi.getAdminMetrics).mockResolvedValue({})
+    vi.mocked(adminApi.listAdminBattles).mockResolvedValue({ items: [], total: 0 })
+    vi.mocked(adminApi.getAdminExternalCases).mockResolvedValue({ available: true, items: [], total: 0, sourceCount: 0 })
+    vi.mocked(adminApi.exportAdminBattlesPdf).mockResolvedValue({ blob: new Blob(['%PDF-1.7']), filename: 'battles.pdf', total: 12 })
+    const createObjectURL = vi.fn(() => 'blob:battles-pdf')
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+    render(<AdminApp />)
+    await screen.findByRole('tab', { name: /^总览/ })
+    fireEvent.click(screen.getByRole('tab', { name: /^管理/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: '导出战局（PDF）' }))
+
+    await waitFor(() => expect(adminApi.exportAdminBattlesPdf).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText('已导出 12 场战局的清单：battles.pdf')).toBeInTheDocument()
   })
 })
