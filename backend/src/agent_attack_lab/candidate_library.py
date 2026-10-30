@@ -28,9 +28,10 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 from agent_attack_lab.battle_timeline import payload_similarity
 from agent_attack_lab.layer_interceptions import derive_round_layer_trace
@@ -85,7 +86,7 @@ def _load() -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return _empty_document()
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return _empty_document()
     if not isinstance(value, dict):
         return _empty_document()
@@ -107,9 +108,7 @@ def _save(document: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     document["updatedAt"] = _now()
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    tmp.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
 
 
@@ -140,9 +139,7 @@ def _layer_bypass_summary(
             continue
         layer = next(item for item in trace if str(item.get("layer")) == layer_id)
         checks = [
-            check
-            for check in layer.get("checks", [])
-            if isinstance(check, Mapping)
+            check for check in layer.get("checks", []) if isinstance(check, Mapping)
         ]
         passed = [
             _text(check.get("name"), limit=60)
@@ -227,9 +224,7 @@ def build_attacker_fields(
             classification, defense, verification
         )
     else:
-        blocked_summary = next(
-            (item for item in layers if "被阻断于" in item), None
-        )
+        blocked_summary = next((item for item in layers if "被阻断于" in item), None)
         caught = [
             _text(item.get("reason") if isinstance(item, Mapping) else item, limit=80)
             for item in (defense.get("caught") or [])
@@ -261,7 +256,9 @@ def build_defender_fields(
             else _LAYER_LABELS[3]
         )
         if classification == "contained":
-            position = f"{_LAYER_LABELS[2]} 产生模拟效果（{_LAYER_LABELS[3]} 窗口内恢复）"
+            position = (
+                f"{_LAYER_LABELS[2]} 产生模拟效果（{_LAYER_LABELS[3]} 窗口内恢复）"
+            )
         else:
             position = f"{deepest_label} 完整穿透"
         reason = _evidence_text(verification) or _defender_gap_text(
@@ -297,7 +294,8 @@ def build_defender_fields(
         )
         blocked_name = _text((blocked_check or {}).get("name"), limit=60)
         rules = "、".join(
-            _text(rule, limit=40) for rule in (blocked_check or {}).get("evidenceIds", [])
+            _text(rule, limit=40)
+            for rule in (blocked_check or {}).get("evidenceIds", [])
         )
         means = blocked_name or "防守规则拦截"
         if rules:
@@ -404,7 +402,12 @@ def record_round(
         document = _load()
         battle_scope = document["battles"].setdefault(
             battle_id,
-            {"topic": topic, "crossMemory": bool(cross_enabled), "attacker": [], "defender": []},
+            {
+                "topic": topic,
+                "crossMemory": bool(cross_enabled),
+                "attacker": [],
+                "defender": [],
+            },
         )
         battle_scope["topic"] = topic
         battle_scope["crossMemory"] = bool(cross_enabled)
@@ -419,7 +422,10 @@ def record_round(
             for item in same_round:
                 records.remove(item)
         if cross_enabled:
-            for role, entry in (("attacker", attacker_entry), ("defender", defender_entry)):
+            for role, entry in (
+                ("attacker", attacker_entry),
+                ("defender", defender_entry),
+            ):
                 cross_records = document["cross"].setdefault(role, [])
                 cross_records.append(entry)
                 del cross_records[:-MAX_CROSS_ENTRIES_PER_ROLE]

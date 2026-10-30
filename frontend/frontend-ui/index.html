@@ -543,7 +543,7 @@
               <strong>Attacker 阶段：</strong>A1 读取战局并吸收环境粒子；A2 由绿色“样本库”球选择样本；A3 由紫色“意图和策略”球提供策略粒子；A4 构建 Payload；A5 授权与格式自检；A6 由 Arbiter 判断同源或新源；A7 发射；A8 接收公开裁决并复盘。绿色球第一回合出现，紫色球在开启跨局记忆时第一回合出现，否则从第二回合出现。<br>
               <strong>Payload 颜色：</strong><span style="color:#bfd9ff">浅蓝 / 灰白色</span>表示 Payload 刚在 A4 创建、尚未完成 A6 来源判定；<span style="color:#ff4d5e">红色</span>表示同源 Payload，即相似度达到或超过 0.85；<span style="color:#ffd24d">黄色</span>表示新源 Payload，即相似度低于 0.85。新源黄色 Payload 无论被拦截与否，都在本回合结算后粒子化飞向 Defender，被吸收后显示“更新特征库”；红色同源 Payload 不触发这条更新动画。<br>
               <strong>Defender 检查粒子：</strong>当前层会生成带编号的蓝色粒子，例如 L0-1、L0-2、L0-3，或 L2-1 至 L2-5。每个编号对应一个真实检查点；攻击开始时按编号顺序高亮对应蓝色粒子，该粒子飞向 Payload 进行拦截或与攻击粒子融合。<br>
-              <strong>拦截与穿透：</strong>蓝色粒子与 Payload 相撞并消散，表示该检查点成功拦截，防御层向外扩散绿色光波；检查通过但未拦截时，攻击点扩散一次水晶屏障。某层最后一个检查点仍未拦截时，Arbiter 确认整层穿透，才播放玻璃裂解并进入下一层。<br>
+              <strong>拦截与穿透：</strong>蓝色粒子与 Payload 相撞并消散，表示该检查点成功拦截，防御层向外扩散绿色光波；检查通过但未拦截时，攻击点扩散一次水晶屏障。只要 Defender 某一个环节拦截成功，本回合立即结束，后续层不再释放粒子；payload 一旦绕过某层、进入下一层开始检测时，上一层立即播放玻璃裂解并推进到下一层，不依赖 Arbiter 的确认事件。<br>
               <strong>L3 与裁决：</strong>L3-1、L3-2、L3-3 会向 Core 发出内收光波，Core 随风险闪烁；只有后端事件明确给出控制成功或失败证据时，才提前表现恢复或失控，否则保持风险态等待 Arbiter。L3-4 不抢先生成结论，Arbiter 输出唯一最终分类后才锁定攻击结果。安全对照使用独立外环展示，不覆盖攻击样本的 Core 裁决颜色。HUD、时间线和评分只显示已收到的 Agent / Arbiter 事件。
             </div>
           </div>
@@ -2005,13 +2005,23 @@ var battle3d=(function(){
   function onLayerStarted(e){
     var p=e.payload||{},li=typeof p.layerIndex==='number'?p.layerIndex:Number(String(p.layer||'').replace(/[^0-3]/g,''));
     if(isNaN(li)||li<0||li>3)return;
-    // 只有 Arbiter 已确认上一层穿透时，下一层事件才允许推进；确认乱序时先暂存。
-    if(li>0&&S.confirmedLayers[li-1]&&!shells[li-1].userData.broken)confirmLayerPenetration(li-1);
-    if(li!==S.activeLayer){console.warn('[3D] 层顺序拦截：当前 L'+S.activeLayer+'，收到 L'+li);return;}
-    S.layerStarted=li;S.checkIndex=0;
+    if(S.blockedLayer>=0||S.paused)return;                 // 已被拦截 / 待裁决：本回合不再推进
+    if(li<S.activeLayer)return;                            // 迟到的旧层开始事件
+    ensureShells();
     S.applicable[li]=(p.applicableChecks&&p.applicableChecks.length?p.applicableChecks:CHECK_IDS[li]).slice();
-    ensureShells();buildLayer(li,true);setFocus(li);shellPulse(li,.035);
     var count=S.applicable[li].length;
+    if(S.layerStarted===li){                               // 同一层的重复开始事件（后端会连发 arbiter / defense 两条）
+      if(!S.sats[li].length){if(li===3)spawnSatellites(li,4,true);else spawnSatellites(li,count,false);}
+      return;
+    }
+    /* 更内层开始检测，说明前面每一层都已被 payload 绕过：立即逐层破碎并推进 payload。
+       破碎不再依赖 arbiter.layer.confirmed——后端只有在该层全部通过且拿到该层证据 ID 时才发这个事件。 */
+    for(var k=S.activeLayer;k<li;k++){
+      if(shells[k]&&!shells[k].userData.broken)shatterLayer(k);
+    }
+    if(li>S.activeLayer){movePayloadInward(li);S.activeLayer=li;setFocus(li);}
+    S.layerStarted=li;S.checkIndex=0;
+    buildLayer(li,true);setFocus(li);shellPulse(li,.035);
     if(li===3){spawnSatellites(li,4,true);}
     else{spawnSatellites(li,count,false);}
     hudLayer('L'+li+' · 0/'+count);hudStage('L'+li+' 层开始 · '+count+' 项检查');
@@ -2053,7 +2063,13 @@ var battle3d=(function(){
     if(st==='skipped-by-block'||st==='not-applicable'){
       S.checkResult[lc.li][exprStage(e)]=st;return;
     }
-    if(lc.li!==S.activeLayer){console.warn('[3D] 乱序/越层裁决忽略 '+exprStage(e));return;}
+    if(lc.li>S.activeLayer){console.warn('[3D] 越层裁决忽略 '+exprStage(e));return;}
+    // 迟到的旧层裁决：只补记录，不再播放动画（该层可能已经破碎或已被拦截）
+    if(lc.li<S.activeLayer||(shells[lc.li]&&shells[lc.li].userData.broken)){
+      S.checkResult[lc.li][exprStage(e)]=st;
+      if(st==='blocked')S.blockedLayer=lc.li;
+      return;
+    }
     if(S.paused&&st!=='unresolved')return;
     if(st==='unresolved'){
       S.paused=true;status(exprStage(e)+' unresolved · 暂停，不破碎/不结算',false);
@@ -2114,16 +2130,21 @@ var battle3d=(function(){
     later(2.4,function(){if(S.l2Label)S.l2Label.material.opacity=.55;});
   }
   function confirmLayerPenetration(li,arbiterConfirmed){
-    if(isNaN(li)||li<0||li>3||li!==S.activeLayer||S.blockedLayer>=0)return false;
-    // Arbiter 的 layer.confirmed 已经代表该层证据完整；允许动画先于迟到的逐项事件播放，
-    // 但普通检查事件仍必须等到所有 passed 后才能触发，避免前端自行宣布穿透。
-    if(!arbiterConfirmed&&!allPassed(li)){
+    if(isNaN(li)||li<0||li>3)return false;
+    if(S.blockedLayer>=0)return false;
+    // 还没走到这一层：先记住，等层推进时再统一破碎。
+    if(li>S.activeLayer){S.confirmedLayers[li]=true;return false;}
+    var sh=shells[li];
+    // 已经由「更内层开始检测」提前破碎：幂等返回，避免重复播放裂解特效。
+    if(!sh||sh.userData.broken)return false;
+    // 普通检查事件必须等到所有 passed；Arbiter 的 layer.confirmed 已代表该层证据完整。
+    if(!arbiterConfirmed&&li===S.activeLayer&&!allPassed(li)){
       status('Arbiter 已确认 L'+li+' 穿透 · 等待迟到的检查事件同步',true);
       return false;
     }
     S.confirmedLayers[li]=false;
     shatterLayer(li);
-    if(li<3){
+    if(li===S.activeLayer&&li<3){
       movePayloadInward(li+1);S.activeLayer=li+1;setFocus(li+1);
       // 处理已先到达的下一层确认，保证事件乱序不会吞掉对应破碎动画。
       if(S.confirmedLayers[li+1])later(.08,function(){confirmLayerPenetration(li+1,true);});
@@ -2137,6 +2158,8 @@ var battle3d=(function(){
     var li=typeof raw==='number'?raw:Number(String(raw).replace(/[^0-3]/g,''));
     if(isNaN(li)||li<0||li>3)return;
     if(S.blockedLayer>=0)return;
+    // 该层已由「更内层开始检测」提前判定穿透并破碎：确认事件只是补票，不再重复播放。
+    if(shells[li]&&shells[li].userData.broken){S.confirmedLayers[li]=false;return;}
     S.confirmedLayers[li]=true;
     if(!confirmLayerPenetration(li,true))console.warn('[3D] Arbiter L'+li+' 穿透确认已暂存，等待前序层完成');
   }
@@ -2203,7 +2226,39 @@ var battle3d=(function(){
     }
   }
 
+  /* 真实战局的事件是一次性成批推来的（一回合几十条），若逐条立即播放，
+     整回合的粒子释放 / 拦截 / 破碎会在不到 1 秒内闪完，肉眼看不到。
+     这里给 live 事件加一个只影响「播放节奏」的队列：不改变事件顺序和结论，
+     只把相邻事件的播放间隔拉开。演示（mock）事件本身已按节奏发出，直接放行。 */
+  var paceQueue=[],paceBusy=false;
+  function paceDelay(e){
+    switch(e.type){
+      case 'layer_started':return 850;
+      case 'arbiter_layer_confirm':return 620;
+      case 'layer_verdict':return 400;
+      case 'stage_started':return 240;
+      case 'arbiter_verdict':return 700;
+      case 'round_settled':return 520;
+      default:return 300;
+    }
+  }
   function dispatch(e){
+    if(!e)return;
+    if(e.mock||e.source==='mock'){applyEvent(e);return;}
+    paceQueue.push(e);
+    drainPace();
+  }
+  function drainPace(){
+    if(paceBusy)return;
+    paceBusy=true;
+    (function step(){
+      if(!paceQueue.length){paceBusy=false;return;}
+      var e=paceQueue.shift();
+      try{applyEvent(e);}catch(err){console.error('[3D]',err);}
+      setTimeout(step,paceDelay(e));
+    })();
+  }
+  function applyEvent(e){
     switch(e.type){
       case 'battle_started':onBattleStarted(e);break;
       case 'round_started':onRoundStarted(e);break;
@@ -3138,24 +3193,58 @@ var battle3d=(function(){
     libApi('POST','/battles?background=true',{topic:topic,difficulty:difficulty,rounds:rounds,crossMemory:crossEnabled}).then(function(record){
       if(!record||!record.id){showToast('后端未返回战局，候选库使用本地演示数据');return;}
       remoteLibraryState.battleId=record.id;remoteLibraryState.crossMemory=crossEnabled;
+      try{localStorage.setItem('agentLabBattleId',record.id);}catch(e){}
       remoteLibraryState.battle={attacker:[],defender:[]};
-      stopRemotePolling();
-      remoteLibraryState.pollTimer=setInterval(function(){
-        libApi('GET','/battles/'+encodeURIComponent(record.id)).then(function(battle){
-          refreshRemoteLibraries();
-          if(battle&&(battle.status==='completed'||battle.status==='failed')){stopRemotePolling();showToast('后端战局 '+(battle.code||record.id)+' 已结束：候选库完成最终同步');}
-        }).catch(function(){});
-      },3000);
+      watchRemoteBattle(record.id);
       showToast('已连接后端智能体战局 '+(record.code||record.id)+'：候选库将逐回合同步'+(crossEnabled?'（跨局记忆开启）':''));
     }).catch(function(){showToast('后端连接失败，候选库使用本地演示数据');});
   }
+  /* 战局轮询：每 3 秒拉取战局状态并同步候选库；战局结束后停止并做最终同步。
+     页面刷新后通过 localStorage 恢复当前战局（见下方 restoreRemoteBattle）。 */
+  function watchRemoteBattle(battleId){
+    stopRemotePolling();
+    remoteLibraryState.pollTimer=setInterval(function(){
+      libApi('GET','/battles/'+encodeURIComponent(battleId)).then(function(battle){
+        refreshRemoteLibraries();
+        if(battle&&(battle.status==='completed'||battle.status==='failed')){stopRemotePolling();showToast('后端战局 '+(battle.code||battleId)+' 已结束：候选库完成最终同步');}
+      }).catch(function(){});
+    },3000);
+    refreshRemoteLibraries();
+  }
+  /* 页面刷新/重开后恢复当前战局的候选库同步：一局记忆继续展示本次战局的
+     逐回合记录（直到用户开新一局覆盖 battleId）；仍在进行的战局恢复轮询。 */
+  (function restoreRemoteBattle(){
+    if(!LIB_API_BASE)return;
+    var saved=null;
+    try{saved=localStorage.getItem('agentLabBattleId');}catch(e){}
+    if(!saved){
+      /* 旧版页面没有保存战局 ID：自动接管后端最近一局，避免刚打完的战局记录看不到。 */
+      libApi('GET','/battles?limit=1').then(function(list){
+        var latest=Array.isArray(list)?list[0]:null;
+        if(!latest||!latest.id)return;
+        remoteLibraryState.battleId=latest.id;
+        try{localStorage.setItem('agentLabBattleId',latest.id);}catch(e){}
+        refreshRemoteLibraries();
+        if(latest.status!=='completed'&&latest.status!=='failed')watchRemoteBattle(latest.id);
+      }).catch(function(){});
+      return;
+    }
+    libApi('GET','/battles/'+encodeURIComponent(saved)).then(function(battle){
+      if(!battle||!battle.id)return;
+      remoteLibraryState.battleId=saved;
+      refreshRemoteLibraries();
+      if(battle.status!=='completed'&&battle.status!=='failed')watchRemoteBattle(saved);
+    }).catch(function(){});
+  })();
   function syncRemoteCrossState(enabled){
     if(!LIB_API_BASE||!remoteLibraryState.battleId)return;
-    libApi('POST','/libraries/cross-memory/state',{battleId:remoteLibraryState.battleId,enabled:!!enabled}).catch(function(){});
+    libApi('POST','/libraries/cross-memory/state',{battleId:remoteLibraryState.battleId,enabled:!!enabled}).then(function(){
+      showToast('跨局记忆开关已同步到后端'+(enabled?'：本局从第 1 回合起启用长期记忆':'：后续回合停止写入跨局库'));
+    }).catch(function(){showToast('跨局记忆开关未同步后端（需要登录会话），仅本地生效；请点击页面顶部「登录」后重试');});
   }
   function clearRemoteCrossMemory(){
     if(!LIB_API_BASE)return;
-    libApi('DELETE','/libraries/cross-memory').then(function(){applyRemoteCrossLibrary({attacker:[],defender:[],battleCount:0});renderAllCandidateLibraries();}).catch(function(){});
+    libApi('DELETE','/libraries/cross-memory').then(function(){applyRemoteCrossLibrary({attacker:[],defender:[],battleCount:0});renderAllCandidateLibraries();showToast('后端跨局记忆已清空（一局记忆保留）');}).catch(function(){showToast('清空后端跨局记忆失败：需要登录会话，请点击页面顶部「登录」后重试');});
   }
 
   /* ============ 配置弹窗 ============ */

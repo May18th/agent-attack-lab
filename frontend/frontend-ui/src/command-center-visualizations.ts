@@ -163,7 +163,8 @@ export function shouldRenderBattleTimelineEvent(type: string, data: Record<strin
       || type === 'arbiter.similarity.checked'
   }
   if (type.startsWith('arbiter.')) return true
-  if (/^L[0-3]$/.test(stageId)) return false
+  // 层开始卡（Arbiter 开启 Ln 层检测）必须进入时间线：它同时是 3D 释放该层标签粒子的触发点。
+  if (/^L[0-3]$/.test(stageId)) return type === 'arbiter.layer.started' || type === 'defense.layer.started'
   if (/^L[0-3]-\d+$/.test(stageId)) {
     return type === 'defense.check.started' || type === 'defense.layer.verdict'
   }
@@ -179,7 +180,7 @@ function logicalTimelineStage(type: string, stageId: string, data: Record<string
   }
   if (/^A[1-8]$/.test(stageId)) return `attacker:${stageId}`
   if (/^L[0-3]-\d+$/.test(stageId)) return `defender:${stageId}`
-  if (type === 'arbiter.layer.started' || type === 'arbiter.layer.confirmed') {
+  if (type === 'arbiter.layer.started' || type === 'arbiter.layer.confirmed' || type === 'defense.layer.started') {
     return `arbiter-layer:${stageId || 'unknown'}`
   }
   if (type === 'arbiter.similarity.checked') return 'arbiter:A6'
@@ -198,6 +199,8 @@ export class LiveBattleTimelineProjector {
   private readonly renderedStages = new Set<string>()
   /** 每回合最终分类：安全对照事件卡只在完整穿透（full-penetration）回合出现 */
   private readonly roundClassification = new Map<number, string>()
+  /** 已出过「Ln 已穿透」卡的层（key = battleId:round:layerIndex） */
+  private readonly penetrated = new Set<string>()
 
   private isSafeControlEvent(type: string): boolean {
     return type === 'arbiter.safe_control.started'
@@ -220,6 +223,38 @@ export class LiveBattleTimelineProjector {
       this.renderedRounds.add(round)
       entries.push({ kind: 'round', round })
     }
+    // 「Ln 已穿透」卡片的触发点：更内层开始检测，或 Arbiter 正式确认该层。
+    // 后端只在「该层全部通过 + 拿到该层证据 ID」时才发 arbiter.layer.confirmed，
+    // 因此必须允许由「下一层开始检测」推出上一层已穿透，否则这张卡几乎永远不出现。
+    const layerIndex = Number(event.data.layerIndex)
+    let confirmedPenetration: BattleTimelineEntry | null = null
+    if (round > 0 && Number.isFinite(layerIndex) && layerIndex >= 0 && layerIndex <= 3) {
+      const penetrate = (li: number): BattleTimelineEntry | null => {
+        const key = `${event.battleId}:${round}:${li}`
+        if (this.penetrated.has(key)) return null
+        this.penetrated.add(key)
+        return {
+          kind: 'event',
+          side: 'att',
+          event: {
+            ...event,
+            id: `${event.id}-penetrated-${li}`,
+            type: 'defense.layer.penetrated',
+            data: { ...event.data, stageId: `L${li}`, layerIndex: li },
+          },
+          key: `${key}:penetrated`,
+          update: false,
+          variant: 'penetrated',
+        }
+      }
+      // 更内层开始检测 => 上一层已穿透：卡片排在「开启层检测」卡之前
+      if (event.type === 'defense.layer.started' && layerIndex > 0) {
+        const entry = penetrate(layerIndex - 1)
+        if (entry) entries.push(entry)
+      }
+      // Arbiter 确认 => 卡片排在该层确认卡之后
+      if (event.type === 'arbiter.layer.confirmed') confirmedPenetration = penetrate(layerIndex)
+    }
     const stageId = String(event.data.stageId || '').trim().toUpperCase()
     const stageKey = `${event.battleId}:${round}:${logicalTimelineStage(event.type, stageId, event.data)}`
     const update = this.renderedStages.has(stageKey)
@@ -231,17 +266,7 @@ export class LiveBattleTimelineProjector {
       : event.type.startsWith('agent.call.') && agentRole === 'attacker' ? 'att'
       : /^A[1-8]$/.test(stageId) ? 'att' : 'def'
     entries.push({ kind: 'event', side, event, key: stageKey, update })
-    // 层确认卡之后追加 ATTACKER「Ln 已穿透」卡：payload 来到下一层 / 融入 Core
-    if (event.type === 'arbiter.layer.confirmed') {
-      entries.push({
-        kind: 'event',
-        side: 'att',
-        event,
-        key: `${stageKey}:penetrated`,
-        update: false,
-        variant: 'penetrated',
-      })
-    }
+    if (confirmedPenetration) entries.push(confirmedPenetration)
     return entries
   }
 }

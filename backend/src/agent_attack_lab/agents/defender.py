@@ -50,7 +50,7 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
         caught: list[dict[str, Any]] = []
         risks: list[dict[str, str]] = []
         fixed: list[dict[str, Any]] = []
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         titles = dict(OWASP_LLM_CATEGORIES)
         for item in generated:
             if not isinstance(item, dict):
@@ -58,8 +58,13 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
             category = item.get("owaspCategory")
             evidence = item.get("evidence")
             fields = [item.get(key) for key in ("reason", "risk", "action")]
-            if category not in _CATEGORY_IDS or category in seen:
-                raise LLMError("model returned an invalid or duplicate OWASP category")
+            # 同一分类下允许多条线索（例如多个不同位置都命中 LLM01），
+            # 只要证据片段彼此不同就不是重复；此前按分类去重会让最常见的
+            # 多线索样本直接回退规则，生产上造成约 2/3 的防守结果退化。
+            if category not in _CATEGORY_IDS:
+                raise LLMError(
+                    f"model returned an unknown OWASP category: {category!r}"
+                )
             if (
                 not isinstance(evidence, str)
                 or len(evidence) < 5
@@ -68,7 +73,9 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
                 raise LLMError("model evidence was not found in the submitted sample")
             if any(not isinstance(value, str) or not value.strip() for value in fields):
                 raise LLMError("model finding is missing required text")
-            seen.add(category)
+            if (category, evidence) in seen:
+                continue
+            seen.add((category, evidence))
             caught.append(
                 {
                     "type": "violation",

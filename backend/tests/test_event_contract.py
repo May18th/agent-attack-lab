@@ -91,9 +91,7 @@ def test_feature_action_follows_spec_section_8() -> None:
     def run(classification: str, safe_status: str, evidence: list[str]):
         emitted: list[tuple[str, str, dict]] = []
         result = emit_post_verdict_stages(
-            lambda event_type, status, data: emitted.append(
-                (event_type, status, data)
-            ),
+            lambda event_type, status, data: emitted.append((event_type, status, data)),
             round_number=1,
             defense={"safeControl": {"status": safe_status, "evidence": evidence}},
             classification=classification,
@@ -111,9 +109,7 @@ def test_feature_action_follows_spec_section_8() -> None:
         return result, verdict, defense_event, started
 
     # 拦截 + 对照样本正确放行 → 特征候选待审核
-    result, verdict, defense_event, started = run(
-        "blocked", "passed", ["EV-1"]
-    )
+    result, verdict, defense_event, started = run("blocked", "passed", ["EV-1"])
     assert result["featureAction"] == "update-pending-review"
     assert verdict[2]["featureAction"] == "update-pending-review"
     assert defense_event[2]["featureAction"] == "update-pending-review"
