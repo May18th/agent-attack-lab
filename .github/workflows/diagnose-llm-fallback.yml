@@ -78,3 +78,22 @@ jobs:
           echo "== 一条样本来证明 INFO 已落盘 =="
           journalctl --user -u agent-attack-lab-api --since "-30min" --no-pager 2>/dev/null \
             | grep -viE 'Started|Stopping|Stopped|Deactivated|Succeeded|Consumed' | tail -5 || true
+
+      - name: 三个服务的模型调用计数
+        shell: bash
+        run: |
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          MIN="${{ inputs.minutes }}"
+          # 判断「模型有没有被调用」以业务数据为准；这一步只回答「日志有没有落盘」。
+          for svc in agent-attack-lab-api agent-attack-lab-attacker agent-attack-lab-defender; do
+            echo "===== $svc ====="
+            calls=$(journalctl --user -u "$svc" --since "-${MIN}min" --no-pager 2>/dev/null \
+              | grep -c 'model_call_completed' || true)
+            texts=$(journalctl --user -u "$svc" --since "-${MIN}min" --no-pager 2>/dev/null \
+              | grep -c 'model_text_completed' || true)
+            echo "model_call_completed = ${calls:-0}"
+            echo "model_text_completed = ${texts:-0}"
+            journalctl --user -u "$svc" --since "-${MIN}min" --no-pager 2>/dev/null \
+              | grep -E 'model_(call|text)_completed' | tail -2 || true
+          done
