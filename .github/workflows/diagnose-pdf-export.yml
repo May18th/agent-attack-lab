@@ -18,24 +18,40 @@ jobs:
       - name: 依赖与字体
         shell: bash
         run: |
+          set +e
           set -uo pipefail
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 
           echo "== 服务状态 =="
-          systemctl --user is-active agent-attack-lab-api.service || true
+          systemctl --user is-active agent-attack-lab-api.service
 
-          exec_start=$(systemctl --user show agent-attack-lab-api.service -p ExecStart --value || true)
+          exec_start=$(systemctl --user show agent-attack-lab-api.service -p ExecStart --value)
           echo "$exec_start" | tr ';' '\n' | head -3
 
-          venv_py=$(printf '%s' "$exec_start" | grep -oE '/[^ ]*\.venv/bin/python[0-9.]*' | head -1)
-          echo "venv_py=${venv_py:-<未识别>}"
+          # ExecStart 形如 .../backend/scripts/start-service.sh，venv 在 backend/.venv
+          backend_dir=$(printf '%s' "$exec_start" | grep -oE '/[^ ]*/backend/scripts/start-service\.sh' | head -1 | sed 's#/scripts/start-service\.sh##')
+          echo "backend_dir=${backend_dir:-<未识别>}"
+
+          venv_py=""
+          for cand in "$backend_dir/.venv/bin/python" "$backend_dir/.venv/bin/python3"; do
+            [ -x "$cand" ] && venv_py="$cand" && break
+          done
+          echo "venv_py=${venv_py:-<未找到>}"
+          if [ -n "$venv_py" ]; then
+            echo "real: $(readlink -f "$venv_py")"
+            "$venv_py" -V
+          fi
 
           echo "== reportlab =="
-          if [ -n "${venv_py:-}" ] && [ -x "$venv_py" ]; then
-            "$venv_py" -c 'import reportlab; print("reportlab OK", reportlab.Version)' \
-              || echo "reportlab MISSING"
+          if [ -n "$venv_py" ]; then
+            "$venv_py" -c 'import reportlab; print("reportlab OK", reportlab.Version)' || echo "reportlab MISSING"
           else
-            echo "无法定位 venv python"
+            echo "跳过：无 venv python"
+          fi
+
+          echo "== 已装 CSS/PDF 相关包 =="
+          if [ -n "$venv_py" ]; then
+            "$venv_py" -m pip list 2>/dev/null | grep -iE 'reportlab|pillow|weasy|fonttools' || echo "(无)"
           fi
 
           echo "== 中文字体（fc-list :lang=zh）=="
@@ -47,7 +63,7 @@ jobs:
             echo "fc-list 不可用"
           fi
 
-          echo "== 代码里探测的固定路径 =="
+          echo "== 代码探测的固定路径 =="
           for p in \
             /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc \
             /usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc \
@@ -58,10 +74,15 @@ jobs:
             if [ -f "$p" ]; then echo "EXISTS $p"; else echo "MISS   $p"; fi
           done
 
+          echo "== 系统里任意 .ttf/.ttc/.otf 计数 =="
+          find /usr/share/fonts /usr/local/share/fonts "$HOME/.fonts" -type f \
+            \( -iname '*.ttf' -o -iname '*.ttc' -o -iname '*.otf' \) 2>/dev/null | wc -l
+
           echo "== 家目录可用空间 =="
           df -h "$HOME" | tail -1
+
           echo "== AGENT_PDF_FONT =="
-          pid=$(systemctl --user show agent-attack-lab-api.service -p MainPID --value || true)
+          pid=$(systemctl --user show agent-attack-lab-api.service -p MainPID --value)
           if [ -n "${pid:-}" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/environ" ]; then
             tr '\0' '\n' < "/proc/$pid/environ" | grep -E '^AGENT_PDF_FONT=' || echo "(未设置)"
           else
@@ -71,11 +92,13 @@ jobs:
       - name: 近期异常日志
         shell: bash
         run: |
+          set +e
           set -uo pipefail
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
           echo "== 匹配行 =="
-          journalctl --user -u agent-attack-lab-api --since "-60min" --no-pager 2>/dev/null \
+          journalctl --user -u agent-attack-lab-api --since "-120min" --no-pager 2>/dev/null \
             | grep -iE 'export\.pdf|PdfFont|reportlab|ModuleNotFound|Traceback|没有可用|字体' \
-            | tail -40 || echo "(无匹配)"
-          echo "== 末 25 行（原文）=="
-          journalctl --user -u agent-attack-lab-api --since "-60min" --no-pager 2>/dev/null | tail -25 || true
+            | tail -40
+          echo "(匹配结束)"
+          echo "== 末 30 行 =="
+          journalctl --user -u agent-attack-lab-api --since "-120min" --no-pager 2>/dev/null | tail -30
