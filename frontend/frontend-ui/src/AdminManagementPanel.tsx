@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   apiErrorMessage, createAdminBattle, createAdminRule, createAdminSample, deleteAdminRule, deleteAdminSample,
-  exportAdminSurveyCsv, listAdminAuditLogs, listAdminRules, listAdminSamples, seedAdminLibrary, updateAdminRule, updateAdminSample,
+  exportAdminSurveyCsv, exportAdminSurveyPdf, exportAdminBattlesPdf, listAdminAuditLogs, listAdminRules, listAdminSamples, seedAdminLibrary, updateAdminRule, updateAdminSample,
   type AdminAuditLog, type AdminBattle, type AdminRule, type AdminSample,
 } from './adminApi'
 import {
@@ -151,6 +151,8 @@ export function AdminManagementPanel({ battles, onBattleCreated, onError }: Prop
   const [dialog, setDialog] = useState<DialogState>(null)
   const [notice, setNotice] = useState('')
   const [surveyBusy, setSurveyBusy] = useState(false)
+  const [surveyPdfBusy, setSurveyPdfBusy] = useState(false)
+  const [battlePdfBusy, setBattlePdfBusy] = useState(false)
   const [surveyNotice, setSurveyNotice] = useState('')
   const loadSamples = useCallback(async (q = sampleQuery) => { try { setSamples((await listAdminSamples(q)).items) } catch (error) { onError(apiErrorMessage(error)) } }, [onError, sampleQuery])
   const loadRules = useCallback(async (q = ruleQuery) => { try { setRules((await listAdminRules(q)).items) } catch (error) { onError(apiErrorMessage(error)) } }, [onError, ruleQuery])
@@ -195,6 +197,19 @@ export function AdminManagementPanel({ battles, onBattleCreated, onError }: Prop
   const submitRule = async (event: React.FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!dialog || dialog.kind !== 'rule') return; setBusy(true); try { if (dialog.id) await updateAdminRule(dialog.id, dialog.values); else await createAdminRule(dialog.values); setDialog(null); await loadRules() } catch (error) { onError(apiErrorMessage(error)) } finally { setBusy(false) } }
   const confirmDelete = async () => { if (!dialog || (dialog.kind !== 'delete-sample' && dialog.kind !== 'delete-rule')) return; setBusy(true); try { if (dialog.kind === 'delete-sample') { await deleteAdminSample(dialog.id); await loadSamples() } else { await deleteAdminRule(dialog.id); await loadRules() }; setDialog(null) } catch (error) { onError(apiErrorMessage(error)) } finally { setBusy(false) } }
   const exportBattles = () => { const rows = [['战局 ID', '主题', '时间', '状态', '难度', '评分'], ...battles.map((battle) => [battle.id, battle.topic, battle.createdAt, battle.status, battle.difficulty, '待评分'])]; download('攻防战局.csv', '\ufeff' + rows.map((row) => row.map(csv).join(',')).join('\n'), 'text/csv;charset=utf-8') }
+  // 战局 PDF 由后端排版（含状态/难度/裁决中文化），前端 CSV 仍走本地生成。
+  const exportBattlesPdf = async () => {
+    if (battlePdfBusy) return
+    setBattlePdfBusy(true)
+    setSurveyNotice('')
+    try {
+      const { blob, filename, total } = await exportAdminBattlesPdf()
+      const name = filename || `攻防战局-${new Date().toLocaleDateString('sv-SE')}.pdf`
+      saveBlob(name, blob)
+      if (!Number.isFinite(total)) setSurveyNotice(`已导出战局清单：${name}`)
+      else setSurveyNotice(`已导出 ${total} 场战局的清单：${name}`)
+    } catch (error) { onError(apiErrorMessage(error)) } finally { setBattlePdfBusy(false) }
+  }
   // 问卷 CSV 由后端按固定列序生成，前端只负责下载与提示，避免两份字段定义漂移。
   const exportSurvey = async () => {
     if (surveyBusy) return
@@ -209,8 +224,25 @@ export function AdminManagementPanel({ battles, onBattleCreated, onError }: Prop
       else setSurveyNotice('暂无问卷提交，已导出仅含表头的空表')
     } catch (error) { onError(apiErrorMessage(error)) } finally { setSurveyBusy(false) }
   }
+  // PDF 由后端排版成报告，前端只负责下载，避免两套版式漂移。
+  // 汇总与明细分两个文件导出：材料正文只放汇总，原始记录单独归档。
+  const exportSurveyPdf = async (part: 'summary' | 'detail') => {
+    if (surveyPdfBusy) return
+    setSurveyPdfBusy(true)
+    setSurveyNotice('')
+    try {
+      const { blob, filename, total } = await exportAdminSurveyPdf(part)
+      const suffix = part === 'summary' ? '问卷汇总' : '问卷明细'
+      const name = filename || `${suffix}-${new Date().toLocaleDateString('sv-SE')}.pdf`
+      saveBlob(name, blob)
+      const label = part === 'summary' ? '问卷汇总报告' : '问卷明细记录'
+      if (!Number.isFinite(total)) setSurveyNotice(`已导出${label}：${name}`)
+      else if (total > 0) setSurveyNotice(`已导出 ${total} 份问卷的${label}：${name}`)
+      else setSurveyNotice(`暂无问卷提交，已导出空白${label}`)
+    } catch (error) { onError(apiErrorMessage(error)) } finally { setSurveyPdfBusy(false) }
+  }
   return <section className="admin-module admin-management" aria-label="后台功能管理">
-    <div className="module-head"><h2>后台功能管理</h2><div className="management-export"><button type="button" onClick={exportBattles}>导出 Excel（CSV）</button><button type="button" disabled={surveyBusy} aria-busy={surveyBusy} onClick={() => void exportSurvey()}>{surveyBusy ? '导出中…' : '导出调查问卷（CSV）'}</button><button type="button" onClick={() => window.print()}>打印 / 导出 PDF</button></div></div>
+    <div className="module-head"><h2>后台功能管理</h2><div className="management-export"><button type="button" onClick={exportBattles}>导出战局（CSV）</button><button type="button" disabled={battlePdfBusy} aria-busy={battlePdfBusy} onClick={() => void exportBattlesPdf()}>{battlePdfBusy ? '生成中…' : '导出战局（PDF）'}</button><button type="button" disabled={surveyBusy} aria-busy={surveyBusy} onClick={() => void exportSurvey()}>{surveyBusy ? '导出中…' : '导出问卷（CSV）'}</button><button type="button" disabled={surveyPdfBusy} aria-busy={surveyPdfBusy} onClick={() => void exportSurveyPdf('summary')}>导出问卷汇总（PDF）</button><button type="button" disabled={surveyPdfBusy} aria-busy={surveyPdfBusy} onClick={() => void exportSurveyPdf('detail')}>导出问卷明细（PDF）</button></div></div>
     {surveyNotice && <p className="management-notice" role="status">{surveyNotice}</p>}
     <nav className="management-tabs" aria-label="管理模块" role="tablist">{([['create', '创建战局'], ['samples', '样本库'], ['rules', '规则库'], ['audit', '审计日志']] as const).map(([key, text]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? 'active' : ''} onClick={() => selectTab(key)}>{text}</button>)}</nav>
     {tab === 'create' && <form className="management-form" onSubmit={submitBattle}>

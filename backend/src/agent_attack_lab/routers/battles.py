@@ -749,6 +749,34 @@ def list_battles(
 
 
 @router.get(
+    "/api/battles/export.pdf",
+    summary="导出战局清单 PDF",
+    description="按创建时间倒序导出最近战局，用于材料与存档；与 CSV 导出并存。",
+    tags=["战局接口"],
+    dependencies=[Depends(security.read_auth_dependency)],
+)
+def export_battles_pdf() -> Response:
+    from agent_attack_lab import battle_pdf
+
+    total = state.battle_store.count()
+    rows = state.battle_store.list(limit=battle_pdf.MAX_ROWS, offset=0)
+    try:
+        payload = battle_pdf.build_battles_pdf(rows, total=total)
+    except battle_pdf.PdfFontUnavailable as exc:  # 由 survey_pdf 透出的同一异常类型
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'attachment; filename="battles.pdf"',
+            "Content-Length": str(len(payload)),
+            "X-Total-Count": str(total),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get(
     "/battles/{battle_id}/events",
     summary="查询战局回放事件",
     description="按事件序号升序分页返回已持久化的战局事件，可按类型、时间范围和事件内容检索。",

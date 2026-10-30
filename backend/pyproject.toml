@@ -24,6 +24,7 @@ dependencies = [
     # AMP heartbeat 直投平台 Kafka（wt.ioa.pub:19092）。纯 Python，无需编译。
     # 未安装时 amp.py 自动退化为只写本地 NDJSON，由 Fluent Bit 转发。
     "kafka-python>=3.0",
+    "reportlab>=5.1.0",
 ]
 
 # Production Wutong wheels are intentionally not a repository dependency:
