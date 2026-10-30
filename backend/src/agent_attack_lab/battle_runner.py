@@ -432,8 +432,12 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             defense, defender_source, defense_call_id = await tracked_agent_call(
                 battle_id=battle_id,
                 role="defender",
-                invoke=lambda correlation_id, current_sample=sample, memory=defender_memory: battle_defend(
-                    current_sample, correlation_id=correlation_id, candidate_memory=memory
+                invoke=lambda correlation_id, current_sample=sample, memory=defender_memory: (
+                    battle_defend(
+                        current_sample,
+                        correlation_id=correlation_id,
+                        candidate_memory=memory,
+                    )
                 ),
                 add_event=add_event,
                 round_number=index,
@@ -583,8 +587,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             submission_id = battle_timeline.submission_id_for(sample, index)
             persisted_events = state.battle_store.list_events(battle_id)
             snapshot_exists = any(
-                event.get("type")
-                in {"arbiter.round.score", "arbiter.round.scored"}
+                event.get("type") in {"arbiter.round.score", "arbiter.round.scored"}
                 and (event.get("data") or {}).get("round") == index
                 and (event.get("data") or {}).get("submissionId") == submission_id
                 and (event.get("data") or {}).get("rulesVersion") == SCORING_VERSION
@@ -621,9 +624,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                             "scored" if score_complete else "unresolved"
                         ),
                         "featureAction": feature_action["featureAction"],
-                        "featureActionReason": feature_action[
-                            "featureActionReason"
-                        ],
+                        "featureActionReason": feature_action["featureActionReason"],
                         "scores": current_score.get("scores", {})
                         if current_score
                         else {},

@@ -768,9 +768,8 @@ def test_background_battle_persists_staged_events() -> None:
     assert all(event["data"]["stageId"] == "A6" for event in similarity_events)
     assert sum(event["type"] == "arbiter.verdict" for event in events) == round_count
     assert (
-        sum(
-        event["type"] == "arbiter.safe_control.verdict" for event in events
-    ) == round_count
+        sum(event["type"] == "arbiter.safe_control.verdict" for event in events)
+        == round_count
     )
     assert (
         sum(event["type"] == "defense.safe_control" for event in events) == round_count
