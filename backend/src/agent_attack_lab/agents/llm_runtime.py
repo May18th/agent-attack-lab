@@ -17,6 +17,8 @@ class LLMError(RuntimeError):
 
 logger = logging.getLogger("agent_attack_lab.llm")
 _REQUIRED_CONFIG = ("BASE_URL", "API_KEY", "MODEL")
+# 只告警一次的标记：同一进程里重复提示同一角色没有价值，只会刷屏。
+_WARNED_PARTIAL: set[str] = set()
 
 
 def _role_prefix(role: str | None) -> str | None:
@@ -29,11 +31,30 @@ def _role_prefix(role: str | None) -> str | None:
 
 
 def _selected_prefix(role: str | None) -> str:
+    """Return the role prefix only when it is fully configured.
+
+    Earlier this switched as soon as *any* role variable was set, then required
+    all of them — so filling in a single variable (for example only
+    ``AGENT_ATTACKER_LLM_MODEL``) silently turned a working shared endpoint into
+    "not configured" and dropped the role back to local rules. A partial role
+    block now falls back to the shared endpoint and leaves one warning behind.
+    """
     role_prefix = _role_prefix(role)
-    if role_prefix and any(
-        os.getenv(role_prefix + name, "").strip() for name in _REQUIRED_CONFIG
-    ):
-        return role_prefix
+    if role_prefix:
+        if _configured(role_prefix):
+            return role_prefix
+        missing = [
+            name
+            for name in _REQUIRED_CONFIG
+            if not os.getenv(role_prefix + name, "").strip()
+        ]
+        if len(missing) < len(_REQUIRED_CONFIG) and role_prefix not in _WARNED_PARTIAL:
+            _WARNED_PARTIAL.add(role_prefix)
+            logger.warning(
+                "role_llm_config_incomplete prefix=%s missing=%s fallback=AGENT_LLM_",
+                role_prefix,
+                ",".join(missing),
+            )
     return "AGENT_LLM_"
 
 
@@ -53,6 +74,27 @@ def _setting(prefix: str, name: str, default: str) -> str:
 def is_configured(role: str | None = None) -> bool:
     """Return whether a shared or optionally role-specific endpoint is complete."""
     return _configured(_selected_prefix(role))
+
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def role_enabled(role: str) -> bool:
+    """Explicit per-role switch, defaulting to enabled.
+
+    ``AGENT_<ROLE>_LLM_ENABLED=0`` keeps the shared endpoint configured while
+    running one role on local rules. Earlier the only way to do that was to
+    deliberately break the role's endpoint variables, which relied on the
+    half-configured fallback bug; this is the supported replacement. An absent
+    or empty value means enabled, so existing deployments are unaffected.
+    """
+    prefix = _role_prefix(role)
+    if prefix is None:
+        return True
+    value = os.getenv(prefix + "ENABLED", "").strip().lower()
+    if not value:
+        return True
+    return value in _TRUTHY
 
 
 def _endpoint(prefix: str) -> str:

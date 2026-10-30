@@ -13,7 +13,12 @@ from agent_attack_lab.agents.attack_evolve import (
 )
 from agent_attack_lab.agents.common import create_agent_app
 from agent_attack_lab.agents.knowledge import trusted_attacker_context
-from agent_attack_lab.agents.llm_runtime import LLMError, complete_json, is_configured
+from agent_attack_lab.agents.llm_runtime import (
+    LLMError,
+    complete_json,
+    is_configured,
+    role_enabled,
+)
 
 logger = logging.getLogger("agent_attack_lab.attacker")
 _TEST_VARIATIONS = {
@@ -165,7 +170,7 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
     previous = _previous_round(payload)
     round_index = int(payload.get("_roundIndex") or 1)
     total_rounds = int(payload.get("_totalRounds") or request.rounds or 1)
-    if not is_configured(role="attacker"):
+    if not role_enabled("attacker") or not is_configured(role="attacker"):
         return evolve_local(request.model_dump(), previous, round_index, total_rounds)
 
     try:

@@ -53,4 +53,8 @@ case "$1" in
   *) export AGENT_AMP_ROLE=leader ;;
 esac
 
-exec "$python" -m uvicorn "$1" --host 127.0.0.1 --port "$2" --log-level warning
+# 日志级别用 info：模型调用、降级、配置告警全在 INFO 层（见 agents/llm_runtime.py
+# 的 model_call_completed / role_llm_config_incomplete），压到 warning 会让这些
+# 记录彻底消失，排查"生产到底有没有调模型"时无法取证。
+# 访问日志单独用 --no-access-log 关掉，否则每条请求一行会把 journal 刷满。
+exec "$python" -m uvicorn "$1" --host 127.0.0.1 --port "$2" --log-level info --no-access-log

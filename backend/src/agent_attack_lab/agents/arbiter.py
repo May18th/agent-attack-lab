@@ -139,7 +139,7 @@ def _validate_model_result(
         raise LLMError("arbiter returned an invalid confidence")
     try:
         confidence_value = float(confidence)
-    except OverflowError, ValueError:
+    except (OverflowError, ValueError):
         raise LLMError("arbiter returned an invalid confidence") from None
     if not math.isfinite(confidence_value) or not 0 <= confidence_value <= 1:
         raise LLMError("arbiter confidence is outside the allowed range")

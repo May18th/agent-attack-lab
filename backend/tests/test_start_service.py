@@ -31,6 +31,20 @@ def test_start_service_is_executable_in_git() -> None:
     assert result.stdout.startswith("100755 ")
 
 
+def test_start_service_keeps_application_info_logs() -> None:
+    """INFO 级日志是排查「生产到底有没有调模型」的唯一落盘证据。
+
+    2026-10-30 因 `--log-level warning` 压掉了 llm_runtime 的
+    `model_call_completed`，把正在使用模型的生产误判为「未接入」。这里钉住
+    两个参数：级别不低于 info，同时关掉访问日志避免刷屏。
+    """
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    assert "--log-level warning" not in source
+    assert "--log-level info" in source
+    assert "--no-access-log" in source
+
+
 def test_deploy_script_verifies_running_release_context() -> None:
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
