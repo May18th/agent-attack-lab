@@ -3138,17 +3138,49 @@ var battle3d=(function(){
     libApi('POST','/battles?background=true',{topic:topic,difficulty:difficulty,rounds:rounds,crossMemory:crossEnabled}).then(function(record){
       if(!record||!record.id){showToast('后端未返回战局，候选库使用本地演示数据');return;}
       remoteLibraryState.battleId=record.id;remoteLibraryState.crossMemory=crossEnabled;
+      try{localStorage.setItem('agentLabBattleId',record.id);}catch(e){}
       remoteLibraryState.battle={attacker:[],defender:[]};
-      stopRemotePolling();
-      remoteLibraryState.pollTimer=setInterval(function(){
-        libApi('GET','/battles/'+encodeURIComponent(record.id)).then(function(battle){
-          refreshRemoteLibraries();
-          if(battle&&(battle.status==='completed'||battle.status==='failed')){stopRemotePolling();showToast('后端战局 '+(battle.code||record.id)+' 已结束：候选库完成最终同步');}
-        }).catch(function(){});
-      },3000);
+      watchRemoteBattle(record.id);
       showToast('已连接后端智能体战局 '+(record.code||record.id)+'：候选库将逐回合同步'+(crossEnabled?'（跨局记忆开启）':''));
     }).catch(function(){showToast('后端连接失败，候选库使用本地演示数据');});
   }
+  /* 战局轮询：每 3 秒拉取战局状态并同步候选库；战局结束后停止并做最终同步。
+     页面刷新后通过 localStorage 恢复当前战局（见下方 restoreRemoteBattle）。 */
+  function watchRemoteBattle(battleId){
+    stopRemotePolling();
+    remoteLibraryState.pollTimer=setInterval(function(){
+      libApi('GET','/battles/'+encodeURIComponent(battleId)).then(function(battle){
+        refreshRemoteLibraries();
+        if(battle&&(battle.status==='completed'||battle.status==='failed')){stopRemotePolling();showToast('后端战局 '+(battle.code||battleId)+' 已结束：候选库完成最终同步');}
+      }).catch(function(){});
+    },3000);
+    refreshRemoteLibraries();
+  }
+  /* 页面刷新/重开后恢复当前战局的候选库同步：一局记忆继续展示本次战局的
+     逐回合记录（直到用户开新一局覆盖 battleId）；仍在进行的战局恢复轮询。 */
+  (function restoreRemoteBattle(){
+    if(!LIB_API_BASE)return;
+    var saved=null;
+    try{saved=localStorage.getItem('agentLabBattleId');}catch(e){}
+    if(!saved){
+      /* 旧版页面没有保存战局 ID：自动接管后端最近一局，避免刚打完的战局记录看不到。 */
+      libApi('GET','/battles?limit=1').then(function(list){
+        var latest=Array.isArray(list)?list[0]:null;
+        if(!latest||!latest.id)return;
+        remoteLibraryState.battleId=latest.id;
+        try{localStorage.setItem('agentLabBattleId',latest.id);}catch(e){}
+        refreshRemoteLibraries();
+        if(latest.status!=='completed'&&latest.status!=='failed')watchRemoteBattle(latest.id);
+      }).catch(function(){});
+      return;
+    }
+    libApi('GET','/battles/'+encodeURIComponent(saved)).then(function(battle){
+      if(!battle||!battle.id)return;
+      remoteLibraryState.battleId=saved;
+      refreshRemoteLibraries();
+      if(battle.status!=='completed'&&battle.status!=='failed')watchRemoteBattle(saved);
+    }).catch(function(){});
+  })();
   function syncRemoteCrossState(enabled){
     if(!LIB_API_BASE||!remoteLibraryState.battleId)return;
     libApi('POST','/libraries/cross-memory/state',{battleId:remoteLibraryState.battleId,enabled:!!enabled}).catch(function(){});
