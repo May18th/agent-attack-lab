@@ -37,7 +37,6 @@ from agent_attack_lab import (
     battle_runner,
     battle_timeline,
     candidate_library,
-    config,
     scoring_glue,
     security,
     state,
@@ -322,14 +321,11 @@ async def create_battle(
             ) = await battle_runner.tracked_agent_call(
                 battle_id=battle_id,
                 role="defender",
-                invoke=lambda correlation_id, current_sample=sample, memory=candidate_library.agent_memory(
-                    battle_id=battle_id,
-                    role="defender",
-                    round_index=index,
-                    cross_enabled=payload.crossMemory,
-                ): (
+                invoke=lambda correlation_id, current_sample=sample, memory=candidate_library.agent_memory(battle_id=battle_id, role="defender", round_index=index, cross_enabled=payload.crossMemory): (
                     battle_runner.battle_defend(
-                        current_sample, correlation_id=correlation_id, candidate_memory=memory
+                        current_sample,
+                        correlation_id=correlation_id,
+                        candidate_memory=memory,
                     )
                 ),
                 add_event=add_event,
@@ -467,8 +463,7 @@ async def create_battle(
             )
             submission_id = battle_timeline.submission_id_for(sample, index)
             if not any(
-                event.get("type")
-                in {"arbiter.round.score", "arbiter.round.scored"}
+                event.get("type") in {"arbiter.round.score", "arbiter.round.scored"}
                 and (event.get("data") or {}).get("round") == index
                 and (event.get("data") or {}).get("submissionId") == submission_id
                 and (event.get("data") or {}).get("rulesVersion") == SCORING_VERSION
@@ -512,9 +507,7 @@ async def create_battle(
                             "scored" if score_complete else "unresolved"
                         ),
                         "featureAction": feature_action["featureAction"],
-                        "featureActionReason": feature_action[
-                            "featureActionReason"
-                        ],
+                        "featureActionReason": feature_action["featureActionReason"],
                         "scores": current_score.get("scores", {})
                         if current_score
                         else {},
@@ -1109,13 +1102,9 @@ async def event_stream(
 
 @router.websocket("/ws/battles/{battle_id}")
 async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
-    if config.protect_read_routes and config.api_key:
-        supplied_key = websocket.headers.get("x-api-key") or websocket.query_params.get(
-            "api_key"
-        )
-        if supplied_key != config.api_key:
-            await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
-            return
+    if not security.websocket_read_auth_allowed(websocket):
+        await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
+        return
     if await asyncio.to_thread(state.battle_store.get, battle_id) is None:
         await websocket.close(code=4404, reason="战局不存在")
         return
@@ -1186,7 +1175,9 @@ def get_cross_memory_library() -> dict[str, Any]:
     ),
     tags=["战局接口"],
 )
-def set_cross_memory_state(payload: CrossMemoryStateRequest, request: Request) -> dict[str, Any]:
+def set_cross_memory_state(
+    payload: CrossMemoryStateRequest, request: Request
+) -> dict[str, Any]:
     security.check_browser_or_api_auth(request)
     updated = candidate_library.set_battle_flag(
         payload.battleId, enabled=payload.enabled
