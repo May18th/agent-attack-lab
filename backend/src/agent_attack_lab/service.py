@@ -24,9 +24,12 @@ from agent_attack_lab import (
     state,
 )
 from agent_attack_lab import events as events_api
+from agent_attack_lab.logging_setup import configure_logging
 from agent_attack_lab.models import (
     BattleRequest,
 )
+
+configure_logging()
 
 logger = logging.getLogger("agent_attack_lab")
 
