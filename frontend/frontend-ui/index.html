@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>智能体攻防实验室 · 总控台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230e1116'/%3E%3Cpath d='M22 62 L50 26 L78 62' stroke='%23ff8f6b' stroke-width='9' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M34 74 L50 55 L66 74' stroke='%239fc4ff' stroke-width='7' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://api.yuanyiagentzhandui.cn" crossorigin>
+<link rel="dns-prefetch" href="https://api.yuanyiagentzhandui.cn">
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <style>
@@ -2840,17 +2844,42 @@ var battle3d=(function(){
     {id:'CVE-2021-3199',name:'ONLYOFFICE Docs Server Path Traversal Vulnerability',vendor:'ONLYOFFICE · Docs · 目录 2026-10-08',desc:'ONLYOFFICE Docs contains a path traversal vulnerability via a /.. sequence in an image upload parameter, allowing remote code execution.',zh:'ONLYOFFICE Docs 在图片上传参数中存在 /.. 路径遍历漏洞，可导致远程代码执行。',src:'CISA · SHA-256 fb1621beec7d…'},
     {id:'CVE-2023-22894',name:'Strapi Cleartext Storage of Sensitive Information',vendor:'Strapi · 目录 2026-10-08',desc:'Strapi contains cleartext storage of sensitive information; could be chained with CVE-2023-22621 to achieve remote code execution.',zh:'Strapi 将敏感信息明文存储，可与 CVE-2023-22621 链式利用实现远程代码执行。',src:'CISA · SHA-256 fb1621beec7d…'}
   ];
-  var cveList=document.getElementById('cveList');
   function renderCVEto(list,targetId){
-    var root=document.getElementById(targetId);root.innerHTML='';
+    var root=document.getElementById(targetId);if(!root)return;root.innerHTML='';
+    if(!list.length){root.innerHTML='<div class="library-empty">暂无外部安全案例</div>';return;}
     list.forEach(function(c){
       var d=document.createElement('div');d.className='cve-item';
-      d.innerHTML='<div class="cve-top"><span class="cve-id">'+c.id+'</span><span class="cve-flag">verified_primary · external_fact</span></div><div class="cve-cols"><div class="cve-orig"><div class="cve-name">'+c.name+'</div><div class="cve-meta">'+c.vendor+'</div><div class="cve-desc">'+c.desc+'</div></div><div class="cve-zh"><div class="cve-zh-label">中文对照</div><div class="cve-desc">'+c.zh+'</div></div></div><div class="cve-src">来源：'+c.src+' · <a class="cve-link">查看原始来源</a></div>';
-      d.querySelector('.cve-link').addEventListener('click',function(){showToast('演示中：跳转 '+c.id+' CISA 原始来源');});
+      d.innerHTML='<div class="cve-top"><span class="cve-id">'+esc(c.id)+'</span><span class="cve-flag">verified_primary · external_fact</span></div><div class="cve-cols"><div class="cve-orig"><div class="cve-name">'+esc(c.name)+'</div><div class="cve-meta">'+esc(c.vendor)+'</div><div class="cve-desc">'+esc(c.desc)+'</div></div><div class="cve-zh"><div class="cve-zh-label">中文对照</div><div class="cve-desc">'+esc(c.zh)+'</div></div></div><div class="cve-src">来源：'+esc(c.src)+' · <a class="cve-link">查看原始来源</a></div>';
+      d.querySelector('.cve-link').addEventListener('click',function(){
+        if(c.url){window.open(c.url,'_blank','noopener');}else{showToast('演示中：跳转 '+c.id+' CISA 原始来源');}
+      });
       root.appendChild(d);
     });
   }
-  function renderCVE(list){renderCVEto(list,'cveList');}
+  /* 外部安全案例改为读取后端 /external-cases（CISA KEV 真实目录），
+     后端不可用时保留内置示例数据作为兜底。 */
+  function mapExternalCase(c){
+    return {
+      id:c.externalId||('CASE-'+c.id),
+      name:c.title||'',
+      vendor:[c.vendorProject,c.product,c.dateAdded].filter(Boolean).join(' · '),
+      desc:c.description||'',
+      zh:'处置要求：'+(c.requiredAction||'参见官方公告')+(c.cwes&&c.cwes.length?'；CWE：'+c.cwes.join('、'):''),
+      src:(c.source||'外部案例库')+(c.sourceUrl?' · '+c.sourceUrl:''),
+      url:c.sourceUrl||''
+    };
+  }
+  var cveRemoteLoaded=false;
+  function loadExternalCases(){
+    if(!LIB_API_BASE||cveRemoteLoaded)return;
+    libApi('GET','/external-cases').then(function(data){
+      var items=(data&&data.items)||[];
+      if(!items.length)return;
+      CVES=items.map(mapExternalCase);
+      cveRemoteLoaded=true;
+      renderCVEto(CVES,'cveModalList');
+    }).catch(function(){/* 后端不可用：继续用内置示例数据 */});
+  }
 
   /* ============ 历史战局 ============ */
   var LOGS=[];
@@ -3008,7 +3037,7 @@ var battle3d=(function(){
     it.addEventListener('click',function(){
       if(it.textContent==='实时评分系统'){scoreModal.classList.add('open');}
       else if(it.textContent==='回合payload'){payloadModal.classList.add('open');}
-      else if(it.textContent==='外部安全案例'){renderCVEto(CVES,'cveModalList');cveModal.classList.add('open');}
+      else if(it.textContent==='外部安全案例'){renderCVEto(CVES,'cveModalList');loadExternalCases();cveModal.classList.add('open');}
       else if(it.textContent==='可视化'){var sc=document.querySelector('.score-data-row');if(sc)sc.scrollIntoView({behavior:'smooth',block:'start'});}
       else if(it.textContent==='角色同步日志'){setRoleLogOpen(true);}
       else if(it.textContent==='历史攻防'){var hs=document.querySelector('.history-split');if(hs)hs.scrollIntoView({behavior:'smooth',block:'start'});}
@@ -3259,6 +3288,8 @@ var battle3d=(function(){
       if(battle.status!=='completed'&&battle.status!=='failed')watchRemoteBattle(saved);
     }).catch(function(){});
   })();
+  /* 页面空闲时预拉取后端真实外部安全案例（CISA KEV），打开案例弹窗即为真实数据。 */
+  if(LIB_API_BASE)setTimeout(loadExternalCases,2000);
   function syncRemoteCrossState(enabled){
     if(!LIB_API_BASE||!remoteLibraryState.battleId)return;
     libApi('POST','/libraries/cross-memory/state',{battleId:remoteLibraryState.battleId,enabled:!!enabled}).then(function(){
@@ -3945,6 +3976,10 @@ var battle3d=(function(){
   window.addEventListener('resize',resize);resize();
   var LINK=130;
   function frame(t){
+    // 标签页不可见、或封面 3D 仍在前台时（背景被完全遮挡）跳过绘制，省掉无意义的重绘。
+    if(document.hidden){requestAnimationFrame(frame);return;}
+    var coverEl=document.getElementById('coverLayer');
+    if(coverEl&&!coverEl.classList.contains('hidden')){requestAnimationFrame(frame);return;}
     ctx.clearRect(0,0,W,H);
     var time=t*.001;
     /* 闪烁星点 */
@@ -4384,7 +4419,8 @@ var battle3d=(function(){
     var elapsedT=0;
     function animate(){
       requestAnimationFrame(animate);
-      if(document.hidden)return;
+      // 封面已收起（或标签页不可见）时不再渲染 3D 银河，避免后台持续吃 CPU。
+      if(document.hidden||layer.classList.contains('hidden'))return;
       var dt=Math.min(clock.getDelta(),.06);
       var t=clock.elapsedTime;elapsedT=t;
       // 银河粒子沿螺旋由内向外流动（整体不旋转，近核心螺旋清晰、远处散开）
