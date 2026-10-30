@@ -126,7 +126,7 @@ describe('live battle visualizations', () => {
   it('limits the primary timeline to canonical attacker, defender, and Arbiter events', () => {
     expect(shouldRenderBattleTimelineEvent('attack.stage.started', { stageId: 'A1' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('attack.stage.completed', { stageId: 'A8' })).toBe(true)
-    expect(shouldRenderBattleTimelineEvent('defense.layer.started', { stageId: 'L0' })).toBe(false)
+    expect(shouldRenderBattleTimelineEvent('defense.layer.started', { stageId: 'L0' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('defense.check.started', { stageId: 'L0-1' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('defense.layer.verdict', { stageId: 'L3-4' })).toBe(true)
     expect(shouldRenderBattleTimelineEvent('arbiter.similarity.checked', { stageId: 'A6' })).toBe(true)
@@ -180,12 +180,17 @@ describe('live battle visualizations', () => {
       },
     ])
     expect(projector.push(event('round.completed', 7, 1))).toEqual([])
-    expect(projector.push(event('defense.layer.started', 7, 2, { stageId: 'L0' }))).toEqual([])
-    expect(projector.push(event('arbiter.layer.started', 8, 2, { stageId: 'L0' }))).toEqual([
+    expect(projector.push(event('defense.layer.started', 7, 2, { stageId: 'L0' }))).toEqual([
       { kind: 'round', round: 2 },
       {
-        kind: 'event', side: 'judge', event: event('arbiter.layer.started', 8, 2, { stageId: 'L0' }),
+        kind: 'event', side: 'def', event: event('defense.layer.started', 7, 2, { stageId: 'L0' }),
         key: 'battle-1:2:arbiter-layer:L0', update: false,
+      },
+    ])
+    expect(projector.push(event('arbiter.layer.started', 8, 2, { stageId: 'L0' }))).toEqual([
+      {
+        kind: 'event', side: 'judge', event: event('arbiter.layer.started', 8, 2, { stageId: 'L0' }),
+        key: 'battle-1:2:arbiter-layer:L0', update: true,
       },
     ])
     expect(projector.push(event('defense.check.started', 9, 2, { stageId: 'L0-1' }))).toEqual([
@@ -208,15 +213,20 @@ describe('live battle visualizations', () => {
       data: { round, ...data },
     })
 
-    expect(projector.push(event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }))).toEqual([
+    const base = event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0', layerIndex: 0 })
+    expect(projector.push(base)).toEqual([
       { kind: 'round', round: 1 },
       {
-        kind: 'event', side: 'judge', event: event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }),
+        kind: 'event', side: 'judge', event: base,
         key: 'battle-1:1:arbiter-layer:L0', update: false,
       },
       {
-        kind: 'event', side: 'att', event: event('arbiter.layer.confirmed', 1, 1, { stageId: 'L0' }),
-        key: 'battle-1:1:arbiter-layer:L0:penetrated', update: false, variant: 'penetrated',
+        kind: 'event', side: 'att',
+        event: {
+          ...base, id: 'event-1-penetrated-0', type: 'defense.layer.penetrated',
+          data: { round: 1, stageId: 'L0', layerIndex: 0 },
+        },
+        key: 'battle-1:1:0:penetrated', update: false, variant: 'penetrated',
       },
     ])
   })
@@ -233,15 +243,20 @@ describe('live battle visualizations', () => {
       data: { round: 1, ...data },
     })
 
-    projector.push(event('arbiter.layer.started', 1, { stageId: 'L0' }))
-    expect(projector.push(event('arbiter.layer.confirmed', 2, { stageId: 'L0' }))).toEqual([
+    projector.push(event('arbiter.layer.started', 1, { stageId: 'L0', layerIndex: 0 }))
+    const confirmed = event('arbiter.layer.confirmed', 2, { stageId: 'L0', layerIndex: 0 })
+    expect(projector.push(confirmed)).toEqual([
       {
-        kind: 'event', side: 'judge', event: event('arbiter.layer.confirmed', 2, { stageId: 'L0' }),
+        kind: 'event', side: 'judge', event: confirmed,
         key: 'battle-1:1:arbiter-layer:L0', update: true,
       },
       {
-        kind: 'event', side: 'att', event: event('arbiter.layer.confirmed', 2, { stageId: 'L0' }),
-        key: 'battle-1:1:arbiter-layer:L0:penetrated', update: false, variant: 'penetrated',
+        kind: 'event', side: 'att',
+        event: {
+          ...confirmed, id: 'event-2-penetrated-0', type: 'defense.layer.penetrated',
+          data: { round: 1, stageId: 'L0', layerIndex: 0 },
+        },
+        key: 'battle-1:1:0:penetrated', update: false, variant: 'penetrated',
       },
     ])
   })

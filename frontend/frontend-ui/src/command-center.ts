@@ -1077,8 +1077,16 @@ function renderLiveEvent(event: BattleEvent) {
     const entryRound = Number(entry.event.data.round || round)
     const timing = eventTiming(entry.event)
     const evidenceIds = timelineEvidenceIds(entry.event)
-    const title = eventTitle(entry.event)
-    const description = eventDescription(entry.event)
+    // 「Ln 已穿透」是合成卡：不属于任何单条后端事件，文案由层级推导。
+    const penetratedLayer = entry.variant === 'penetrated' ? Number(entry.event.data.layerIndex) : NaN
+    const title = entry.variant === 'penetrated'
+      ? `L${penetratedLayer} 已穿透`
+      : eventTitle(entry.event)
+    const description = entry.variant === 'penetrated'
+      ? (penetratedLayer >= 3
+        ? 'payload 融入 Core · L3 球壳破裂 · Core 由蓝色变为红色。'
+        : `payload 来到下一层 L${penetratedLayer + 1}；本层全部环节通过且事件卡已出完，防御球层破裂。`)
+      : eventDescription(entry.event)
     const publishEntry = () => {
       appendTimeline(entry.side, entry.key, entry.event, title, description, timing, evidenceIds)
       element('liveStatus').textContent = title
@@ -1379,7 +1387,7 @@ function eventTitle(event: BattleEvent) {
     const name = String(event.data.checkName || '').trim()
     return `${stageId}${name ? ` · ${name}` : ''}`
   }
-  if (event.type === 'arbiter.layer.started') return `${stageId} · Arbiter 开启层检测`
+  if (event.type === 'arbiter.layer.started' || (event.type === 'defense.layer.started' && /^L[0-3]$/.test(stageId))) return `${stageId} · Arbiter 开启层检测`
   if (event.type === 'arbiter.layer.confirmed') return `${stageId} · Arbiter 确认本层结果`
   if (event.type === 'arbiter.safe_control.started' || event.type === 'arbiter.safe_control') return 'Arbiter · 启动安全对照'
   if (event.type === 'arbiter.safe_control.verdict') return `Arbiter · 特征库动作（${String(event.data.featureAction || 'no-update')}）`
