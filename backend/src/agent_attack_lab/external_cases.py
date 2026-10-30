@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import sqlite3
 from pathlib import Path
@@ -14,6 +15,61 @@ def _connect_read_only(database: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(uri, uri=True)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def describe_external_cases(database: Path) -> dict[str, Any]:
+    """Lightweight availability probe for ``/health``.
+
+    This library ships as a standalone file that ``.gitignore`` keeps out of the
+    repository, so it can silently be absent on a deployment host: queries then
+    return ``available: False`` with an empty list while the service still looks
+    healthy. This probe makes that state observable. It never raises -- health
+    must report degradation instead of failing the whole endpoint.
+    """
+    if not database.is_file():
+        return {
+            "status": "missing",
+            "path": str(database),
+            "records": 0,
+            "sources": 0,
+            "schemaVersion": None,
+            "modifiedAt": None,
+        }
+
+    try:
+        with _connect_read_only(database) as connection:
+            records = connection.execute(
+                "SELECT COUNT(DISTINCT external_id) FROM external_cases"
+            ).fetchone()[0]
+            sources = connection.execute(
+                "SELECT COUNT(*) FROM external_sources"
+            ).fetchone()[0]
+            latest = connection.execute(
+                "SELECT schema_version FROM external_sources "
+                "ORDER BY retrieved_at DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        return {
+            "status": "error",
+            "path": str(database),
+            "records": 0,
+            "sources": 0,
+            "schemaVersion": None,
+            "modifiedAt": None,
+            "reason": type(exc).__name__,
+        }
+
+    modified_at = dt.datetime.fromtimestamp(
+        database.stat().st_mtime, tz=dt.UTC
+    ).isoformat(timespec="seconds")
+    return {
+        "status": "ok" if records else "empty",
+        "path": str(database),
+        "records": int(records),
+        "sources": int(sources),
+        "schemaVersion": latest[0] if latest else None,
+        "modifiedAt": modified_at,
+    }
 
 
 def _case_from_row(row: sqlite3.Row) -> dict[str, Any]:

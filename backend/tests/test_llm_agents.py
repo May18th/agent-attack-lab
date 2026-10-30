@@ -316,3 +316,83 @@ def test_agent_health_reports_role_specific_model_configuration(monkeypatch) -> 
     client = TestClient(create_agent_app("attacker", process))
 
     assert client.get("/health").json()["agentMode"] == "llm"
+
+
+def _fake_attacker_model() -> object:
+    async def fake(_system_prompt, user_payload, *, role):
+        assert role == "attacker"
+        return {
+            "samples": [
+                {
+                    "type": "violation",
+                    "severity": "low",
+                    "scenario": "switch scoped",
+                    "objective": "check switch",
+                    "content": "synthetic switch sample",
+                    "_rounds": user_payload["rounds"],
+                }
+            ]
+        }
+
+    return fake
+
+
+def test_attacker_uses_model_when_enable_switch_is_absent(monkeypatch) -> None:
+    """缺省必须保持原行为：没写开关就等于开启，现有部署不受影响。"""
+    monkeypatch.delenv("AGENT_ATTACKER_LLM_ENABLED", raising=False)
+    monkeypatch.setattr(attacker, "is_configured", lambda **_kwargs: True)
+    monkeypatch.setattr(attacker, "complete_json", _fake_attacker_model())
+
+    result = asyncio.run(
+        attacker.process({"topic": "开关缺省", "difficulty": "low", "rounds": 1})
+    )
+
+    assert result["agentMode"] == "llm"
+
+
+def test_attacker_uses_rules_when_enable_switch_is_zero(monkeypatch) -> None:
+    """显式关闭后，即使端点配置完整也不得调用模型。"""
+    monkeypatch.setenv("AGENT_ATTACKER_LLM_ENABLED", "0")
+    monkeypatch.setattr(attacker, "is_configured", lambda **_kwargs: True)
+
+    async def must_not_call(*_args, **_kwargs):
+        raise AssertionError("model must not be called when the switch is 0")
+
+    monkeypatch.setattr(attacker, "complete_json", must_not_call)
+
+    result = asyncio.run(
+        attacker.process({"topic": "开关关闭", "difficulty": "low", "rounds": 1})
+    )
+
+    assert result["agentMode"] == "local-rule"
+    assert result["samples"]
+
+
+def test_attacker_uses_model_when_enable_switch_is_one_and_config_complete(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AGENT_ATTACKER_LLM_ENABLED", "1")
+    monkeypatch.setattr(attacker, "is_configured", lambda **_kwargs: True)
+    monkeypatch.setattr(attacker, "complete_json", _fake_attacker_model())
+
+    result = asyncio.run(
+        attacker.process({"topic": "开关开启", "difficulty": "low", "rounds": 1})
+    )
+
+    assert result["agentMode"] == "llm"
+
+
+def test_defender_uses_rules_when_enable_switch_is_zero(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_DEFENDER_LLM_ENABLED", "0")
+    monkeypatch.setattr(defender, "is_configured", lambda **_kwargs: True)
+
+    async def must_not_call(*_args, **_kwargs):
+        raise AssertionError("model must not be called when the switch is 0")
+
+    monkeypatch.setattr(defender, "complete_json", must_not_call)
+
+    result = asyncio.run(
+        defender.process({"sample": {"content": "ordinary safe text"}})
+    )
+
+    assert result["agentMode"] == "local-rule"

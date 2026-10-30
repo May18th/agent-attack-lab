@@ -6,8 +6,12 @@ from typing import Any
 from agent_attack_lab.agent_logic import DefendRequest, defend
 from agent_attack_lab.agents.common import create_agent_app
 from agent_attack_lab.agents.knowledge import trusted_defender_context
-from agent_attack_lab.agents.llm_runtime import LLMError, complete_json, is_configured
-from agent_attack_lab.library_store import agent_context as library_agent_context
+from agent_attack_lab.agents.llm_runtime import (
+    LLMError,
+    complete_json,
+    is_configured,
+    role_enabled,
+)
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 
 logger = logging.getLogger("agent_attack_lab.defender")
@@ -27,7 +31,7 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
     sample = payload.get("sample")
     if not isinstance(sample, dict) or not isinstance(sample.get("content"), str):
         raise LLMError("defender input must include sample.content")
-    if not is_configured(role="defender"):
+    if not role_enabled("defender") or not is_configured(role="defender"):
         return _local(sample, "local-rule")
 
     try:
@@ -36,15 +40,6 @@ async def process(payload: dict[str, Any]) -> dict[str, Any]:
             payload.get("_knowledgeContext"),
             topic=str(sample.get("topic") or ""),
         )
-        if knowledge is None:
-            knowledge = trusted_defender_context(
-                library_agent_context(
-                    "defender",
-                    topic=str(sample.get("topic") or ""),
-                    difficulty=str(sample.get("difficulty") or "mid"),
-                ),
-                topic=str(sample.get("topic") or ""),
-            )
         if knowledge is not None:
             user_payload["knowledgeContext"] = knowledge
         response = await complete_json(_SYSTEM_PROMPT, user_payload, role="defender")

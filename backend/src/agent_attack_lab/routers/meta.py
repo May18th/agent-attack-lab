@@ -19,7 +19,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from agent_attack_lab import config, pages, security, state
 from agent_attack_lab.acp_agents import rpc_metrics
 from agent_attack_lab.agent_logic import local_rule_case_count
-from agent_attack_lab.external_cases import query_external_cases
+from agent_attack_lab.external_cases import (
+    describe_external_cases,
+    query_external_cases,
+)
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 
 router = APIRouter()
@@ -81,12 +84,24 @@ def health(request: Request) -> dict[str, Any]:
         state.battle_store.count()
     except Exception:  # noqa: BLE001 - health must report degraded storage instead of failing.
         storage_status = "error"
+    # 外部用例库是随发布分发的独立 SQLite 文件（不在版本库内），缺文件时查询接口
+    # 只返回空列表而不报错。这里单独probe一次，让缺失变成可观测状态。
+    external_cases = describe_external_cases(config.external_cases_database)
+    warnings = (
+        [f"external_cases_{external_cases['status']}"]
+        if external_cases["status"] in {"missing", "empty", "error"}
+        else []
+    )
     return {
+        # 顶层 status 仍只反映主库：把外部用例库纳入会让现有探活（nginx/systemd）
+        # 在文件缺失时直接摘流量，而缺失的只是参考数据，不是服务不可用。
         "status": "ok" if storage_status == "ok" else "degraded",
         "service": "智能体攻防实验室",
         "version": config.service_version,
         "uptimeSeconds": round(time.monotonic() - state.started_at, 2),
         "storage": storage_status,
+        "externalCases": external_cases,
+        "warnings": warnings,
         "requestId": request.state.request_id,
     }
 
