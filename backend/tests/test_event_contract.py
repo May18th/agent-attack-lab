@@ -85,6 +85,56 @@ def test_safe_control_pass_requires_evidence() -> None:
     assert safe_event[2]["classification"] == "unresolved"
 
 
+def test_feature_action_follows_spec_section_8() -> None:
+    """规范的 featureAction 契约：自动裁决只产生 pending-review，误拦不更新。"""
+
+    def run(classification: str, safe_status: str, evidence: list[str]):
+        emitted: list[tuple[str, str, dict]] = []
+        result = emit_post_verdict_stages(
+            lambda event_type, status, data: emitted.append(
+                (event_type, status, data)
+            ),
+            round_number=1,
+            defense={"safeControl": {"status": safe_status, "evidence": evidence}},
+            classification=classification,
+            correlation_id="call-fa",
+        )
+        verdict = next(
+            item for item in emitted if item[0] == "arbiter.safe_control.verdict"
+        )
+        defense_event = next(
+            item for item in emitted if item[0] == "defense.safe_control"
+        )
+        started = next(
+            item for item in emitted if item[0] == "arbiter.safe_control.started"
+        )
+        return result, verdict, defense_event, started
+
+    # 拦截 + 对照样本正确放行 → 特征候选待审核
+    result, verdict, defense_event, started = run(
+        "blocked", "passed", ["EV-1"]
+    )
+    assert result["featureAction"] == "update-pending-review"
+    assert verdict[2]["featureAction"] == "update-pending-review"
+    assert defense_event[2]["featureAction"] == "update-pending-review"
+    assert started[0] == "arbiter.safe_control.started"
+
+    # 拦截 + 对照样本被误拦 → 不更新
+    result, verdict, _, _ = run("blocked", "blocked", ["EV-2"])
+    assert result["featureAction"] == "no-update"
+    assert verdict[2]["featureAction"] == "no-update"
+
+    # 拦截 + 对照证据缺失 → 不更新
+    result, _, _, _ = run("contained", "unresolved", [])
+    assert result["featureAction"] == "no-update"
+
+    # 穿透/未决 → 不更新；自动裁决永不产生 update-approved
+    for classification in ("full-penetration", "unresolved"):
+        result, _, _, _ = run(classification, "passed", ["EV-3"])
+        assert result["featureAction"] == "no-update"
+        assert result["featureActionReason"]
+
+
 def test_arbiter_verdict_names_the_exact_blocking_check() -> None:
     emitted: list[tuple[str, str, dict]] = []
     classification = emit_defense_and_arbiter_stages(

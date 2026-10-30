@@ -11,12 +11,6 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-)
-
 from acps_sdk.aip import (
     Product,
     StructuredDataItem,
@@ -31,10 +25,39 @@ from acps_sdk.aip.aip_rpc_server import (
     TaskManager,
     handle_rpc_request,
 )
+from fastapi import FastAPI, HTTPException, Request
 
 from agent_attack_lab import amp
 from agent_attack_lab.agents.llm_runtime import is_configured as llm_configured
 from agent_attack_lab.aip_compat import server_identity_options
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
+logger = logging.getLogger("agent_attack_lab.agents.common")
+
+
+# 平台协作入口（如叮当）派发的是自然语言指令，而不是 ACS 约定的结构化字段。
+# 这类请求在 TextDataItem 里是一段人话，json.loads 必然失败；若直接抛错，
+# 平台侧只会看到 "AIP 输入必须是 JSON 对象"，整条互联链路就断在格式上。
+# 因此非 JSON 文本一律降级为最小可用载荷：攻击方按 topic 取用，
+# 防守方按 sample.content 取用，同一段指令两边都能消费。
+_INSTRUCTION_TOPIC_LIMIT = 200  # 与 AttackRequest.topic 的 max_length 对齐
+_INSTRUCTION_CONTENT_LIMIT = 8000  # 与 defender 的 content 截断长度对齐
+
+
+def _instruction_payload(text: str) -> dict[str, Any]:
+    instruction = text.strip()
+    topic = instruction[:_INSTRUCTION_TOPIC_LIMIT] or "general"
+    return {
+        "instruction": instruction,
+        "text": instruction,
+        "topic": topic,
+        "sample": {
+            "content": instruction[:_INSTRUCTION_CONTENT_LIMIT],
+            "topic": topic,
+        },
+    }
 
 
 def _command_payload(command: TaskCommand) -> dict[str, Any]:
@@ -46,15 +69,54 @@ def _command_payload(command: TaskCommand) -> dict[str, Any]:
         if isinstance(item, StructuredDataItem):
             return item.data
         if isinstance(item, TextDataItem):
+            text = (item.text or "").strip()
+            if not text:
+                continue
             try:
-                payload = json.loads(item.text)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("AIP 输入必须是 JSON 对象") from exc
+                payload = json.loads(text)
+            except TypeError, ValueError:
+                payload = None
             if isinstance(payload, dict):
                 return payload
-            raise ValueError("AIP 输入必须是 JSON 对象")
+            logger.info(
+                "AIP 输入为自然语言指令（非 JSON），按通用载荷处理：%s",
+                text[:80],
+            )
+            return _instruction_payload(text)
 
     raise ValueError("AIP Start 命令缺少 JSON 输入")
+
+
+def _summarize_output(output: dict[str, Any]) -> str:
+    """把智能体的结构化输出压缩成一段平台可直接展示的文本摘要。"""
+    try:
+        samples = output.get("samples") if isinstance(output, dict) else None
+        if isinstance(samples, list) and samples:
+            lines: list[str] = []
+            for idx, sample in enumerate(samples[:3], start=1):
+                if not isinstance(sample, dict):
+                    continue
+                head = sample.get("scenario") or sample.get("tactic") or "测试样本"
+                objective = sample.get("objective") or ""
+                content = str(sample.get("content") or "").strip()
+                lines.append(f"{idx}. 场景：{head}")
+                if objective:
+                    lines.append(f"   检查目标：{objective}")
+                if content:
+                    lines.append(f"   测试文本：{content[:300]}")
+            extra = len(samples) - 3
+            if extra > 0:
+                lines.append(f"（另有 {extra} 条样本，详见结构化数据）")
+            return "\n".join(lines) or "已完成任务，结果见结构化数据。"
+
+        if isinstance(output, dict) and output:
+            brief = json.dumps(output, ensure_ascii=False)
+            if len(brief) > 600:
+                brief = brief[:600] + "…"
+            return f"已完成任务，结果摘要：{brief}"
+    except RecursionError, TypeError, ValueError:
+        logger.debug("生成 Agent 文本摘要失败，保留结构化结果", exc_info=True)
+    return "已完成任务，结果见结构化数据。"
 
 
 def create_agent_app(
@@ -88,13 +150,16 @@ def create_agent_app(
         if inspect.isawaitable(output):
             output = await output
         data_item = StructuredDataItem(data=output)
+        # 协作平台（如叮当）整合产物时读取 TextDataItem 正文；只给结构化数据
+        # 会被判为"未提供文本正文"而无法展示。附带一段可读摘要作为正文。
+        text_item = TextDataItem(text=_summarize_output(output))
         TaskManager.set_products(
             command.taskId,
             [
                 Product(
                     id=f"product-{uuid.uuid4()}",
                     name=f"{name}-result",
-                    dataItems=[data_item],
+                    dataItems=[data_item, text_item],
                 )
             ],
         )

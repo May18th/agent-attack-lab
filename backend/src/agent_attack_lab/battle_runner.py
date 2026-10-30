@@ -19,7 +19,14 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from agent_attack_lab import battle_timeline, config, scoring_glue, state
+from agent_attack_lab import (
+    battle_timeline,
+    candidate_library,
+    config,
+    library_store,
+    scoring_glue,
+    state,
+)
 from agent_attack_lab import events as events_api
 from agent_attack_lab.acp_agents import (
     ACPAgentError,
@@ -127,6 +134,7 @@ async def battle_attack(
     round_index: int = 1,
     total_rounds: int | None = None,
     previous_round: dict[str, Any] | None = None,
+    candidate_memory: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], str]:
     agent_payload = payload.model_dump()
     agent_payload["_roundIndex"] = round_index
@@ -134,10 +142,23 @@ async def battle_attack(
     if previous_round:
         # 上一回合的实测结论要进到攻击方上下文里，否则每轮都是独立开盲盒。
         agent_payload["_previousRound"] = previous_round
-    knowledge = build_attacker_knowledge(
-        state.battle_store.list_admin_samples(limit=200, offset=0),
-        topic=payload.topic,
+    if candidate_memory:
+        # 候选库记忆注入：一局记忆（第 2 回合起）+ 跨局记忆（开关开启时），
+        # 智能体据此做逐回合迭代学习；只注入 attacker 自己的策略记录。
+        agent_payload["_candidateMemory"] = {
+            "role": "attacker",
+            "records": candidate_memory,
+        }
+    seeded = library_store.agent_context(
+        "attacker", topic=payload.topic, difficulty=payload.difficulty
     )
+    # Formal six-theme catalogs supersede the legacy admin seed rows for that
+    # topic.  Mixing both sources would send duplicate samples/rules to the
+    # agent; legacy/custom topics continue to use the admin tables unchanged.
+    source_records = seeded["records"] or state.battle_store.list_admin_samples(
+        limit=200, offset=0
+    )
+    knowledge = build_attacker_knowledge(source_records, topic=payload.topic)
     if knowledge["records"]:
         agent_payload["_knowledgeContext"] = knowledge
     result = await call_attacker(agent_payload, correlation_id=correlation_id)
@@ -161,16 +182,28 @@ async def battle_attack(
 
 
 async def battle_defend(
-    sample: dict[str, Any], *, correlation_id: str
+    sample: dict[str, Any],
+    *,
+    correlation_id: str,
+    candidate_memory: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], str]:
     topic = str(sample.get("topic") or "")
-    knowledge = build_defender_knowledge(
-        state.battle_store.list_admin_rules(limit=200, offset=0),
-        topic=topic,
+    seeded = library_store.agent_context(
+        "defender", topic=topic, difficulty=str(sample.get("difficulty") or "mid")
     )
+    source_rules = seeded["records"] or state.battle_store.list_admin_rules(
+        limit=200, offset=0
+    )
+    knowledge = build_defender_knowledge(source_rules, topic=topic)
     agent_payload: dict[str, Any] = {"sample": sample}
     if knowledge["records"]:
         agent_payload["_knowledgeContext"] = knowledge
+    if candidate_memory:
+        # Defender 只读自己的特征候选记录（拦截/穿透录入）。
+        agent_payload["_candidateMemory"] = {
+            "role": "defender",
+            "records": candidate_memory,
+        }
     result = await call_defender(agent_payload, correlation_id=correlation_id)
     source = "local-rule"
     if result is None:
@@ -287,6 +320,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
 
     try:
         record["status"] = "running"
+        record["crossMemory"] = payload.crossMemory
         state.battle_store.save(record)
         add_event(
             "attack.started",
@@ -305,6 +339,14 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
         previous_sample: dict[str, Any] | None = None
         previous_round: dict[str, Any] | None = None
         for index in range(1, payload.rounds + 1):
+            # 记录上一回合样本（用于相似度与候选库），在覆盖前固定引用。
+            prior_sample = previous_sample
+            attacker_memory = candidate_library.agent_memory(
+                battle_id=battle_id,
+                role="attacker",
+                round_index=index,
+                cross_enabled=payload.crossMemory,
+            )
             add_event(
                 "round.started",
                 "running",
@@ -317,6 +359,10 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     "defenderSource": "acp-pending"
                     if acp_agent_configured("defender")
                     else "local-rule",
+                    "candidateMemory": {
+                        "crossEnabled": payload.crossMemory,
+                        "attackerRecords": len(attacker_memory),
+                    },
                 },
             )
             round_payload = payload.model_copy(update={"rounds": 1})
@@ -325,13 +371,14 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 role="attacker",
                 # 回调可能被重试逻辑延后调用：用默认参数把当轮的 index/previous_round
                 # 固定下来，避免读到后续轮次的值（B023）。
-                invoke=lambda correlation_id, current_payload=round_payload, current_round=index, previous=previous_round: (
+                invoke=lambda correlation_id, current_payload=round_payload, current_round=index, previous=previous_round, memory=attacker_memory: (
                     battle_attack(
                         current_payload,
                         correlation_id=correlation_id,
                         round_index=current_round,
                         total_rounds=payload.rounds,
                         previous_round=previous,
+                        candidate_memory=memory,
                     )
                 ),
                 add_event=add_event,
@@ -376,11 +423,17 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
             )
             previous_sample = sample
             await asyncio.sleep(0.8)
+            defender_memory = candidate_library.agent_memory(
+                battle_id=battle_id,
+                role="defender",
+                round_index=index,
+                cross_enabled=payload.crossMemory,
+            )
             defense, defender_source, defense_call_id = await tracked_agent_call(
                 battle_id=battle_id,
                 role="defender",
-                invoke=lambda correlation_id, current_sample=sample: battle_defend(
-                    current_sample, correlation_id=correlation_id
+                invoke=lambda correlation_id, current_sample=sample, memory=defender_memory: battle_defend(
+                    current_sample, correlation_id=correlation_id, candidate_memory=memory
                 ),
                 add_event=add_event,
                 round_number=index,
@@ -434,7 +487,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                 arbiter_review=arbiter_review,
                 correlation_id=attack_call_id,
             )
-            battle_timeline.emit_post_verdict_stages(
+            feature_action = battle_timeline.emit_post_verdict_stages(
                 add_event,
                 round_number=index,
                 defense=defense,
@@ -497,6 +550,20 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                         "correlationId": defense_call_id,
                     },
                 )
+            # 回合结算：从回合证据构建 Attacker 策略候选与 Defender 特征候选，
+            # 写入一局库（始终）与跨局库（跨局记忆开启时），并随事件广播。
+            candidate_result = await asyncio.to_thread(
+                candidate_library.record_round,
+                battle_id=battle_id,
+                round_number=index,
+                topic=payload.topic,
+                sample=sample,
+                defense=defense,
+                verification=verification,
+                classification=classification,
+                previous_sample=prior_sample,
+                cross_enabled=payload.crossMemory,
+            )
             add_event(
                 "round.settled",
                 "completed",
@@ -506,12 +573,18 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     "classification": classification,
                     "structuredTimelineVersion": "v2.0",
                     "rulesVersion": SCORING_VERSION,
+                    "candidateLibrary": {
+                        "attacker": candidate_result["attacker"],
+                        "defender": candidate_result["defender"],
+                        "crossEnabled": payload.crossMemory,
+                    },
                 },
             )
             submission_id = battle_timeline.submission_id_for(sample, index)
             persisted_events = state.battle_store.list_events(battle_id)
             snapshot_exists = any(
-                event.get("type") == "arbiter.round.scored"
+                event.get("type")
+                in {"arbiter.round.score", "arbiter.round.scored"}
                 and (event.get("data") or {}).get("round") == index
                 and (event.get("data") or {}).get("submissionId") == submission_id
                 and (event.get("data") or {}).get("rulesVersion") == SCORING_VERSION
@@ -535,7 +608,7 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                     else "unresolved"
                 )
                 add_event(
-                    "arbiter.round.scored",
+                    "arbiter.round.score",
                     "completed" if score_complete else "unresolved",
                     {
                         "round": index,
@@ -547,6 +620,10 @@ async def run_battle_async(battle_id: str, payload: BattleRequest) -> None:
                         "classification": (
                             "scored" if score_complete else "unresolved"
                         ),
+                        "featureAction": feature_action["featureAction"],
+                        "featureActionReason": feature_action[
+                            "featureActionReason"
+                        ],
                         "scores": current_score.get("scores", {})
                         if current_score
                         else {},

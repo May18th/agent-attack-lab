@@ -63,6 +63,13 @@ def _payload_similarity(
     return round(dot / (current_norm * previous_norm), 6)
 
 
+def payload_similarity(
+    sample: Mapping[str, Any], previous_sample: Mapping[str, Any] | None
+) -> float | None:
+    """Public alias of :func:`_payload_similarity` for other modules."""
+    return _payload_similarity(sample, previous_sample)
+
+
 def emit_attack_stages(
     add_event: AddEvent,
     *,
@@ -366,6 +373,36 @@ def emit_defense_and_arbiter_stages(
     return classification
 
 
+def feature_action_for(classification: str, safe_status: str) -> tuple[str, str]:
+    """Return the spec §8 featureAction for a settled round.
+
+    The automated Arbiter may only *propose* features: ``update-approved`` is
+    reserved for human review and is never produced here. A blocked/contained
+    round with a correctly released control sample becomes
+    ``update-pending-review``; any misjudged or unevidenced control sample
+    blocks the update entirely.
+    """
+    if classification in {"blocked", "contained"}:
+        if safe_status == "passed":
+            return (
+                "update-pending-review",
+                "拦截证据充分且安全对照正常放行，特征候选进入待审核队列。",
+            )
+        if safe_status in {"blocked", "failed"}:
+            return (
+                "no-update",
+                "安全对照样本被误拦截，本次命中不得写入特征库。",
+            )
+        return (
+            "no-update",
+            "安全对照证据不足，无法排除误拦截，暂不更新特征库。",
+        )
+    return (
+        "no-update",
+        f"最终分类为 {classification}，无可确认的防守特征，不更新特征库。",
+    )
+
+
 def emit_post_verdict_stages(
     add_event: AddEvent,
     *,
@@ -373,14 +410,15 @@ def emit_post_verdict_stages(
     defense: Mapping[str, Any],
     classification: str,
     correlation_id: str,
-) -> None:
+) -> dict[str, str]:
     """Emit the independent normal-sample control after A8.
 
     Missing control evidence stays unresolved; the timeline never invents a
     successful normal-sample release merely to complete the visual sequence.
+    Returns the spec §8 feature library action for this round.
     """
     add_event(
-        "arbiter.safe_control",
+        "arbiter.safe_control.started",
         "completed",
         {
             "round": round_number,
@@ -397,6 +435,9 @@ def emit_post_verdict_stages(
     safe_status = str(control_data.get("status") or "unresolved")
     if safe_status == "passed" and (not isinstance(evidence, list) or not evidence):
         safe_status = "unresolved"
+    feature_action, feature_action_reason = feature_action_for(
+        classification, safe_status
+    )
     add_event(
         "defense.safe_control",
         safe_status,
@@ -408,6 +449,7 @@ def emit_post_verdict_stages(
             **control_data,
             "status": safe_status,
             "classification": safe_status,
+            "featureAction": feature_action,
             "statement": (
                 "正常样本已正确放行。"
                 if safe_status == "passed"
@@ -415,6 +457,29 @@ def emit_post_verdict_stages(
             ),
         },
     )
+    verdict_statement = {
+        "update-pending-review": "安全对照正常放行，防守特征候选已提交待审核队列。",
+        "no-update": feature_action_reason,
+    }[feature_action]
+    add_event(
+        "arbiter.safe_control.verdict",
+        "completed",
+        {
+            "round": round_number,
+            "stageId": "SAFE-CONTROL",
+            "agentRole": "arbiter",
+            "correlationId": correlation_id,
+            "classification": classification,
+            "safeControlStatus": safe_status,
+            "featureAction": feature_action,
+            "featureActionReason": feature_action_reason,
+            "statement": verdict_statement,
+        },
+    )
+    return {
+        "featureAction": feature_action,
+        "featureActionReason": feature_action_reason,
+    }
 
 
 def emit_attack_review(

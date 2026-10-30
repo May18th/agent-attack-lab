@@ -183,7 +183,7 @@ def test_create_battle_uses_requested_rounds_and_returns_undetermined_without_ve
     assert sum(event["type"] == "round.completed" for event in battle_events) == 5
     assert sum(event["type"] == "round.settled" for event in battle_events) == 5
     score_snapshots = [
-        event for event in battle_events if event["type"] == "arbiter.round.scored"
+        event for event in battle_events if event["type"] == "arbiter.round.score"
     ]
     assert len(score_snapshots) == 5
     assert {event["data"]["round"] for event in score_snapshots} == set(range(1, 6))
@@ -580,6 +580,8 @@ def test_battle_injects_role_scoped_knowledge_into_remote_agents(monkeypatch) ->
         # 攻击方需要知道自己是第几轮，才能选择战术并判断是否已有上轮反馈。
         "_roundIndex": 1,
         "_totalRounds": 1,
+        # 跨局记忆开关随战局配置下发给智能体（未开启时为 False）。
+        "crossMemory": False,
         "_knowledgeContext": {
             "role": "attacker",
             "records": [
@@ -766,13 +768,15 @@ def test_background_battle_persists_staged_events() -> None:
     assert all(event["data"]["stageId"] == "A6" for event in similarity_events)
     assert sum(event["type"] == "arbiter.verdict" for event in events) == round_count
     assert (
-        sum(event["type"] == "arbiter.safe_control" for event in events) == round_count
+        sum(
+        event["type"] == "arbiter.safe_control.verdict" for event in events
+    ) == round_count
     )
     assert (
         sum(event["type"] == "defense.safe_control" for event in events) == round_count
     )
     assert (
-        sum(event["type"] == "arbiter.round.scored" for event in events) == round_count
+        sum(event["type"] == "arbiter.round.score" for event in events) == round_count
     )
     for round_number in range(1, round_count + 1):
         round_events = [
@@ -787,22 +791,22 @@ def test_background_battle_persists_staged_events() -> None:
             for index, event_type in enumerate(event_types)
             if event_type == "attack.stage.completed"
         )
-        assert "arbiter.round.scored" in event_types, (
+        assert "arbiter.round.score" in event_types, (
             round_number,
             [
                 (e["type"], e["data"].get("round"), e["data"].get("submissionId"))
                 for e in events
-                if e["type"] == "arbiter.round.scored"
+                if e["type"] == "arbiter.round.score"
             ],
         )
         assert event_types.index("defense.safe_control") < event_types.index(
-            "arbiter.round.scored"
+            "arbiter.round.score"
         )
         assert event_types.index("round.settled") < event_types.index(
-            "arbiter.round.scored"
+            "arbiter.round.score"
         )
         score_event = next(
-            event for event in round_events if event["type"] == "arbiter.round.scored"
+            event for event in round_events if event["type"] == "arbiter.round.score"
         )
         assert score_event["data"]["submissionId"].startswith(f"SUB-R{round_number}-")
         assert score_event["data"]["rulesVersion"] == "v2.0"

@@ -11,6 +11,9 @@ export type BattleVisualizationRoleScore = {
 export type BattleVisualizationRound = {
   round: number
   status: string
+  sample?: unknown
+  startedAt?: string | null
+  sourceType?: string | null
   attackSuccess?: boolean
   defenseSuccess?: boolean
   safeControl?: {
@@ -29,6 +32,10 @@ export type BattleVisualizationRound = {
 
 export type BattleVisualizationSummary = {
   points: Array<{ round: number; attacker: number | null; defender: number | null }>
+  roundCount: number
+  payloadCount: number
+  newSourcePayloadCount: number
+  payloadUpdateRate: number
   classificationAvailable: boolean
   interceptedRounds: number | null
   escapedRounds: number | null
@@ -50,7 +57,15 @@ export type BattleTimelineEvent = {
 
 export type BattleTimelineEntry =
   | { kind: 'round'; round: number }
-  | { kind: 'event'; side: 'att' | 'def' | 'judge'; event: BattleTimelineEvent }
+  | {
+      kind: 'event'
+      side: 'att' | 'def' | 'judge'
+      event: BattleTimelineEvent
+      key: string
+      update: boolean
+      /** penetrated：由 arbiter.layer.confirmed 合成的 ATTACKER「Ln 已穿透」卡 */
+      variant?: 'penetrated'
+    }
 
 export type BattleLifecycleEvent = {
   type: string
@@ -76,11 +91,16 @@ function average(values: number[]): number | null {
     : null
 }
 
+function percentage(numerator: number, denominator: number): number {
+  return denominator > 0 ? Math.round(numerator / denominator * 10_000) / 100 : 0
+}
+
 export function buildBattleVisualizations(rounds: readonly BattleVisualizationRound[]): BattleVisualizationSummary {
-  const completed = rounds
-    .filter((round) => round.status === 'completed')
+  const visibleRounds = rounds
+    .filter((round) => round.status !== 'pending' || Boolean(round.startedAt))
     .slice()
     .sort((left, right) => left.round - right.round)
+  const completed = visibleRounds.filter((round) => round.status === 'completed')
 
   const classified = completed.filter((round) => (
     typeof round.attackSuccess === 'boolean'
@@ -97,18 +117,25 @@ export function buildBattleVisualizations(rounds: readonly BattleVisualizationRo
   const classifiedRounds = interceptedRounds === null || escapedRounds === null
     ? null
     : interceptedRounds + escapedRounds
+  const payloadRounds = rounds.filter((round) => round.sample != null || round.sourceType != null)
+  const newSourcePayloadCount = payloadRounds.filter((round) => round.sourceType === 'new-source').length
+  const roundCount = visibleRounds.length
   return {
-    points: completed.map((round) => ({
+    points: visibleRounds.map((round) => ({
       round: round.round,
       attacker: roleScore(round.attacker),
       defender: roleScore(round.defender),
     })),
+    roundCount,
+    payloadCount: payloadRounds.length,
+    newSourcePayloadCount,
+    payloadUpdateRate: percentage(newSourcePayloadCount, payloadRounds.length),
     classificationAvailable,
     interceptedRounds,
     escapedRounds,
     classifiedRounds,
-    effectiveInterceptionRate: interceptedRounds !== null && classifiedRounds !== null && classifiedRounds > 0
-      ? interceptedRounds / classifiedRounds * 100
+    effectiveInterceptionRate: interceptedRounds !== null && roundCount > 0
+      ? percentage(interceptedRounds, roundCount)
       : null,
     averageResponseMs: average(completed
       .map((round) => round.durationMs)
@@ -125,38 +152,96 @@ export function buildBattleVisualizations(rounds: readonly BattleVisualizationRo
 }
 
 export function shouldRenderBattleTimelineEvent(type: string, data: Record<string, unknown> = {}): boolean {
-  if (type.startsWith('arbiter.')) return true
-  if (type === 'defense.safe_control') return true
   const stageId = typeof data.stageId === 'string' ? data.stageId.trim().toUpperCase() : ''
-  // The primary timeline is a result timeline: one card per logical stage.
-  // Started events remain available to the role log and 3D animation stream.
-  if (/^A[1-8]$/.test(stageId)) return type === 'attack.stage.completed'
+  // Agent 调用是 Attacker/Defender 与后端实际执行之间的可追溯边界，
+  // 必须进入时间线；同一 correlationId 的 started/completed/failed 会合并到一个框。
+  if (type === 'agent.call.started' || type === 'agent.call.completed' || type === 'agent.call.failed') return true
+  if (/^A[1-8]$/.test(stageId)) {
+    return type === 'attack.stage.started'
+      || type === 'attack.stage.completed'
+      || type === 'attack.stage.failed'
+      || type === 'arbiter.similarity.checked'
+  }
+  if (type.startsWith('arbiter.')) return true
   if (/^L[0-3]$/.test(stageId)) return false
   if (/^L[0-3]-\d+$/.test(stageId)) {
-    return type === 'defense.layer.verdict'
+    return type === 'defense.check.started' || type === 'defense.layer.verdict'
   }
-  return false
+  return type === 'defense.safe_control'
+    || type === 'round.settled'
+    || type === 'battle.completed'
+    || type === 'battle.failed'
+}
+
+function logicalTimelineStage(type: string, stageId: string, data: Record<string, unknown> = {}): string {
+  if (type === 'agent.call.started' || type === 'agent.call.completed' || type === 'agent.call.failed') {
+    return `agent-call:${String(stageId || 'agent').toUpperCase()}:${String(data.correlationId || '')}`
+  }
+  if (/^A[1-8]$/.test(stageId)) return `attacker:${stageId}`
+  if (/^L[0-3]-\d+$/.test(stageId)) return `defender:${stageId}`
+  if (type === 'arbiter.layer.started' || type === 'arbiter.layer.confirmed') {
+    return `arbiter-layer:${stageId || 'unknown'}`
+  }
+  if (type === 'arbiter.similarity.checked') return 'arbiter:A6'
+  if (type === 'arbiter.safe_control.started' || type === 'arbiter.safe_control') return 'arbiter:safe-control'
+  if (type === 'arbiter.safe_control.verdict') return 'arbiter:safe-control-verdict'
+  if (type === 'defense.safe_control') return 'defender:safe-control'
+  if (type === 'arbiter.verdict') return 'arbiter:verdict'
+  if (type === 'arbiter.round.score' || type === 'arbiter.round.scored') return 'arbiter:round-score'
+  if (type === 'round.settled') return 'arbiter:round-settled'
+  if (type === 'battle.completed' || type === 'battle.failed') return 'arbiter:battle-settled'
+  return `${type}:${stageId || 'event'}`
 }
 
 export class LiveBattleTimelineProjector {
   private readonly renderedRounds = new Set<number>()
   private readonly renderedStages = new Set<string>()
+  /** 每回合最终分类：安全对照事件卡只在完整穿透（full-penetration）回合出现 */
+  private readonly roundClassification = new Map<number, string>()
+
+  private isSafeControlEvent(type: string): boolean {
+    return type === 'arbiter.safe_control.started'
+      || type === 'arbiter.safe_control'
+      || type === 'arbiter.safe_control.verdict'
+      || type === 'defense.safe_control'
+  }
 
   push(event: BattleTimelineEvent): BattleTimelineEntry[] {
     const round = Number(event.data.round || 0)
     const entries: BattleTimelineEntry[] = []
+    const classification = typeof event.data.classification === 'string' ? event.data.classification : ''
+    if ((event.type === 'arbiter.verdict' || event.type === 'round.settled') && classification) {
+      this.roundClassification.set(round, classification)
+    }
     if (!shouldRenderBattleTimelineEvent(event.type, event.data)) return entries
+    // 只有完整穿透回合才展示安全对照（启动安全对照 / D-07 结果 / 特征库动作）事件卡
+    if (this.isSafeControlEvent(event.type) && this.roundClassification.get(round) !== 'full-penetration') return entries
     if (round > 0 && !this.renderedRounds.has(round)) {
       this.renderedRounds.add(round)
       entries.push({ kind: 'round', round })
     }
     const stageId = String(event.data.stageId || '').trim().toUpperCase()
-    const stageKey = `${event.battleId}:${round}:${stageId}:${event.type.startsWith('arbiter.') ? event.type : 'stage'}`
-    if (stageId && this.renderedStages.has(stageKey)) return entries
-    if (stageId) this.renderedStages.add(stageKey)
+    const stageKey = `${event.battleId}:${round}:${logicalTimelineStage(event.type, stageId, event.data)}`
+    const update = this.renderedStages.has(stageKey)
+    this.renderedStages.add(stageKey)
+    const agentRole = String(event.data.agentRole || '').trim().toLowerCase()
     const side = event.type.startsWith('arbiter.') || stageId === 'A6' ? 'judge'
+      : event.type === 'round.settled' || event.type === 'battle.completed' || event.type === 'battle.failed' ? 'judge'
+      : event.type.startsWith('agent.call.') && agentRole === 'defender' ? 'def'
+      : event.type.startsWith('agent.call.') && agentRole === 'attacker' ? 'att'
       : /^A[1-8]$/.test(stageId) ? 'att' : 'def'
-    entries.push({ kind: 'event', side, event })
+    entries.push({ kind: 'event', side, event, key: stageKey, update })
+    // 层确认卡之后追加 ATTACKER「Ln 已穿透」卡：payload 来到下一层 / 融入 Core
+    if (event.type === 'arbiter.layer.confirmed') {
+      entries.push({
+        kind: 'event',
+        side: 'att',
+        event,
+        key: `${stageKey}:penetrated`,
+        update: false,
+        variant: 'penetrated',
+      })
+    }
     return entries
   }
 }
@@ -225,6 +310,9 @@ export class LiveBattleLifecycleProjector {
     }
     if (event.type === 'defense.safe_control') {
       return [lifecycleEvent(event, 'safe_control', event.data, stageId, event.status)]
+    }
+    if (event.type === 'arbiter.safe_control.verdict') {
+      return [lifecycleEvent(event, 'safe_control_verdict', event.data, stageId, event.status)]
     }
     if (event.type === 'attack.sample.generated' && round > 0) {
       this.pendingSamples.set(key, event)

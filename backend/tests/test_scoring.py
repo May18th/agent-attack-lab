@@ -498,7 +498,7 @@ def test_match_aggregate_averages_round_snapshots_and_excludes_system_void() -> 
             continue
         events.append(
             _event(
-                "arbiter.round.scored",
+                "arbiter.round.score",
                 {
                     "round": number,
                     "classification": "scored",
