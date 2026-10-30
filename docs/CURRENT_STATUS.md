@@ -10,9 +10,20 @@
 - 部署脚本的服务 active、release 工作目录、release `PYTHONPATH`、本地健康接口和公网健康接口检查均通过。公网只读复验 `/health`、`/openapi.json`、`/auth/session` 均为 HTTP 200；无密钥 `/metrics` 为 401，`/rpc` GET 为 405，CORS 预检为 200，公开前端来源为 `https://yuanyiagentzhandui.cn` 并允许凭据。
 - Partner mTLS 只读复验（2026-10-18 21:29 左右）：attack、defense `/health` 均 HTTP 200；真实未加载客户端证书的 `/rpc` 均 HTTP 403。加载 Leader clientAuth 证书和梧桐 trust bundle 后，两个 Partner 的 AIP Start 均返回 `awaiting-completion`，Complete 均返回 `completed`，结果结构分别包含攻击 `samples` 和防守 `caught/risks/fixed`。本轮未创建生产战局。
 - Discovery 只读复验（2026-10-18 21:30-21:31）：Leader、attack、defense 三个当前 AIC 均返回 `active=true`，endpoint 分别为 `https://api.yuanyiagentzhandui.cn/rpc`、`https://attack.yuanyiagentzhandui.cn/rpc`、`https://defense.yuanyiagentzhandui.cn/rpc`，传输均为 JSONRPC，安全方案均为 mTLS。Discovery 查询偶发读超时，重试后按技能查询均得到对应记录；该偶发超时不作为当前服务不可用结论。
-- 当前不接入外部 LLM/API；攻击、防守仍使用规则兜底。后端全量测试（`backend` 目录）刚刚执行为 `127 passed, 5 skipped, 1 warning`，警告为既有 Starlette/httpx 弃用提示。
+- **（已被推翻，见下文「LLM 接入现状」）** 截至 2026-10-18 22:00 的观测为"不接入外部 LLM/API，攻击、防守使用规则兜底"。2026-10-30 复核确认生产实际已接入模型，本条仅作历史留存。后端全量测试（`backend` 目录）当时为 `127 passed, 5 skipped, 1 warning`，警告为既有 Starlette/httpx 弃用提示。
 - 本地隔离业务验收已完成：空白 topic=422；low/mid/high 均创建=201、最终状态 `completed`，事件数分别为 10/13/16；删除均=204，删除后战局详情及事件查询均=404，临时隔离库剩余 0 条。未访问生产写接口。
 - Cloudflare Worker 已改为手动发布：2026-10-18 23:18（UTC+8）在账户 `434bfd...` 使用 Worker API Token 部署前端，版本 ID 为 `59232d04-8269-42a7-b755-dc678b0821d2`，直达地址为 `https://agent-attack-lab.2166883736.workers.dev`。Node.js 22、`npm run build` 和 `npx wrangler deploy` 均成功；Token 未写入仓库或服务器文件。正式前端域名、Pages 域名和 Worker 直达地址只读请求均返回 HTTP 200。
+
+## LLM 接入现状（2026-10-30）
+
+- 模型定位、六个角色、完整环境变量、降级链路与安全边界已单独整理到 [`LLM_INTEGRATION_STATUS.md`](LLM_INTEGRATION_STATUS.md)。本次为文档整理与代码修复，未改动任何生产配置。
+- **生产已接入模型（定论）**：`ExecStart` 走 `scripts/start-service.sh`，`.env` 已 `export` 进进程，`/proc/<MainPID>/environ` 中 `AGENT_LLM_MODEL=deepseek-chat`、`AGENT_LLM_BASE_URL`、`AGENT_LLM_API_KEY` 及三个 `*_ENABLED` 均非空。公开只读 `/battles?limit=100` 返回 70 场战局，69 场 `agentSource=acp-llm`，最近一场 `2026-10-30T01:31:56Z`；出现 `verdict=attacker_won`，该判定要求靶标验证证据，说明受控靶标模型同样在调用。上方 2026-10-18 的"不接入"观测已被本条推翻。
+- **日志不可用于判断模型使用**：`start-service.sh` 原以 `--log-level warning` 启动，压掉 access log 与应用 INFO 日志，`model_call_completed` 等记录不落盘。`journalctl` 查得 0 条属日志级别所致，本轮曾据此误判生产未接入，已由上述证据纠正。现改为 `--log-level info --no-access-log`，并同步 `start-agents.ps1`、`scripts/admin-workbench.ps1`、`deploy/agent-attack-lab-preview.service`；**尚未部署，重启服务后生效**。
+- 修复 `llm_runtime._selected_prefix()` 的角色前缀半配问题：原角色前缀只填一个变量就会切到该前缀并判定为未配置，静默吃掉已配好的 `AGENT_LLM_*`；现改为三项齐全才使用角色前缀，否则回落全局并输出一次 `role_llm_config_incomplete` warning。
+- 新增 `AGENT_ATTACKER_LLM_ENABLED` / `AGENT_DEFENDER_LLM_ENABLED`（缺省开启，设 0 走规则），替代此前"故意填坏角色变量"的隐式关闭方式。
+- `websocket_read_auth_allowed()` 统一 WS 读鉴权，与 HTTP 的 `read_auth_dependency` 使用同一套条件，并对浏览器会话额外校验 `Origin`。生产当前 WS 端点返回 404（该路由未在部署版本暴露），属潜在缺陷修复而非现存漏洞。
+- `arbiter.py` 的 `except OverflowError, ValueError:` 是 Python 3.14 PEP 758 的合法写法（`requires-python = ">=3.14"`），**不是语法错误**，此前误判已纠正；现已改为显式元组，仅为了不再依赖该新语法。
+- 本次全量测试 `231 passed, 5 skipped`（exit=0）。
 
 ## 本地状态（2026-10-15，历史）
 

@@ -67,7 +67,7 @@ try {
         & (Join-Path $ProjectRoot 'scripts\amp-env.ps1') -Role $Agent.Name
         $process = Start-Process -FilePath $Python -ArgumentList @(
             '-m', 'uvicorn', $Agent.App,
-            '--host', '127.0.0.1', '--port', "$($Agent.Port)", '--log-level', 'warning'
+            '--host', '127.0.0.1', '--port', "$($Agent.Port)", '--log-level', 'info', '--no-access-log'
         ) -WorkingDirectory $ProjectRoot -WindowStyle Hidden -PassThru `
             -RedirectStandardOutput (Join-Path $LogDirectory "$($Agent.Name).out.log") `
             -RedirectStandardError (Join-Path $LogDirectory "$($Agent.Name).err.log")

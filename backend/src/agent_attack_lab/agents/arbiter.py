@@ -106,7 +106,9 @@ def _validate_model_result(
         raise LLMError("arbiter returned an invalid confidence")
     try:
         confidence_value = float(confidence)
-    except OverflowError, ValueError:
+    # 显式元组写法，不依赖 Python 3.14 的 PEP 758（允许 except A, B: 省略括号），
+    # 这样在 3.13 及更早的解释器上也能直接解析。
+    except (OverflowError, ValueError):
         raise LLMError("arbiter returned an invalid confidence") from None
     if not math.isfinite(confidence_value) or not 0 <= confidence_value <= 1:
         raise LLMError("arbiter confidence is outside the allowed range")

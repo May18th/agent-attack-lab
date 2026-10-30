@@ -7,7 +7,12 @@ from typing import Any
 from agent_attack_lab.agent_logic import AttackRequest, attack
 from agent_attack_lab.agents.common import create_agent_app
 from agent_attack_lab.agents.knowledge import trusted_attacker_context
-from agent_attack_lab.agents.llm_runtime import LLMError, complete_json, is_configured
+from agent_attack_lab.agents.llm_runtime import (
+    LLMError,
+    complete_json,
+    is_configured,
+    role_enabled,
+)
 
 logger = logging.getLogger("agent_attack_lab.attacker")
 _TEST_VARIATIONS = {
@@ -31,7 +36,7 @@ def _local(payload: dict[str, Any], mode: str) -> dict[str, Any]:
 
 async def process(payload: dict[str, Any]) -> dict[str, Any]:
     request = AttackRequest.model_validate(payload)
-    if not is_configured(role="attacker"):
+    if not role_enabled("attacker") or not is_configured(role="attacker"):
         return _local(request.model_dump(), "local-rule")
 
     try:

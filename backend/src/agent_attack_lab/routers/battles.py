@@ -787,13 +787,9 @@ async def event_stream(
 
 @router.websocket("/ws/battles/{battle_id}")
 async def battle_websocket(websocket: WebSocket, battle_id: str) -> None:
-    if config.protect_read_routes and config.api_key:
-        supplied_key = websocket.headers.get("x-api-key") or websocket.query_params.get(
-            "api_key"
-        )
-        if supplied_key != config.api_key:
-            await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
-            return
+    if not security.websocket_read_auth_allowed(websocket):
+        await websocket.close(code=4401, reason="缺少或无效的 API 密钥")
+        return
     if await asyncio.to_thread(state.battle_store.get, battle_id) is None:
         await websocket.close(code=4404, reason="战局不存在")
         return
