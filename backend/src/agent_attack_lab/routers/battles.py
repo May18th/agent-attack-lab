@@ -322,14 +322,11 @@ async def create_battle(
             ) = await battle_runner.tracked_agent_call(
                 battle_id=battle_id,
                 role="defender",
-                invoke=lambda correlation_id, current_sample=sample, memory=candidate_library.agent_memory(
-                    battle_id=battle_id,
-                    role="defender",
-                    round_index=index,
-                    cross_enabled=payload.crossMemory,
-                ): (
+                invoke=lambda correlation_id, current_sample=sample, memory=candidate_library.agent_memory(battle_id=battle_id, role="defender", round_index=index, cross_enabled=payload.crossMemory): (
                     battle_runner.battle_defend(
-                        current_sample, correlation_id=correlation_id, candidate_memory=memory
+                        current_sample,
+                        correlation_id=correlation_id,
+                        candidate_memory=memory,
                     )
                 ),
                 add_event=add_event,
@@ -467,8 +464,7 @@ async def create_battle(
             )
             submission_id = battle_timeline.submission_id_for(sample, index)
             if not any(
-                event.get("type")
-                in {"arbiter.round.score", "arbiter.round.scored"}
+                event.get("type") in {"arbiter.round.score", "arbiter.round.scored"}
                 and (event.get("data") or {}).get("round") == index
                 and (event.get("data") or {}).get("submissionId") == submission_id
                 and (event.get("data") or {}).get("rulesVersion") == SCORING_VERSION
@@ -512,9 +508,7 @@ async def create_battle(
                             "scored" if score_complete else "unresolved"
                         ),
                         "featureAction": feature_action["featureAction"],
-                        "featureActionReason": feature_action[
-                            "featureActionReason"
-                        ],
+                        "featureActionReason": feature_action["featureActionReason"],
                         "scores": current_score.get("scores", {})
                         if current_score
                         else {},
@@ -1186,7 +1180,9 @@ def get_cross_memory_library() -> dict[str, Any]:
     ),
     tags=["战局接口"],
 )
-def set_cross_memory_state(payload: CrossMemoryStateRequest, request: Request) -> dict[str, Any]:
+def set_cross_memory_state(
+    payload: CrossMemoryStateRequest, request: Request
+) -> dict[str, Any]:
     security.check_browser_or_api_auth(request)
     updated = candidate_library.set_battle_flag(
         payload.battleId, enabled=payload.enabled
