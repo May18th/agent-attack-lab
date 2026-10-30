@@ -299,6 +299,15 @@ class _Bar(Flowable):
         canvas.setFont(FONT_NAME, 9.2)
         canvas.setFillColor(INK)
         canvas.drawString(0, 5, _clip(self.label, 26))
+        if self.value <= 0:
+            # 0 不要画一条空心轨道——看起来像渲染坏了。用一小段短横表示"没有"。
+            canvas.setStrokeColor(RULE)
+            canvas.setLineWidth(1.2)
+            canvas.line(label_w, 7.5, label_w + 10, 7.5)
+            canvas.setFillColor(MUTED)
+            canvas.setFont(FONT_NAME, 8.8)
+            canvas.drawRightString(self.width, 5, "0")
+            return
         canvas.setFillColor(FILL)
         canvas.roundRect(label_w, 3, bar_w, 9, 4.5, stroke=0, fill=1)
         if ratio > 0:
@@ -583,7 +592,11 @@ def build_survey_pdf(
         rightMargin=18 * mm,
         topMargin=18 * mm,
         bottomMargin=22 * mm,
-        title="用户调研反馈报告",
+        title={
+            "all": "用户调研反馈报告",
+            "summary": "用户调研反馈报告（汇总）",
+            "detail": "用户调研反馈报告（明细）",
+        }[part],
         author="智能体攻防实验室",
     )
     frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="body")
@@ -596,13 +609,9 @@ def build_survey_pdf(
     )
     span = f"{times[0][:10]} 至 {times[-1][:10]}" if times else "—"
 
-    kicker = {"all": "", "summary": "汇总版 · SUMMARY", "detail": "明细版 · DETAIL"}[
-        part
-    ]
-    story: list[Any] = []
-    if kicker:
-        story += [Paragraph(f"<b>{kicker}</b>", styles["kicker"]), Spacer(1, 4)]
-    story += [
+    # 汇总 / 明细的区分放在页脚（见上方 doc.title），正文顶部不再压一枚悬浮标签，
+    # 这样与之前确认过的样式样例保持一致。
+    story: list[Any] = [
         Paragraph("用户调研反馈报告", styles["title"]),
         Spacer(1, 6),
         Paragraph(
@@ -677,15 +686,18 @@ def build_survey_pdf(
                     story.append(Paragraph(title, styles["body"]))
                     story.append(Spacer(1, 10))
                     continue
-                # 只把「标题 + 前两条」绑在一起，避免标题孤立在页尾；
-                # 剩下的条允许跨页，这样不会因为整块塞不下而在页底留一大片空白。
+                # 整块保持：拆开会让续行失去题目，读者看不出那几行属于哪一问；
+                # 代价是页底可能留白，这个取舍比「无标题的孤立行」可接受。
                 story.append(
                     KeepTogether(
-                        [Paragraph(title, styles["body"]), Spacer(1, 3), *bars[:2]]
+                        [
+                            Paragraph(title, styles["body"]),
+                            Spacer(1, 3),
+                            *bars,
+                            Spacer(1, 10),
+                        ]
                     )
                 )
-                story.extend(bars[2:])
-                story.append(Spacer(1, 10))
 
             ranking = _ranking_avg(rows)
             if ranking:
