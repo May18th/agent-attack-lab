@@ -1395,8 +1395,9 @@ var battle3d=(function(){
             if(i===3){
               var layer=shells[3];
               if(layer){
-                layer.userData.hit=1;layer.scale.setScalar(1.08);
-                tween(.7,function(k){layer.scale.setScalar(1.08+.12*Math.sin(k*Math.PI));},function(){layer.scale.setScalar(1);refreshShells();});
+                // 融入脉冲必须叠加在「已膨胀」的基准上，否则会把 L3 膨胀效果重置回 1。
+                layer.userData.hit=1;
+                tween(.7,function(k){layer.scale.setScalar(shellBase(3)+.06*Math.sin(k*Math.PI));},function(){layer.scale.setScalar(shellBase(3));refreshShells();});
               }
             }
             disposeObj(s.mesh);s.consumed=true;
@@ -3589,8 +3590,16 @@ var battle3d=(function(){
     var newSource=0,roundRes=[];
     setStageCounts({created:1,attacks:0,checks:0,fixes:0});
 
-    /* 回放节奏：仅用于 mock 事件发生器；3D 只消费事件，不依赖这些计时 */
-    function at(ms,fn){setTimeout(function(){if(gen!==demoGen)return;fn();},ms);}
+    /* 回放节奏：仅用于 mock 事件发生器；3D 只消费事件，不依赖这些计时。
+       节奏系数：勾选「慢速播放」或设置 window.__demoPace 后，卡片间隔等比拉长，
+       给 3D 动画（粒子攻击/球壳破碎/融核）留出完整播放时间；系数只放大间隔、不改变先后顺序。 */
+    function demoPace(){
+      var k=Number(window.__demoPace)||1;
+      var slow=document.getElementById('slowPlaybackToggle');
+      if(slow&&slow.checked)k=Math.max(k,1.9);
+      return k>0?k:1;
+    }
+    function at(ms,fn){setTimeout(function(){if(gen!==demoGen)return;fn();},ms*demoPace());}
     function bus(type,round,stageId,payload,status){
       BattleEventBus.emit({type:type,round:round,stageId:stageId||'',payload:payload||{},status:status||'',source:'mock',mock:true});
     }
