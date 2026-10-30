@@ -102,6 +102,7 @@ jobs:
           cd "$backend_dir" || exit 0
           PYTHONPATH="$backend_dir/src" "$py" scripts/probe_pdf_export.py --part summary --base64
 
+      - name: 近期异常日志
         shell: bash
         run: |
           set +e
@@ -112,5 +113,3 @@ jobs:
             | grep -iE 'export\.pdf|PdfFont|reportlab|ModuleNotFound|Traceback|没有可用|字体' \
             | tail -40
           echo "(匹配结束)"
-          echo "== 末 30 行 =="
-          journalctl --user -u agent-attack-lab-api --since "-120min" --no-pager 2>/dev/null | tail -30
