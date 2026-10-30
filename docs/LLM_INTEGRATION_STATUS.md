@@ -153,11 +153,11 @@ cd D:\梧桐\backend
 - 攻击、防守已补 `AGENT_ATTACKER_LLM_ENABLED` / `AGENT_DEFENDER_LLM_ENABLED`，缺省开启以保证现有部署行为不变，`tests/test_llm_agents.py` 覆盖三类情形（缺省调模型、设 0 走规则、设 1 且配置完整调模型）。后端全量测试 `307 passed, 5 skipped`（exit=0）。
 - 此前"填坏角色变量来关闭单角色模型"的隐式用法随半配修复一起失效，现由上述两个开关正式替代。
 - **可观测性：日志级别已修并在生产生效（2026-10-30 验证）**。`start-service.sh` 原用 `--log-level warning`，模型调用日志全部不落盘；现改为 `--log-level info --no-access-log`，同一参数在 `start-agents.ps1`、`scripts/admin-workbench.ps1`、`deploy/agent-attack-lab-preview.service` 同步，`tests/test_start_service.py` 钉住这两个参数。
-  生产验证三条：进程 `cmdline` 三个服务均为 `--log-level info --no-access-log`；`journalctl` 出现 `INFO: Application startup complete`；release 目录中只有当前 release（`b585460`）的脚本带新参数，旧 release 保持 `warning`。
+  生产验证三条：进程 `cmdline` 三个服务均为 `--log-level info --no-access-log`；`journalctl` 出现 `INFO: Application startup complete`；release 目录中只有当时在跑的 release（`b585460`）脚本带新参数，旧 release 保持 `warning`。
 
 - **只改 `--log-level` 不够：应用日志还需显式初始化（2026-10-30 补修）**。uvicorn 的 `--log-level` 只作用于 `uvicorn` / `uvicorn.error` / `uvicorn.access` 三个 logger，不改变根 logger 的级别，也不给根 logger 装 handler。`service.py` 此前只写了 `logger = logging.getLogger("agent_attack_lab")`，既没设级别也没装 handler，于是 api 进程里的 `logger.info` 全被根 logger 的默认 `WARNING` 丢掉。
   实测症状：同一时刻 `attacker` 与 `defender` 各记录 **17 条** `model_call_completed`，而 **api 记录 0 条**——尽管该战局 4 轮全部 `verificationMode=live`、每轮靶标耗时 1.7~2.5 秒，说明靶标模型确实被调用。差异来自 `agents/common.py` 里的 `logging.basicConfig(level=INFO)`：attacker / defender 导入它时顺带把日志打开了，api 没有等价调用。
-  现新增 `logging_setup.configure_logging()`：根 logger 无 handler 时装一个，并把 `agent_attack_lab` 包 logger 调到 INFO；**不改根 logger 级别**，避免把 httpx / openai 的 INFO 噪音一起放出来。`service.py` 与 `agents/common.py` 均改为调用它，`tests/test_logging_setup.py` 覆盖 6 种情形。本地后端的全量测试为 `332 passed, 5 skipped`（exit=0）。
+  现新增 `logging_setup.configure_logging()`：根 logger 无 handler 时装一个，并把 `agent_attack_lab` 包 logger 调到 INFO；**不改根 logger 级别**，避免把 httpx / openai 的 INFO 噪音一起放出来。`service.py` 与 `agents/common.py` 均改为调用它，`tests/test_logging_setup.py` 覆盖 6 种情形。本地后端的全量测试为 `338 passed, 5 skipped`（exit=0，rebase 到 `cc78737` 后的基线）。
 
 - **一个排查口径**：判断"部署是否生效"优先读 `/proc/$(MainPID)/cmdline`，它不受日志级别、时间窗口、journal 权限影响；判断"模型是否被调用"看业务数据（`verificationMode`、`elapsedMs`、`attackerOut.agentSource`），日志只能证明"有没有打印"。
 - **本机开发环境：配置完整，历史跑通过，近期无调用记录**。2026-10-30 核对 `backend/.env`，已配置全局 `AGENT_LLM_BASE_URL=https://api.deepseek.com/v1`、`AGENT_LLM_MODEL=deepseek-chat`、`AGENT_LLM_API_KEY`（非空）以及三个 `*_ENABLED=1`，按配置判定六个角色全部为「已启用」，且全部走全局前缀。
