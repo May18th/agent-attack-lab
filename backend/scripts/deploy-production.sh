@@ -213,9 +213,21 @@ FONTS
   printf 'WARNING: PDF font unavailable; export.pdf will keep returning 503 until a CJK font exists\n' >&2
 }
 
+verify_pdf_export() {
+  # 部署即验证：缺依赖或缺字体在这里就暴露，而不是等用户点「导出」才 503。
+  local output
+  if output=$(cd "$release_backend" && PYTHONPATH="$release_backend/src" "$python_bin" -c \
+    'from agent_attack_lab import survey_pdf; rows=[{"q1_role":"自检","q2_pain_point":"自检","q3_ranking":["A","B","C","D"],"q4_can_judge":"能，证据链清晰","q5_willingness":"敢，有授权就敢用","q6_reuse_score":5}]; print("pdf-bytes", len(survey_pdf.build_survey_pdf(rows, part="summary")))' 2>&1); then
+    printf 'PDF export self-check: %s\n' "$output"
+  else
+    printf 'WARNING: PDF export self-check failed: %s\n' "$output" >&2
+  fi
+}
+
 ensure_amp_dependency
 ensure_pdf_dependency
 ensure_pdf_font
+verify_pdf_export
 (cd "$release_backend" && "$python_bin" -m alembic -c alembic.ini upgrade head)
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
