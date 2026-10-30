@@ -3134,6 +3134,9 @@ var battle3d=(function(){
     syncMemoryClearState();renderAllCandidateLibraries();
   }
   var memToggle=document.getElementById('memToggle'),memClear=document.getElementById('memClear');
+  /* 注意：remoteLibraryState 必须在下面首次 renderAllCandidateLibraries() 之前完成初始化，
+     否则 renderCandidateLibrary 读取 remoteLibraryState.battleId 会抛错，中断整段脚本初始化。 */
+  var remoteLibraryState={battleId:null,crossMemory:false,battle:{attacker:[],defender:[]},cross:{attacker:[],defender:[]},battleCount:0,pollTimer:null};
   function syncMemoryClearState(){if(memClear)memClear.disabled=!(memToggle.checked||hasStoredCrossBattleMemory());}
   function markCrossBattleMemoryEnabled(){if(hasStoredCrossBattleMemory())return;try{localStorage.setItem(CROSS_BATTLE_MEMORY_KEY,JSON.stringify({version:1,everEnabled:true,battleCount:0,updatedAt:new Date().toISOString()}));}catch(e){}}
   memToggle.addEventListener('change',function(){if(this.checked)markCrossBattleMemoryEnabled();syncMemoryClearState();renderAllCandidateLibraries();syncRemoteCrossState(this.checked);showToast(this.checked?'跨局记忆：Attacker 与 Defender 同时开启':'跨局记忆：关闭；已有候选数据保留，后续回合停止写入跨局库');});
@@ -3164,7 +3167,7 @@ var battle3d=(function(){
      开始攻防会在后端创建真实智能体战局：每回合攻防结算后，Attacker 策略候选与
      Defender 特征候选由后端写入候选库（一局记忆按战局隔离，跨局记忆受开关控制），
      前端轮询拉取并渲染，形成智能体逐回合迭代学习的前后端闭环。 */
-  var remoteLibraryState={battleId:null,crossMemory:false,battle:{attacker:[],defender:[]},cross:{attacker:[],defender:[]},battleCount:0,pollTimer:null};
+  /* remoteLibraryState 已在上方 renderAllCandidateLibraries() 之前声明，避免 TDZ 空引用 */
   function normalizeRemoteEntries(list){return (Array.isArray(list)?list:[]).map(function(item){return {round:item.round,theme:item.topic,resultLabel:item.resultLabel,sourceType:item.sourceType,createdAt:item.createdAt,fields:item.fields||{}};});}
   function applyRemoteBattleLibrary(data){if(!data)return;remoteLibraryState.battleId=data.battleId||remoteLibraryState.battleId;remoteLibraryState.crossMemory=!!data.crossMemory;remoteLibraryState.battle={attacker:normalizeRemoteEntries(data.attacker),defender:normalizeRemoteEntries(data.defender)};}
   function applyRemoteCrossLibrary(data){if(!data)return;remoteLibraryState.cross={attacker:normalizeRemoteEntries(data.attacker),defender:normalizeRemoteEntries(data.defender)};remoteLibraryState.battleCount=Number(data.battleCount||0);}
