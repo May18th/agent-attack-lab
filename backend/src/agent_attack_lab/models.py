@@ -90,6 +90,24 @@ class BattleRecord(BaseModel):
     stats: dict[str, int] | None = None
 
 
+class BattleSummaryRecord(BaseModel):
+    """Metadata-only battle row for list pages.
+
+    列表页只渲染主题、难度、状态和时间；把每场战局的逐轮样本与防守结果
+    一并序列化会让单页响应膨胀到近 1MB。需要明细的调用方走
+    ``GET /battles/{id}``。
+    """
+
+    id: str
+    code: str | None = None
+    difficulty: Literal["low", "mid", "high"]
+    topic: str
+    status: Literal["pending", "running", "completed", "failed"]
+    rounds: int = 3
+    verdict: Literal["attacker_won", "defender_won", "undetermined"] | None = None
+    createdAt: str
+
+
 class BattleEvent(BaseModel):
     id: str
     battleId: str

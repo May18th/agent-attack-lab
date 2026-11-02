@@ -156,11 +156,30 @@ def dashboard_summary() -> dict[str, int]:
     cached = state.redis_cache.get_json(cache_key)
     if isinstance(cached, dict):
         return {str(key): int(value) for key, value in cached.items()}
+    # Redis 不是必装件：未配置时上一行恒返回 None，于是后台每次加载都要
+    # 全表遍历战局 JSON 与 agent 调用事件。这里补一层进程内缓存，缓存条目
+    # 绑定「存储实例 + 写入版本号」，换库或任何战局/事件落库都会立即失效。
+    now = time.monotonic()
+    store = state.battle_store
+    revision = store.revision
+    with state.dashboard_summary_cache_lock:
+        local = state.dashboard_summary_cache
+        if local and local[0] > now and local[1] is store and local[2] == revision:
+            return dict(local[3])
     result = {
         **state.battle_store.dashboard_summary(),
         "ruleLibraryCaseCount": local_rule_case_count(),
         "owaspLlmRuleCount": len(OWASP_LLM_CATEGORIES),
     }
+    # 计算期间如果有新战局落库，就别把这份旧快照记成"新鲜"。
+    if store is state.battle_store and store.revision == revision:
+        with state.dashboard_summary_cache_lock:
+            state.dashboard_summary_cache = (
+                now + state.DASHBOARD_SUMMARY_CACHE_TTL_SECONDS,
+                store,
+                revision,
+                result,
+            )
     state.redis_cache.set_json(cache_key, result)
     return result
 

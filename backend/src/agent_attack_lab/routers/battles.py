@@ -52,6 +52,7 @@ from agent_attack_lab.models import (
     BattleEvent,
     BattleRecord,
     BattleRequest,
+    BattleSummaryRecord,
     CrossMemoryStateRequest,
 )
 from agent_attack_lab.scoring import SCORING_VERSION, score_battle_rounds
@@ -736,16 +737,29 @@ def list_battles(
     difficulty: Literal["low", "mid", "high"] | None = Query(default=None),
     status: str | None = Query(default=None, max_length=30),
     q: str | None = Query(default=None, max_length=200, description="按主题或编号搜索"),
-) -> list[BattleRecord]:
+    fields: Literal["full", "summary"] = Query(
+        default="full",
+        description=(
+            "summary 只返回列表页需要的元数据，不序列化逐轮样本与防守结果；"
+            "需要 attackerOut/defenderOut 时保持默认 full 或改查 /battles/{id}。"
+        ),
+    ),
+) -> list[BattleRecord] | list[BattleSummaryRecord]:
     response.headers["X-Total-Count"] = str(
         state.battle_store.count(difficulty=difficulty, status=status, query=q)
     )
-    return [
-        BattleRecord.model_validate(item)
-        for item in state.battle_store.list(
-            limit=limit, offset=offset, difficulty=difficulty, status=status, query=q
-        )
-    ]
+    include_outputs = fields == "full"
+    rows = state.battle_store.list(
+        limit=limit,
+        offset=offset,
+        difficulty=difficulty,
+        status=status,
+        query=q,
+        include_outputs=include_outputs,
+    )
+    if include_outputs:
+        return [BattleRecord.model_validate(item) for item in rows]
+    return [BattleSummaryRecord.model_validate(item) for item in rows]
 
 
 @router.get(
