@@ -863,7 +863,7 @@ class BattleStore:
             return None
         try:
             score = json.loads(row["score_json"])
-        except TypeError, json.JSONDecodeError:
+        except (TypeError, json.JSONDecodeError):
             return None
         return score if isinstance(score, dict) else None
 
@@ -882,7 +882,7 @@ class BattleStore:
         for row in rows:
             try:
                 score = json.loads(row["score_json"])
-            except TypeError, json.JSONDecodeError:
+            except (TypeError, json.JSONDecodeError):
                 continue
             if isinstance(score, dict):
                 scores[str(row["battle_id"])] = score

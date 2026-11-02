@@ -84,7 +84,7 @@ async def _aip_start(command: TaskCommand, task: TaskResult | None) -> TaskResul
             parsed = json.loads(_command_text(command))
             if isinstance(parsed, dict):
                 payload = parsed
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             payload = {"topic": _command_text(command)}
 
     action = command_params.get("action")

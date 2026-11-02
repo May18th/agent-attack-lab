@@ -86,7 +86,7 @@ def _load() -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return _empty_document()
-    except OSError, json.JSONDecodeError:
+    except (OSError, json.JSONDecodeError):
         return _empty_document()
     if not isinstance(value, dict):
         return _empty_document()

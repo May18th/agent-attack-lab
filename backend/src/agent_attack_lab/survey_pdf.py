@@ -370,7 +370,7 @@ def _score_dist(rows: list[dict[str, Any]]) -> list[tuple[str, int]]:
     for row in rows:
         try:
             score = int(row.get("q6_reuse_score"))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             continue
         if 1 <= score <= 5:
             dist[score] += 1
@@ -382,7 +382,7 @@ def _avg_score(rows: list[dict[str, Any]]) -> float | None:
     for row in rows:
         try:
             scores.append(int(row.get("q6_reuse_score")))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             continue
     return sum(scores) / len(scores) if scores else None
 

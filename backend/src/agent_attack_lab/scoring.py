@@ -69,7 +69,7 @@ def _explicit_round_truth(
     def add(number: Any, data: Any) -> None:
         try:
             round_number = int(number)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return
         if round_number not in truth or not isinstance(data, dict):
             return
@@ -98,7 +98,7 @@ def _arbiter_classifications(
         data = _event_data(event)
         try:
             number = int(data.get("round"))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             continue
         classification = data.get("classification")
         if number in range(1, round_count + 1) and isinstance(classification, str):
@@ -120,7 +120,7 @@ def _attacker_layer_effect_points(
         data = _event_data(event)
         try:
             number = int(data.get("round"))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             continue
         layer = data.get("layer")
         if (
@@ -164,7 +164,7 @@ def _round_aggregate(
         data = _event_data(event)
         try:
             number = int(data.get("round"))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             continue
         if (
             event.get("type") in {"arbiter.round.score", "arbiter.round.scored"}
@@ -242,7 +242,7 @@ def _safe_control_points(
     def add(number: Any, value: Any) -> None:
         try:
             round_number = int(number)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return
         if round_number not in range(1, round_count + 1):
             return
@@ -384,7 +384,7 @@ def score_battle(
                 if round_validity in {"invalid", "unresolved", "system-void"}:
                     try:
                         invalid_rounds.add(int(data.get("round")))
-                    except TypeError, ValueError:
+                    except (TypeError, ValueError):
                         pass
                     continue
                 if classification in {
@@ -394,7 +394,7 @@ def score_battle(
                 }:
                     try:
                         valid_rounds.add(int(data.get("round")))
-                    except TypeError, ValueError:
+                    except (TypeError, ValueError):
                         continue
             valid_rounds.difference_update(invalid_rounds)
             eligible_durations: list[float] = []
@@ -874,7 +874,7 @@ def score_battle_rounds(
         value = _event_data(event).get("round")
         try:
             number = int(value)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             continue
         if number > 0:
             round_numbers.add(number)

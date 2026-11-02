@@ -885,7 +885,7 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         value = event.get("data", {}).get("round")
         try:
             number = int(value)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return None
         return number if number > 0 else None
 
@@ -1030,7 +1030,7 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
             item["durationMs"] = max(
                 0, round((finished - started).total_seconds() * 1000)
             )
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             item["durationMs"] = None
 
     round_scores = {item["round"]: item for item in score_battle_rounds(record, events)}
@@ -1043,7 +1043,7 @@ def get_battle_rounds(battle_id: str) -> dict[str, Any]:
         ):
             try:
                 score_snapshots.setdefault(int(data.get("round")), data)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 continue
     for item in grouped.values():
         duration_from_timestamps(item)
