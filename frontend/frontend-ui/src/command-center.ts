@@ -355,6 +355,8 @@ function installSessionDialog() {
     updateSessionControls(state.sessionEnabled, false)
     element<HTMLDivElement>('agentLoginMask').classList.remove('open')
     element<HTMLInputElement>('agentLoginPassword').value = ''
+    // 游客同样可以查看只读数据（统计、历史战局、外部案例）；创建战局仍由 startBattle 拦截。
+    void Promise.all([loadSummary(), loadHistory(0), checkHealth()]).catch(() => {})
     if (state.sessionEnabled) {
       showToast('游客浏览模式：准备和创建战局功能已禁用')
     } else {
@@ -436,15 +438,21 @@ async function checkHealth() {
 }
 
 async function loadSummary() {
+  const dash = (value: unknown) => (typeof value === 'number' ? String(value) : '—')
   try {
     const summary = await json<Summary>('/dashboard/summary')
-    element('statBattles').textContent = String(summary.totalBattles ?? 0)
-    element('statCases').textContent = String(summary.ruleLibraryCaseCount ?? 0)
-    element('statSamples').textContent = String(summary.sampleCount ?? 0)
-    element('statCaught').textContent = String(summary.ruleHitCount ?? 0)
-    element('statRisks').textContent = String(summary.riskCount ?? 0)
-    element('statAgentBattles').textContent = String(summary.acpCallBattles ?? 0)
-  } catch (error) { showToast(`统计加载失败：${errorText(error)}`) }
+    element('statBattles').textContent = dash(summary.totalBattles)
+    element('statCases').textContent = dash(summary.ruleLibraryCaseCount)
+    element('statSamples').textContent = dash(summary.sampleCount)
+    element('statCaught').textContent = dash(summary.ruleHitCount)
+    element('statRisks').textContent = dash(summary.riskCount)
+    element('statAgentBattles').textContent = dash(summary.acpCallBattles)
+  } catch (error) {
+    for (const id of ['statBattles', 'statCases', 'statSamples', 'statCaught', 'statRisks', 'statAgentBattles']) {
+      element(id).textContent = '—'
+    }
+    showToast(`统计加载失败：${errorText(error)}`)
+  }
 }
 
 async function loadHistory(page = state.page) {
@@ -508,6 +516,8 @@ function updatePagination() {
   const pages = Math.max(1, Math.ceil(state.total / PAGE_SIZE))
   const label = document.querySelector('.pagination span')
   if (label) label.textContent = `第 ${state.page + 1} / ${pages} 页 · 共 ${state.total} 场`
+  const totalBadge = document.getElementById('logTotal')
+  if (totalBadge) totalBadge.textContent = `${state.total} 场`
   element<HTMLButtonElement>('prevPage').disabled = state.page <= 0
   element<HTMLButtonElement>('nextPage').disabled = state.page + 1 >= pages
 }
@@ -1593,8 +1603,9 @@ async function initialize() {
   installSessionDialog()
   await checkHealth()
   const canUse = await checkSession()
-  if (canUse) await Promise.all([loadSummary(), loadHistory(0)])
-  else showLogin('首次使用请先登录，登录后才能准备和创建战局')
+  // 只读数据（统计 / 历史战局）匿名即可读取，先加载出来；写入类操作由 startBattle 统一要求登录。
+  await Promise.all([loadSummary(), loadHistory(0)])
+  if (!canUse) showLogin('浏览实时战局可直接选择「以游客身份浏览」；创建战局需要先登录')
 }
 
 void initialize()

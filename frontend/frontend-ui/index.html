@@ -607,11 +607,11 @@
     <div class="score-data-row">
       <div class="metric-col">
         <div class="metric">
-          <div class="metric-head"><span class="tip-wrap">payload 更新率<span class="tip-q" tabindex="0" role="button" aria-label="查看 payload 更新率说明">?</span><span class="tip-pop">本局不同源 Payload 数 ÷ 本局已产生的全部 Payload 数 × 100%。来源由 Arbiter 的相似度校验结果确定。</span></span><b id="ratePayload">0%</b></div>
+          <div class="metric-head"><span class="tip-wrap">payload 更新率<span class="tip-q" tabindex="0" role="button" aria-label="查看 payload 更新率说明">?</span><span class="tip-pop">本局不同源 Payload 数 ÷ 本局已产生的全部 Payload 数 × 100%。来源由 Arbiter 的相似度校验结果确定。</span></span><b id="ratePayload">—</b></div>
           <div class="bar"><div class="bar-fill att" id="barPayload" style="width:0%"></div></div>
         </div>
         <div class="metric">
-          <div class="metric-head"><span class="tip-wrap">defender 有效拦截率<span class="tip-q" tabindex="0" role="button" aria-label="查看 defender 有效拦截率说明">?</span><span class="tip-pop">本局 Arbiter 确认的有效拦截回合数 ÷ 本局已开始的总回合数 × 100%。</span></span><b id="rateDefender">0%</b></div>
+          <div class="metric-head"><span class="tip-wrap">defender 有效拦截率<span class="tip-q" tabindex="0" role="button" aria-label="查看 defender 有效拦截率说明">?</span><span class="tip-pop">本局 Arbiter 确认的有效拦截回合数 ÷ 本局已开始的总回合数 × 100%。</span></span><b id="rateDefender">—</b></div>
           <div class="bar"><div class="bar-fill def" id="barDefender" style="width:0%"></div></div>
         </div>
         <div class="metric">
@@ -2667,8 +2667,8 @@ var battle3d=(function(){
   }
   function setLiveVisualizationState(detail){
     if(!detail||detail.status==='loading'){
-      document.getElementById('ratePayload').textContent='0%';
-      document.getElementById('rateDefender').textContent='0%';
+      document.getElementById('ratePayload').textContent='—';
+      document.getElementById('rateDefender').textContent='—';
       setMetricBar('barPayload',0);
       setMetricBar('barDefender',0);
       document.getElementById('avgResp').textContent='0.00 s';
@@ -2678,8 +2678,8 @@ var battle3d=(function(){
       return;
     }
     if(detail.status!=='ready'){
-      document.getElementById('ratePayload').textContent='0%';
-      document.getElementById('rateDefender').textContent='0%';
+      document.getElementById('ratePayload').textContent='—';
+      document.getElementById('rateDefender').textContent='—';
       setMetricBar('barPayload',0);
       setMetricBar('barDefender',0);
       document.getElementById('avgResp').textContent='0.00 s';
@@ -2699,8 +2699,8 @@ var battle3d=(function(){
     var defenderResponse=typeof detail.averageResponseScore?.defender==='number'?detail.averageResponseScore.defender:null;
     var hasResponse=attackerResponse!==null||defenderResponse!==null;
     bar.setOption({graphic:emptyChartGraphic('bar-empty','暂无响应评分证据',!hasResponse),series:[{data:[{value:attackerResponse,itemStyle:{color:'#ff8f6b',borderRadius:[4,4,0,0]}},{value:defenderResponse,itemStyle:{color:'#9fc4ff',borderRadius:[4,4,0,0]}}]}]});
-    document.getElementById('ratePayload').textContent=Number(detail.payloadUpdateRate||0).toFixed(0)+'%';
-    document.getElementById('rateDefender').textContent=typeof detail.effectiveInterceptionRate==='number'?detail.effectiveInterceptionRate.toFixed(0)+'%':'0%';
+    document.getElementById('ratePayload').textContent=typeof detail.payloadUpdateRate==='number'?detail.payloadUpdateRate.toFixed(0)+'%':'—';
+    document.getElementById('rateDefender').textContent=typeof detail.effectiveInterceptionRate==='number'?detail.effectiveInterceptionRate.toFixed(0)+'%':'—';
     setMetricBar('barPayload',detail.payloadUpdateRate);
     setMetricBar('barDefender',detail.effectiveInterceptionRate);
     document.getElementById('avgResp').textContent=typeof detail.averageResponseMs==='number'?(detail.averageResponseMs/1000).toFixed(2)+' s':'0.00 s';
@@ -2865,7 +2865,7 @@ var battle3d=(function(){
       vendor:[c.vendorProject,c.product,c.dateAdded].filter(Boolean).join(' · '),
       desc:c.description||'',
       zh:'处置要求：'+(c.requiredAction||'参见官方公告')+(c.cwes&&c.cwes.length?'；CWE：'+c.cwes.join('、'):''),
-      src:(c.source||'外部案例库')+(c.sourceUrl?' · '+c.sourceUrl:''),
+      src:(((c.source&&c.source.publisher)||(typeof c.source==='string'?c.source:'外部案例库'))+(c.source&&c.source.catalogVersion?' · 目录 '+c.source.catalogVersion:''))+(c.sourceUrl?' · '+c.sourceUrl:''),
       url:c.sourceUrl||''
     };
   }
@@ -2883,7 +2883,7 @@ var battle3d=(function(){
 
   /* ============ 历史战局 ============ */
   var LOGS=[];
-  document.getElementById('logTotal').textContent='0 场';
+  document.getElementById('logTotal').textContent='— 场';
   var battleList=document.getElementById('battleList');
   var currentBattle=null;
   function stageCounts(rounds){
@@ -2993,12 +2993,17 @@ var battle3d=(function(){
     var l=currentBattle;
     var detailedRounds=new Set(Array.from(document.querySelectorAll('.history-score-detail-toggle:checked')).map(function(x){return Number(x.dataset.round);}));
     var md='# '+l.t+'\n\n';
-    md+='- 时间：'+l.time+'\n- 难度：'+({low:'低',mid:'中',high:'高'})[l.diff]+'\n- 回合数：'+(l.rounds?l.rounds.length:0)+'\n- 规则：基础攻防 95% + 响应 5%\n- Attacker 最终综合分：'+Number(l.attackerFinal||0).toFixed(2)+'\n- Defender 最终综合分：'+Number(l.defenderFinal||0).toFixed(2)+'\n- 结果：'+(l.winner||'未决')+'\n\n';
+    md+='- 时间：'+l.time+'\n- 难度：'+({low:'低',mid:'中',high:'高'})[l.diff]+'\n- 回合数：'+(l.rounds?l.rounds.length:0)+'\n- 规则：基础攻防 95% + 响应 5%\n- Attacker 最终综合分：'+(l.attackerFinal==null?'后端未回传':Number(l.attackerFinal).toFixed(2))+'\n- Defender 最终综合分：'+(l.defenderFinal==null?'后端未回传':Number(l.defenderFinal).toFixed(2))+'\n- 结果：'+(l.winner||'未决')+'\n\n';
     (l.rounds||[]).forEach(function(r){
       md+='## 第 '+r.no+' 轮（'+r.pill+'）\n\n';
       md+='### 攻击方 · 样本生成\n'+r.atkSample+'\n\n';
       md+='### 防守方 · 检测与修复\n';
       md+='- 发现问题：'+r.defFound+'\n- 风险评估：'+r.defRisk+'\n- 修复动作：'+r.defFix+'\n\n';
+      if(!r.scores){
+        if(r.arbitration)md+='### 裁决理由\n'+r.arbitration+'\n\n';
+        md+='### 评分（基础 95% + 响应 5%）\n该回合为后端历史记录：仅保存攻击样本与防守结论，未保存逐项评分明细。\n\n';
+        return;
+      }
       md+='### 评分（基础 95% + 响应 5%）\n';
       md+='**Attacker 攻击方**\n';
       md+='- 流程规范：'+r.scores.attacker.process+'/40\n- 分层穿透效果：'+r.scores.attacker.effect+'/60\n- 基础攻防分：'+r.scores.attacker.base+'/100\n- 响应分：'+r.scores.attacker.response+'/100\n- 综合分：'+r.scores.attacker.weighted.toFixed(2)+'\n';
@@ -3916,8 +3921,8 @@ var battle3d=(function(){
     demoStarted=false;userPinned=false;pending=0;newEvents.classList.remove('show');
     liveStatus.classList.remove('run');liveStatus.textContent='等待攻防事件';
     document.getElementById('tlSub').textContent='ATTACKER ↔ DEFENDER · 实时事件流';
-    document.getElementById('ratePayload').textContent='0%';
-    document.getElementById('rateDefender').textContent='0%';
+    document.getElementById('ratePayload').textContent='—';
+    document.getElementById('rateDefender').textContent='—';
     document.getElementById('avgResp').textContent='0.00 s';
     setMetricBar('barPayload',0);
     setMetricBar('barDefender',0);
