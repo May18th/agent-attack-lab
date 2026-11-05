@@ -135,6 +135,8 @@ class BattleStore:
         self._pool = None
         self._engine = None
         self._closed = False
+        # 写入版本号：供上层缓存判断"数据是否已变"，避免缓存把新战局统计挡在门外。
+        self._revision = 0
         if self._is_postgres:
             try:
                 from psycopg.rows import dict_row
@@ -708,6 +710,12 @@ class BattleStore:
         )
         self._connection.commit()
 
+    @property
+    def revision(self) -> int:
+        """Monotonic counter bumped by every battle/event write."""
+        with self._lock:
+            return self._revision
+
     def save(self, record: dict[str, Any]) -> None:
         with self._lock:
             values = (
@@ -762,6 +770,7 @@ class BattleStore:
                     values,
                 )
             self._connection.commit()
+            self._revision += 1
 
     def save_event(self, event: dict[str, Any]) -> None:
         """Persist one auditable step in a battle."""
@@ -806,6 +815,7 @@ class BattleStore:
                     values,
                 )
             self._connection.commit()
+            self._revision += 1
 
     def save_score(self, battle_id: str, score: dict[str, Any]) -> None:
         """Persist the evidence-derived score snapshot for a terminal battle."""
@@ -863,7 +873,7 @@ class BattleStore:
             return None
         try:
             score = json.loads(row["score_json"])
-        except TypeError, json.JSONDecodeError:
+        except (TypeError, json.JSONDecodeError):
             return None
         return score if isinstance(score, dict) else None
 
@@ -882,7 +892,7 @@ class BattleStore:
         for row in rows:
             try:
                 score = json.loads(row["score_json"])
-            except TypeError, json.JSONDecodeError:
+            except (TypeError, json.JSONDecodeError):
                 continue
             if isinstance(score, dict):
                 scores[str(row["battle_id"])] = score
@@ -1365,7 +1375,15 @@ class BattleStore:
         difficulty: str | None = None,
         status: str | None = None,
         query: str | None = None,
+        include_outputs: bool = True,
     ) -> list[dict[str, Any]]:
+        """Return one page of battles.
+
+        ``include_outputs=False`` skips the two large JSON columns. The list
+        endpoints only render topic/status/time, yet ``SELECT *`` used to pull
+        and re-serialize every round payload of every battle: on a busy
+        deployment one 50-row page reached ~1MB and took seconds to build.
+        """
         clauses: list[str] = []
         params: list[Any] = []
         if difficulty:
@@ -1382,12 +1400,19 @@ class BattleStore:
         params.extend([limit, offset])
         placeholder = self._placeholder
         where = where.replace("?", placeholder)
+        columns = (
+            "*"
+            if include_outputs
+            else "id, code, difficulty, topic, status, rounds, verdict, created_at"
+        )
         with self._lock:
             rows = self._connection.execute(
-                f"SELECT * FROM battles {where} ORDER BY created_at DESC LIMIT {placeholder} OFFSET {placeholder}",
+                f"SELECT {columns} FROM battles {where} ORDER BY created_at DESC LIMIT {placeholder} OFFSET {placeholder}",
                 params,
             ).fetchall()
-        return [self._to_record(row) for row in rows]
+        if include_outputs:
+            return [self._to_record(row) for row in rows]
+        return [self._to_summary(row) for row in rows]
 
     def list_outputs(self, limit: int = 100000) -> list[dict[str, Any]]:
         """Read the latest battle outputs without materializing unused metadata."""
@@ -1526,6 +1551,7 @@ class BattleStore:
                 (battle_id,),
             )
             self._connection.commit()
+            self._revision += 1
 
     def count(
         self,
@@ -1717,6 +1743,20 @@ class BattleStore:
             "createdAt": row["created_at"],
             "attackerOut": json.loads(row["attacker_out"]),
             "defenderOut": json.loads(row["defender_out"]),
+        }
+
+    @staticmethod
+    def _to_summary(row: Any) -> dict[str, Any]:
+        """Metadata-only projection used by list endpoints."""
+        return {
+            "id": row["id"],
+            "code": row["code"] if "code" in row.keys() else None,  # noqa: SIM118 - SQLAlchemy Row compatibility.
+            "difficulty": row["difficulty"],
+            "topic": row["topic"],
+            "status": row["status"],
+            "rounds": row["rounds"] if "rounds" in row.keys() else 3,  # noqa: SIM118 - SQLAlchemy Row compatibility.
+            "verdict": row["verdict"] if "verdict" in row.keys() else None,  # noqa: SIM118 - SQLAlchemy Row compatibility.
+            "createdAt": row["created_at"],
         }
 
     @staticmethod

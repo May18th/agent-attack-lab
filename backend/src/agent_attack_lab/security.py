@@ -19,7 +19,7 @@ import secrets
 import time
 from urllib.parse import urlsplit
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, WebSocket
 
 from agent_attack_lab import config, state
 
@@ -192,6 +192,40 @@ def check_browser_or_api_auth(request: Request) -> None:
         status_code=401,
         detail="需要有效的 API 密钥、Cloudflare Access 身份或浏览器登录会话",
     )
+
+
+def websocket_read_auth_allowed(websocket: WebSocket) -> bool:
+    """WebSocket 读路由的鉴权条件，与 HTTP 的 read_auth_dependency 保持一致。
+
+    HTTP 读路由由 read_auth_dependency 把守（protect_read_routes / 浏览器密码 /
+    Cloudflare Access 三选一）。WS 路由原先只看 ``protect_read_routes and
+    api_key``，于是只配浏览器密码时 HTTP 要求登录、WS 却能匿名连上，而 WS 推送的
+    是实时战局事件流，比列表更细。这里补齐三条，并对浏览器会话额外校验 Origin，
+    避免跨站 WebSocket 劫持。
+    """
+    if not (
+        config.protect_read_routes
+        or config.browser_password
+        or config.cloudflare_access_configured
+    ):
+        return True
+    supplied_api_key = (
+        websocket.headers.get("x-api-key")
+        or websocket.query_params.get("api_key")
+        or ""
+    )
+    if config.api_key and hmac.compare_digest(
+        supplied_api_key.encode("utf-8"), config.api_key.encode("utf-8")
+    ):
+        return True
+    if verify_cloudflare_access_jwt(
+        websocket.headers.get("cf-access-jwt-assertion", "")
+    ):
+        return True
+    if config.browser_password and has_browser_session(websocket):
+        origin = websocket.headers.get("origin", "")
+        return bool(origin) and browser_origin_allowed(origin, websocket)
+    return False
 
 
 def browser_client_ip(request: Request) -> str:

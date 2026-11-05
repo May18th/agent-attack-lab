@@ -79,7 +79,10 @@ link_runtime_entry() {
   ln -s "$source" "$destination"
 }
 
-for runtime_entry in .env .data .venv .wit .acps-cli keyfiles packages acps; do
+# PDF 导出依赖 CJK 字体；先建运行时目录，保证下面的软链在首次部署时也能建起来。
+mkdir -p "$runtime_backend/.fonts" 2>/dev/null || true
+
+for runtime_entry in .env .data .venv .wit .acps-cli keyfiles packages acps .fonts; do
   link_runtime_entry "$runtime_entry"
 done
 
@@ -126,7 +129,146 @@ ensure_amp_dependency() {
   fi
 }
 
+ensure_pdf_dependency() {
+  # venv 在部署流程之外创建，新增的 Python 依赖不会自动进环境。
+  # reportlab 缺失时导出接口只会 503（后台表现为「服务暂时不可用」），这里幂等补齐。
+  if "$python_bin" -c 'import reportlab' >/dev/null 2>&1 \
+    && "$python_bin" -c 'import fontTools' >/dev/null 2>&1; then
+    return 0
+  fi
+  local uv_bin=""
+  if command -v uv >/dev/null 2>&1; then
+    uv_bin=$(command -v uv)
+  elif [[ -x "$HOME/.local/bin/uv" ]]; then
+    uv_bin="$HOME/.local/bin/uv"
+  fi
+  if [[ -n "$uv_bin" ]]; then
+    "$uv_bin" pip install --python "$python_bin" 'reportlab>=4.0' 'fonttools>=4' >&2 || true
+  else
+    "$python_bin" -m pip install 'reportlab>=4.0' 'fonttools>=4' >&2 || true
+  fi
+  if "$python_bin" -c 'import reportlab' >/dev/null 2>&1; then
+    printf 'installed reportlab for PDF export\n'
+  else
+    printf 'WARNING: reportlab missing; export.pdf will return 503\n' >&2
+  fi
+  if "$python_bin" -c 'import fontTools' >/dev/null 2>&1; then
+    printf 'installed fontTools for variable font instancing\n'
+  else
+    printf 'WARNING: fontTools missing; bold weight will look flat\n' >&2
+  fi
+}
+
+pdf_font_is_usable() {
+  # reportlab 的 TTFont 只认 TrueType 轮廓；Noto 的 .otf 是 CFF 轮廓，加载会抛错。
+  # 所以只看文件大小不够，必须让 reportlab 真解析一次再决定留不留。
+  "$python_bin" - "$1" >/dev/null 2>&1 <<'PY'
+import sys
+
+from reportlab.pdfbase.ttfonts import TTFont
+
+TTFont("probe", sys.argv[1])
+PY
+}
+
+instantiate_pdf_font() {
+  # 下载到的是可变字体，只有默认字重；直接排版会全篇一个粗细，标题和小节标题
+  # 都不显眼。这里用 fontTools 拆成 400 / 700 两个静态实例，粗体才是真的粗。
+  local source=$1
+  local dir
+  dir=$(dirname "$source")
+  if ! "$python_bin" -c 'import fontTools' >/dev/null 2>&1; then
+    printf 'WARNING: fontTools missing; keep variable font, bold will look flat\n' >&2
+    return 0
+  fi
+  local pair weight target
+  for pair in "400:Regular" "700:Bold"; do
+    weight=${pair%%:*}
+    target="$dir/NotoSansSC-${pair##*:}.ttf"
+    [[ -s "$target" ]] && continue
+    if "$python_bin" -m fontTools.varLib.instancer "$source" "wght=$weight" \
+      --output "$target" >/dev/null 2>&1 && pdf_font_is_usable "$target"; then
+      printf 'instantiated %s\n' "$target"
+    else
+      rm -f "$target"
+      printf 'WARNING: failed to instantiate wght=%s from %s\n' "$weight" "$source" >&2
+    fi
+  done
+}
+
+ensure_pdf_font() {
+  # 生产机是精简 Linux，没有 fontconfig，也没有任何中文字体；
+  # PDF 排版必须有 CJK 字体，否则接口只能 503。字体落在运行时目录的 .fonts 下，
+  # release 通过软链共享，不需要 root，也不改动系统。
+  local font_dir="$runtime_backend/.fonts"
+  mkdir -p "$font_dir" 2>/dev/null || true
+  # 运行时目录不一定对 deployer 可写，退到 ~/.fonts —— 代码的系统扫描也认这个位置。
+  if [[ ! -w "$font_dir" ]]; then
+    font_dir="$HOME/.fonts"
+    if ! mkdir -p "$font_dir" 2>/dev/null; then
+      printf 'WARNING: no writable font directory; export.pdf will keep returning 503\n' >&2
+      return 0
+    fi
+  fi
+  # 幂等：Regular + Bold 静态实例齐了就不动；只有可变字体时继续往下补实例化。
+  if [[ -s "$font_dir/NotoSansSC-Regular.ttf" && -s "$font_dir/NotoSansSC-Bold.ttf" ]]; then
+    printf 'PDF font ready (Regular + Bold)\n'
+    return 0
+  fi
+
+  # 之前已经下载过可变字体就别重复下 18MB，直接补做实例化。
+  local existing
+  existing=$(find "$font_dir" -maxdepth 1 -type f -name '*.ttf' 2>/dev/null | head -1)
+  if [[ -n "$existing" ]]; then
+    instantiate_pdf_font "$existing"
+    if [[ -s "$font_dir/NotoSansSC-Regular.ttf" ]]; then
+      return 0
+    fi
+  fi
+
+  local url name target
+  while IFS='|' read -r url name; do
+    [[ -n "${url:-}" ]] || continue
+    target="$font_dir/$name"
+    if ! curl --fail --location --silent --show-error --retry 2 --connect-timeout 10 --max-time 420 \
+      "$url" --output "$target.part"; then
+      printf 'font download failed: %s\n' "$url" >&2
+      rm -f "$target.part"
+      continue
+    fi
+    if [[ -s "$target.part" ]] && [[ "$(wc -c < "$target.part" 2>/dev/null || echo 0)" -gt 500000 ]] \
+      && pdf_font_is_usable "$target.part"; then
+      mv "$target.part" "$target"
+      printf 'downloaded PDF font from %s\n' "$url"
+      instantiate_pdf_font "$target"
+      return 0
+    fi
+    printf 'discarded unusable font from %s\n' "$url" >&2
+    rm -f "$target.part"
+  done <<'FONTS'
+https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf|NotoSansSC.ttf
+https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf|NotoSansSC.ttf
+https://raw.gitmirror.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf|NotoSansSC.ttf
+https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf|NotoSansSC.ttf
+FONTS
+  printf 'WARNING: PDF font unavailable; export.pdf will keep returning 503 until a CJK font exists\n' >&2
+}
+
+verify_pdf_export() {
+  # 部署即验证：缺依赖或缺字体在这里就暴露，而不是等用户点「导出」才 503。
+  local output
+  if output=$(cd "$release_backend" && PYTHONPATH="$release_backend/src" "$python_bin" -c \
+    'from agent_attack_lab import survey_pdf; rows=[{"q1_role":"自检","q2_pain_point":"自检","q3_ranking":["A","B","C","D"],"q4_can_judge":"能，证据链清晰","q5_willingness":"敢，有授权就敢用","q6_reuse_score":5}]; print("pdf-bytes", len(survey_pdf.build_survey_pdf(rows, part="summary")))' 2>&1); then
+    printf 'PDF export self-check: %s\n' "$output"
+  else
+    printf 'WARNING: PDF export self-check failed: %s\n' "$output" >&2
+  fi
+}
+
 ensure_amp_dependency
+ensure_pdf_dependency
+ensure_pdf_font
+verify_pdf_export
 (cd "$release_backend" && "$python_bin" -m alembic -c alembic.ini upgrade head)
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"

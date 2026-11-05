@@ -289,7 +289,9 @@ export function errorMessage(status: number, detail?: string): string {
   if (status === 401 || status === 403) return detail || '需要登录后台或提供有效凭证后才能执行此操作'
   if (status === 404) return '战局不存在或已被删除'
   if (status === 409) return detail || '当前战局状态不允许此操作'
-  if (status >= 500) return '服务暂时不可用，请稍后重试'
+  // 5xx 带上后端 detail：像「缺中文字体」「依赖未安装」这类原因，泛化提示会掩盖掉，
+  // 排查时只能翻服务器日志。没有 detail 时仍用通用文案。
+  if (status >= 500) return detail ? `服务暂时不可用：${detail}` : '服务暂时不可用，请稍后重试'
   return detail || `请求失败（HTTP ${status}）`
 }
 

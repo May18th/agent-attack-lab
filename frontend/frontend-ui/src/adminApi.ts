@@ -235,3 +235,16 @@ export type AdminSurveyExport = { blob: Blob; filename: string; total: number }
 export function exportAdminSurveyCsv(): Promise<AdminSurveyExport> {
   return apiDownload('/api/survey/export.csv')
 }
+
+/** 导出战局清单 PDF（按创建时间倒序，最多 500 场），与前端 CSV 导出并存。 */
+export function exportAdminBattlesPdf(): Promise<AdminSurveyExport> {
+  return apiDownload('/api/battles/export.pdf')
+}
+
+/** PDF 的拆分口径：all=完整报告，summary=结论与分布，detail=逐份明细。 */
+export type SurveyPdfPart = 'all' | 'summary' | 'detail'
+
+/** 导出调研问卷结果为 PDF 报告；默认完整版，可只取汇总或明细。 */
+export function exportAdminSurveyPdf(part: SurveyPdfPart = 'all'): Promise<AdminSurveyExport> {
+  return apiDownload(part === 'all' ? '/api/survey/export.pdf' : `/api/survey/export.pdf?part=${part}`)
+}

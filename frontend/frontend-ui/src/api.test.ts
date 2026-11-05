@@ -25,6 +25,10 @@ describe('api error handling', () => {
     expect(errorMessage(status)).toBe(message)
   })
 
+  it('surfaces the backend detail for 5xx instead of a generic message', () => {
+    expect(errorMessage(503, '未找到可用的中文字体')).toBe('服务暂时不可用：未找到可用的中文字体')
+  })
+
   it('maps network failures to a recoverable message', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')))
 

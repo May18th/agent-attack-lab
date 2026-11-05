@@ -1015,7 +1015,7 @@ def dashboard_html(*, topic_value: str, selected_difficulty: str) -> str:
         return;
       }
     }
-    function loadHistory() { fetch("/battles?limit=50").then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); }).then(renderHistory).catch(function () { $("history").innerHTML = '<tr><td colspan="5" class="error">历史战局暂时无法加载</td></tr>'; }); }
+    function loadHistory() { fetch("/battles?limit=50&fields=summary").then(function (response) { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); }).then(renderHistory).catch(function () { $("history").innerHTML = '<tr><td colspan="5" class="error">历史战局暂时无法加载</td></tr>'; }); }
     function checkHealth() {
       var controller = new AbortController();
       var timeout = window.setTimeout(function () { controller.abort(); }, 5000);

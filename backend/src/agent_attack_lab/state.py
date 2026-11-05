@@ -31,6 +31,14 @@ REPORT_SUMMARY_CACHE_TTL_SECONDS = 600.0
 REPORT_SUMMARY_CACHE_MAX_ENTRIES = 256
 report_summary_cache: dict[tuple[str, int, str], tuple[float, dict[str, Any]]] = {}
 
+# 后台首页统计的进程内缓存。``dashboard_summary`` 需要遍历全部战局的大 JSON
+# 字段和全部 agent 调用事件，未配置 Redis 时原先没有任何缓存，后台每打开一次
+# 都会全表重算。缓存条目带写入版本号：任何战局/事件落库都会让旧条目立即失效，
+# 所以 TTL 只用来兜底，不影响后台数字的实时性。
+DASHBOARD_SUMMARY_CACHE_TTL_SECONDS = 15.0
+dashboard_summary_cache: tuple[float, Any, int, dict[str, int]] | None = None
+dashboard_summary_cache_lock = Lock()
+
 # Rate limiting windows, keyed by client fingerprint.
 rate_windows: dict[str, deque[float]] = defaultdict(deque)
 rate_lock = Lock()

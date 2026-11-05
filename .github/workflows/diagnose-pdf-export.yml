@@ -1,0 +1,122 @@
+name: 诊断 PDF 导出
+
+# 只读诊断：确认生产 venv 是否有 reportlab、主机是否有中文字体，
+# 以及接口返回 5xx 的真实异常。不修改配置、不重启服务、不写业务数据。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: 检查 PDF 导出依赖与字体
+    runs-on: [self-hosted, production]
+    timeout-minutes: 10
+    steps:
+      - name: 依赖与字体
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
+          echo "== 服务状态 =="
+          systemctl --user is-active agent-attack-lab-api.service
+
+          exec_start=$(systemctl --user show agent-attack-lab-api.service -p ExecStart --value)
+          echo "$exec_start" | tr ';' '\n' | head -3
+
+          # ExecStart 形如 .../backend/scripts/start-service.sh，venv 在 backend/.venv
+          backend_dir=$(printf '%s' "$exec_start" | grep -oE '/[^ ]*/backend/scripts/start-service\.sh' | head -1 | sed 's#/scripts/start-service\.sh##')
+          echo "backend_dir=${backend_dir:-<未识别>}"
+
+          venv_py=""
+          for cand in "$backend_dir/.venv/bin/python" "$backend_dir/.venv/bin/python3"; do
+            [ -x "$cand" ] && venv_py="$cand" && break
+          done
+          echo "venv_py=${venv_py:-<未找到>}"
+          if [ -n "$venv_py" ]; then
+            echo "real: $(readlink -f "$venv_py")"
+            "$venv_py" -V
+          fi
+
+          echo "== reportlab =="
+          if [ -n "$venv_py" ]; then
+            "$venv_py" -c 'import reportlab; print("reportlab OK", reportlab.Version)' || echo "reportlab MISSING"
+          else
+            echo "跳过：无 venv python"
+          fi
+
+          echo "== 已装 CSS/PDF 相关包 =="
+          if [ -n "$venv_py" ]; then
+            "$venv_py" -m pip list 2>/dev/null | grep -iE 'reportlab|pillow|weasy|fonttools' || echo "(无)"
+          fi
+
+          echo "== 中文字体（fc-list :lang=zh）=="
+          if command -v fc-list >/dev/null 2>&1; then
+            echo "fc-list 总数: $(fc-list | wc -l)"
+            echo "zh 命中数: $(fc-list :lang=zh 2>/dev/null | wc -l)"
+            fc-list :lang=zh 2>/dev/null | head -10
+          else
+            echo "fc-list 不可用"
+          fi
+
+          echo "== 代码探测的固定路径 =="
+          for p in \
+            /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc \
+            /usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc \
+            /usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf \
+            /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc \
+            /usr/share/fonts/truetype/wqy/wqy-microhei.ttc \
+            /usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc; do
+            if [ -f "$p" ]; then echo "EXISTS $p"; else echo "MISS   $p"; fi
+          done
+
+          echo "== 系统里任意 .ttf/.ttc/.otf 计数 =="
+          find /usr/share/fonts /usr/local/share/fonts "$HOME/.fonts" -type f \
+            \( -iname '*.ttf' -o -iname '*.ttc' -o -iname '*.otf' \) 2>/dev/null | wc -l
+
+          echo "== 家目录可用空间 =="
+          df -h "$HOME" | tail -1
+
+          echo "== AGENT_PDF_FONT =="
+          pid=$(systemctl --user show agent-attack-lab-api.service -p MainPID --value)
+          if [ -n "${pid:-}" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/environ" ]; then
+            tr '\0' '\n' < "/proc/$pid/environ" | grep -E '^AGENT_PDF_FONT=' || echo "(未设置)"
+          else
+            echo "(environ 不可读)"
+          fi
+
+      - name: 在服务环境生成样例 PDF 并回传
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          exec_start=$(systemctl --user show agent-attack-lab-api.service -p ExecStart --value)
+          backend_dir=$(printf '%s' "$exec_start" | grep -oE '/[^ ]*/backend/scripts/start-service\.sh' | head -1 | sed 's#/scripts/start-service\.sh##')
+          py="$backend_dir/.venv/bin/python"
+          echo "python=$py"
+          cd "$backend_dir" || exit 0
+          PYTHONPATH="$backend_dir/src" "$py" scripts/probe_pdf_export.py --part summary --out /tmp/probe-summary.pdf
+
+      - name: 上传样例 PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-pdf
+          path: /tmp/probe-summary.pdf
+          if-no-files-found: error
+
+      - name: 近期异常日志
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          echo "== 匹配行 =="
+          journalctl --user -u agent-attack-lab-api --since "-120min" --no-pager 2>/dev/null \
+            | grep -iE 'export\.pdf|PdfFont|reportlab|ModuleNotFound|Traceback|没有可用|字体' \
+            | tail -40
+          echo "(匹配结束)"

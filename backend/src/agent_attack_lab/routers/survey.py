@@ -3,6 +3,9 @@
 页面由本服务托管在 ``/survey``，与提交接口同源，避免 file:// 打开时的跨域问题。
 提交接口公开（问卷要发给人填），但有速率限制与字段长度约束；
 读取与导出接口要求后台身份：浏览器登录会话或 ``x-api-key`` 二者其一。
+
+导出有两种：CSV（机器读，字段齐全）与 PDF（人读，按报告排版）。
+PDF 依赖中文字体，缺失时返回 503 并说明如何指定，而不是产出乱码文件。
 """
 
 from __future__ import annotations
@@ -11,7 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from agent_attack_lab import security, survey
@@ -43,6 +46,13 @@ CanJudge = Literal[
 Willingness = Literal[
     "敢，有授权就敢用", "有条件敢用（需补充验证）", "不敢，只能当参考", "完全不会用"
 ]
+# all=完整报告；summary=结论与分布；detail=逐份明细。材料排版时可分开提交。
+SurveyPart = Literal["all", "summary", "detail"]
+_PART_FILENAME = {
+    "all": "survey-report.pdf",
+    "summary": "survey-summary.pdf",
+    "detail": "survey-detail.pdf",
+}
 
 
 class SurveySubmission(BaseModel):
@@ -109,6 +119,36 @@ def export_survey_csv() -> PlainTextResponse:
         headers={
             "Content-Disposition": 'attachment; filename="survey-responses.csv"',
             # 后台导出按钮用它显示份数，不必再拉一次全量数据。
+            "X-Total-Count": str(len(rows)),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get(
+    "/api/survey/export.pdf",
+    dependencies=[Depends(security.check_browser_or_api_auth)],
+)
+def export_survey_pdf(part: SurveyPart = "all") -> Response:
+    """按报告格式导出问卷结果（默认汇总 + 明细一体；可只取 summary 或 detail）。"""
+    rows = survey.load_all()
+    try:
+        from agent_attack_lab import survey_pdf
+    except ImportError as exc:  # reportlab 未安装时给出可执行的提示
+        raise HTTPException(
+            status_code=503,
+            detail=f"PDF 导出依赖不可用：{exc}。请在 backend 下执行 uv sync --locked",
+        ) from exc
+    try:
+        payload = survey_pdf.build_survey_pdf(rows, part=part)
+    except survey_pdf.PdfFontUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_PART_FILENAME[part]}"',
+            "Content-Length": str(len(payload)),
             "X-Total-Count": str(len(rows)),
             "Cache-Control": "no-store",
         },

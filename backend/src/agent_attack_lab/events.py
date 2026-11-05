@@ -93,6 +93,10 @@ _EVENT_STAGE_IDS = {
     "arbiter.layer.confirmed": "ARBITER",
     "arbiter.similarity.checked": "A6",
     "arbiter.verdict": "ARBITER",
+    "arbiter.safe_control.started": "SAFE-CONTROL",
+    "arbiter.safe_control.verdict": "SAFE-CONTROL",
+    "arbiter.round.score": "ROUND-SCORE",
+    # ---- 旧事件名（v2.0 规范统一前的历史数据回放兼容）----
     "arbiter.safe_control": "SAFE-CONTROL",
     "arbiter.round.scored": "ROUND-SCORE",
     "round.settled": "FINAL",

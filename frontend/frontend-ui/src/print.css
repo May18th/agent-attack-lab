@@ -1,0 +1,125 @@
+/* 打印样式：后台页面「打印 / 导出 PDF」用它把界面变成可读的纸质报告。
+   目标是把侧栏、按钮、导航这些交互件全部去掉，只留下内容本体，
+   并强制白底黑字，避免深色主题把整页墨打满。 */
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm 12mm;
+  }
+
+  /* 交互件一律不打印 */
+  .admin-sidebar,
+  .admin-header,
+  .admin-nav,
+  .admin-nav-link,
+  .admin-nav-highlight,
+  .management-export,
+  .management-tabs,
+  .management-notice,
+  .admin-error,
+  .admin-3d-workspace,
+  .admin-2d-workspace,
+  [role='dialog'],
+  [role='tab'],
+  button,
+  input,
+  select,
+  textarea,
+  .admin-raw-data,
+  .admin-hint {
+    display: none !important;
+  }
+
+  html,
+  body,
+  #root {
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  /* 屏上靠固定高度滚动的容器，打印时必须摊开，否则只出第一屏 */
+  .admin-shell,
+  .admin-layout {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  .admin-content {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+    background-image: none !important;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  strong {
+    color: #111 !important;
+  }
+
+  .admin-module {
+    break-inside: avoid;
+    border: 1px solid #d1d5db !important;
+    border-radius: 0 !important;
+    margin: 0 0 10pt !important;
+    padding: 8pt 10pt !important;
+    background: #fff !important;
+  }
+
+  /* 表格：表头逐页重复、行不跨页断开，是打印表格最影响可读性的两点 */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 9pt !important;
+    table-layout: fixed;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tr {
+    break-inside: avoid;
+  }
+
+  th,
+  td {
+    border: 1px solid #9ca3af !important;
+    padding: 3pt 4pt !important;
+    color: #111 !important;
+    vertical-align: top;
+    word-break: break-word;
+  }
+
+  th {
+    background: #f3f4f6 !important;
+    font-weight: 600 !important;
+  }
+
+  a {
+    color: #111 !important;
+    text-decoration: none !important;
+  }
+
+  /* 打印页脚：补一条来源说明，散页时也知道出处 */
+  body::after {
+    content: '智能体攻防实验室 · 后台导出';
+    display: block;
+    margin-top: 8pt;
+    font-size: 8pt;
+    color: #6b7280;
+    text-align: right;
+  }
+}

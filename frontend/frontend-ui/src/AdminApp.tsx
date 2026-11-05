@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import './AdminApp.css'
+import './print.css'
 import {
   apiErrorMessage, cancelAdminBattle, deleteAdminBattle, getAdminBattleAudit, getAdminBattleDetail,
   getAdminBattleEvents, getAdminBattleRounds, getAdminBattleScore, getAdminDashboardSummary, getAdminExternalCases, getAdminMetrics,

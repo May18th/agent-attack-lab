@@ -12,6 +12,7 @@ from fastapi import (
     Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from agent_attack_lab import (
@@ -24,9 +25,12 @@ from agent_attack_lab import (
     state,
 )
 from agent_attack_lab import events as events_api
+from agent_attack_lab.logging_setup import configure_logging
 from agent_attack_lab.models import (
     BattleRequest,
 )
+
+configure_logging()
 
 logger = logging.getLogger("agent_attack_lab")
 
@@ -41,6 +45,11 @@ app = FastAPI(
         "displayRequestDuration": True,
     },
 )
+
+# 后台页面与战局列表都是大块文本（HTML 76KB、列表 JSON 曾达 1MB），此前
+# 后端不做任何压缩，隧道/移动网络下传输时间远超服务端处理时间。Starlette 的
+# GZip 默认跳过 text/event-stream，实时事件流不受影响。
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.add_middleware(
     CORSMiddleware,

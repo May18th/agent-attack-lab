@@ -23,6 +23,9 @@ class BattleRequest(BaseModel):
     difficulty: Literal["low", "mid", "high"] = "low"
     topic: str = Field(default="general", min_length=1, max_length=200)
     rounds: int = Field(default=3, ge=1, le=10)
+    # 跨局记忆开关：开启时本局智能体从第 1 回合读取长期候选记忆，
+    # 且每回合结算写入跨局库；关闭时仅写一局库（第 2 回合起生效）。
+    crossMemory: bool = False
 
     @field_validator("topic")
     @classmethod
@@ -65,7 +68,36 @@ class RuleCandidateRequest(BaseModel):
         return value
 
 
+class CrossMemoryStateRequest(BaseModel):
+    """前端 "跨局记忆" 开关同步：把开关状态绑定到当前战局。"""
+
+    battleId: str = Field(min_length=1, max_length=100)
+    enabled: bool
+
+
 class BattleRecord(BaseModel):
+    id: str
+    code: str | None = None
+    difficulty: Literal["low", "mid", "high"]
+    topic: str
+    status: Literal["pending", "running", "completed", "failed"]
+    rounds: int = 3
+    crossMemory: bool = False
+    verdict: Literal["attacker_won", "defender_won", "undetermined"] | None = None
+    createdAt: str
+    attackerOut: dict[str, Any]
+    defenderOut: list[dict[str, Any]]
+    stats: dict[str, int] | None = None
+
+
+class BattleSummaryRecord(BaseModel):
+    """Metadata-only battle row for list pages.
+
+    列表页只渲染主题、难度、状态和时间；把每场战局的逐轮样本与防守结果
+    一并序列化会让单页响应膨胀到近 1MB。需要明细的调用方走
+    ``GET /battles/{id}``。
+    """
+
     id: str
     code: str | None = None
     difficulty: Literal["low", "mid", "high"]
@@ -74,9 +106,6 @@ class BattleRecord(BaseModel):
     rounds: int = 3
     verdict: Literal["attacker_won", "defender_won", "undetermined"] | None = None
     createdAt: str
-    attackerOut: dict[str, Any]
-    defenderOut: list[dict[str, Any]]
-    stats: dict[str, int] | None = None
 
 
 class BattleEvent(BaseModel):

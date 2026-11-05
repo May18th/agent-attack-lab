@@ -1,0 +1,112 @@
+name: 自证接口可调用
+
+# 用途：从 GitHub 托管 runner（Azure 独立网络，不属于任何一方内网）验证
+#       attack.yuanyiagentzhandui.cn 的 AIP 入口是否真实可用，结果写入
+#       Job Summary 并留档在 Actions 运行历史里，可截图/贴链接作为对外证据。
+#
+# 为什么跑在 ubuntu-latest 而不是 self-hosted：
+#   1) self-hosted runner 就在生产 VPS 上，自己打自己无法证明公网可达；
+#   2) 该 VPS 到 github.com:443 不通（见 predemo-healthcheck.yml 注释）。
+#   GitHub 托管 runner 由微软云出网，是完全独立的第三方网络视角。
+#
+# 判定标准（任何一条不符即失败）：
+#   A. 不带 SNI 握手成功          → 到该 IP 的通路正常
+#   B. SNI=www.baidu.com 握手成功 → 不是按 IP 封禁
+#   C. SNI=真实域名 握手成功      → 不是按 SNI 域名封禁（本 workflow 的核心断言）
+#   D. /health 返回 200           → 应用层真实存活
+#   E. /rpc 无客户端证书返回 403  → mTLS 强制校验生效（设计行为，非故障）
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prove-endpoint-reachable
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HOST: attack.yuanyiagentzhandui.cn
+      IP: 47.108.92.113
+      PORT: "8443"
+    steps:
+      - name: 环境与出网位置
+        run: |
+          echo "| 项目 | 值 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 运行时间 (UTC) | $(date -u +'%Y-%m-%d %H:%M:%S') |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Runner 出网 IP | $(curl -s --max-time 10 https://api.ipify.org) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 目标 | ${HOST}:${PORT} (${IP}) |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: A 域名解析
+        run: |
+          set -euo pipefail
+          echo "## A. DNS 解析" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          dig +short A "$HOST" | tee /tmp/dns.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -qx "$IP" /tmp/dns.txt || { echo "❌ 解析结果不是 $IP"; exit 1; }
+          echo "✅ 解析到 $IP" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: B 无 SNI 握手
+        run: |
+          set -uo pipefail
+          echo '## B. 不带 SNI 握手' >> "$GITHUB_STEP_SUMMARY"
+          if timeout 20 openssl s_client -connect "$IP:$PORT" -showcerts </dev/null > /tmp/b.txt 2>&1 && grep -q "CONNECTED" /tmp/b.txt; then
+            echo "✅ 握手成功" >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E "subject=|issuer=" /tmp/b.txt | head -2 >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ 握手失败" >> "$GITHUB_STEP_SUMMARY"; exit 1
+          fi
+
+      - name: C 对照 SNI（baidu）
+        run: |
+          set -uo pipefail
+          echo '## C. SNI=www.baidu.com（对照）' >> "$GITHUB_STEP_SUMMARY"
+          if timeout 20 openssl s_client -connect "$IP:$PORT" -servername www.baidu.com -showcerts </dev/null > /tmp/c.txt 2>&1 && grep -q "CONNECTED" /tmp/c.txt; then
+            echo "✅ 握手成功 → 说明到该 IP 的通路未被按 IP 封禁" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ 握手失败" >> "$GITHUB_STEP_SUMMARY"; exit 1
+          fi
+
+      - name: D 真实 SNI 握手（核心断言）
+        run: |
+          set -uo pipefail
+          echo '## D. SNI=真实域名（核心断言）' >> "$GITHUB_STEP_SUMMARY"
+          if timeout 20 openssl s_client -connect "$IP:$PORT" -servername "$HOST" -showcerts </dev/null > /tmp/d.txt 2>&1 && grep -q "CONNECTED" /tmp/d.txt; then
+            echo "✅ 握手成功，证书链如下" >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E "subject=|issuer=|Verify return code" /tmp/d.txt | head -4 >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ 握手失败（若此处失败而 C 成功，即为按 SNI 封禁）" >> "$GITHUB_STEP_SUMMARY"; exit 1
+          fi
+
+      - name: E 健康检查 /health
+        run: |
+          set -uo pipefail
+          echo '## E. 应用层存活 /health' >> "$GITHUB_STEP_SUMMARY"
+          code=$(curl -sk --max-time 20 -o /tmp/health.json -w '%{http_code}' "https://$HOST:$PORT/health" || echo 000)
+          echo "- HTTP 状态码：\`$code\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 响应体：\`$(head -c 300 /tmp/health.json 2>/dev/null)\`" >> "$GITHUB_STEP_SUMMARY"
+          [ "$code" = "200" ] || { echo "❌ /health 不是 200"; exit 1; }
+          echo "✅ 服务真实存活" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: F mTLS 强制校验 /rpc
+        run: |
+          set -uo pipefail
+          echo '## F. mTLS 强制校验 /rpc（设计行为）' >> "$GITHUB_STEP_SUMMARY"
+          code=$(curl -sk --max-time 20 -o /dev/null -w '%{http_code}' "https://$HOST:$PORT/rpc" || echo 000)
+          echo "- 无客户端证书访问 /rpc → HTTP \`$code\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 期望 \`403\`：表示 nginx 正确拦截未认证调用方，mTLS 链路生效" >> "$GITHUB_STEP_SUMMARY"
+          [ "$code" = "403" ] || { echo "❌ 期望 403，实际 $code"; exit 1; }
+          echo "✅ mTLS 校验按设计生效" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 结论
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **结论：该接口从 GitHub 托管 runner 的独立网络可正常解析、握手、探活，mTLS 校验生效。**" >> "$GITHUB_STEP_SUMMARY"
+          echo "> 若某一方出口访问失败，问题不在服务端。" >> "$GITHUB_STEP_SUMMARY"

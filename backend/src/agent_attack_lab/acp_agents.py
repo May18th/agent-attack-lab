@@ -84,7 +84,7 @@ def _ssl_context() -> ssl.SSLContext | None:
         if cert_file:
             context.load_cert_chain(certfile=cert_file, keyfile=key_file)
         return context
-    except OSError, ssl.SSLError, ValueError:
+    except (OSError, ssl.SSLError, ValueError):
         raise ACPAgentError("ACP mTLS 证书配置无效") from None
 
 
@@ -157,7 +157,7 @@ def _task_data(task: TaskResult) -> dict[str, Any]:
         if isinstance(item, TextDataItem):
             try:
                 data = json.loads(item.text)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 continue
             if isinstance(data, dict):
                 return data

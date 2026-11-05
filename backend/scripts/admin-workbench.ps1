@@ -88,7 +88,7 @@ function Ensure-Api {
         catch { Write-Log "Agent startup did not complete: $($_.Exception.Message)" }
     }
 
-    Start-ManagedProcess 'api' $Python @('-m', 'uvicorn', 'agent_attack_lab.service:app', '--host', '127.0.0.1', '--port', '8787', '--log-level', 'warning') $BackendRoot
+    Start-ManagedProcess 'api' $Python @('-m', 'uvicorn', 'agent_attack_lab.service:app', '--host', '127.0.0.1', '--port', '8787', '--log-level', 'info', '--no-access-log') $BackendRoot
 }
 
 function Ensure-Frontend {

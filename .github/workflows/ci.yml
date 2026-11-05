@@ -28,6 +28,8 @@ jobs:
         run: uv python install 3.14
       - name: Install dependencies
         run: uv sync --locked
+      - name: Install CJK font for PDF export
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       - name: Lint and format
         run: |
           uv run ruff check src tests

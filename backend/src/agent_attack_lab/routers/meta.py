@@ -19,7 +19,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from agent_attack_lab import config, pages, security, state
 from agent_attack_lab.acp_agents import rpc_metrics
 from agent_attack_lab.agent_logic import local_rule_case_count
-from agent_attack_lab.external_cases import query_external_cases
+from agent_attack_lab.external_cases import (
+    describe_external_cases,
+    query_external_cases,
+)
 from agent_attack_lab.owasp_rules import OWASP_LLM_CATEGORIES
 
 router = APIRouter()
@@ -81,12 +84,24 @@ def health(request: Request) -> dict[str, Any]:
         state.battle_store.count()
     except Exception:  # noqa: BLE001 - health must report degraded storage instead of failing.
         storage_status = "error"
+    # 外部用例库是随发布分发的独立 SQLite 文件（不在版本库内），缺文件时查询接口
+    # 只返回空列表而不报错。这里单独probe一次，让缺失变成可观测状态。
+    external_cases = describe_external_cases(config.external_cases_database)
+    warnings = (
+        [f"external_cases_{external_cases['status']}"]
+        if external_cases["status"] in {"missing", "empty", "error"}
+        else []
+    )
     return {
+        # 顶层 status 仍只反映主库：把外部用例库纳入会让现有探活（nginx/systemd）
+        # 在文件缺失时直接摘流量，而缺失的只是参考数据，不是服务不可用。
         "status": "ok" if storage_status == "ok" else "degraded",
         "service": "智能体攻防实验室",
         "version": config.service_version,
         "uptimeSeconds": round(time.monotonic() - state.started_at, 2),
         "storage": storage_status,
+        "externalCases": external_cases,
+        "warnings": warnings,
         "requestId": request.state.request_id,
     }
 
@@ -141,11 +156,30 @@ def dashboard_summary() -> dict[str, int]:
     cached = state.redis_cache.get_json(cache_key)
     if isinstance(cached, dict):
         return {str(key): int(value) for key, value in cached.items()}
+    # Redis 不是必装件：未配置时上一行恒返回 None，于是后台每次加载都要
+    # 全表遍历战局 JSON 与 agent 调用事件。这里补一层进程内缓存，缓存条目
+    # 绑定「存储实例 + 写入版本号」，换库或任何战局/事件落库都会立即失效。
+    now = time.monotonic()
+    store = state.battle_store
+    revision = store.revision
+    with state.dashboard_summary_cache_lock:
+        local = state.dashboard_summary_cache
+        if local and local[0] > now and local[1] is store and local[2] == revision:
+            return dict(local[3])
     result = {
         **state.battle_store.dashboard_summary(),
         "ruleLibraryCaseCount": local_rule_case_count(),
         "owaspLlmRuleCount": len(OWASP_LLM_CATEGORIES),
     }
+    # 计算期间如果有新战局落库，就别把这份旧快照记成"新鲜"。
+    if store is state.battle_store and store.revision == revision:
+        with state.dashboard_summary_cache_lock:
+            state.dashboard_summary_cache = (
+                now + state.DASHBOARD_SUMMARY_CACHE_TTL_SECONDS,
+                store,
+                revision,
+                result,
+            )
     state.redis_cache.set_json(cache_key, result)
     return result
 

@@ -355,6 +355,8 @@ function installSessionDialog() {
     updateSessionControls(state.sessionEnabled, false)
     element<HTMLDivElement>('agentLoginMask').classList.remove('open')
     element<HTMLInputElement>('agentLoginPassword').value = ''
+    // 游客同样可以查看只读数据（统计、历史战局、外部案例）；创建战局仍由 startBattle 拦截。
+    void Promise.all([loadSummary(), loadHistory(0), checkHealth()]).catch(() => {})
     if (state.sessionEnabled) {
       showToast('游客浏览模式：准备和创建战局功能已禁用')
     } else {
@@ -436,15 +438,21 @@ async function checkHealth() {
 }
 
 async function loadSummary() {
+  const dash = (value: unknown) => (typeof value === 'number' ? String(value) : '—')
   try {
     const summary = await json<Summary>('/dashboard/summary')
-    element('statBattles').textContent = String(summary.totalBattles ?? 0)
-    element('statCases').textContent = String(summary.ruleLibraryCaseCount ?? 0)
-    element('statSamples').textContent = String(summary.sampleCount ?? 0)
-    element('statCaught').textContent = String(summary.ruleHitCount ?? 0)
-    element('statRisks').textContent = String(summary.riskCount ?? 0)
-    element('statAgentBattles').textContent = String(summary.acpCallBattles ?? 0)
-  } catch (error) { showToast(`统计加载失败：${errorText(error)}`) }
+    element('statBattles').textContent = dash(summary.totalBattles)
+    element('statCases').textContent = dash(summary.ruleLibraryCaseCount)
+    element('statSamples').textContent = dash(summary.sampleCount)
+    element('statCaught').textContent = dash(summary.ruleHitCount)
+    element('statRisks').textContent = dash(summary.riskCount)
+    element('statAgentBattles').textContent = dash(summary.acpCallBattles)
+  } catch (error) {
+    for (const id of ['statBattles', 'statCases', 'statSamples', 'statCaught', 'statRisks', 'statAgentBattles']) {
+      element(id).textContent = '—'
+    }
+    showToast(`统计加载失败：${errorText(error)}`)
+  }
 }
 
 async function loadHistory(page = state.page) {
@@ -508,6 +516,8 @@ function updatePagination() {
   const pages = Math.max(1, Math.ceil(state.total / PAGE_SIZE))
   const label = document.querySelector('.pagination span')
   if (label) label.textContent = `第 ${state.page + 1} / ${pages} 页 · 共 ${state.total} 场`
+  const totalBadge = document.getElementById('logTotal')
+  if (totalBadge) totalBadge.textContent = `${state.total} 场`
   element<HTMLButtonElement>('prevPage').disabled = state.page <= 0
   element<HTMLButtonElement>('nextPage').disabled = state.page + 1 >= pages
 }
@@ -573,11 +583,13 @@ function scorePart(role: RoundScoreRole | undefined, key: 'processScore' | 'effe
 
 function eventRoundScore(event: BattleEvent): LiveRoundScore | null {
   const data = event.data
-  const raw = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : data
-  const attackerRole = raw.attacker && typeof raw.attacker === 'object' ? raw.attacker as RoundScoreRole : undefined
-  const defenderRole = raw.defender && typeof raw.defender === 'object' ? raw.defender as RoundScoreRole : undefined
-  const attacker = scoreValue(raw.attacker)
-  const defender = scoreValue(raw.defender)
+  const totals = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : {}
+  // arbiter.round.scored 同时返回完整角色评分对象和 scores 中的综合分数字。
+  // 实时评分需要优先保留完整对象，才能展示流程、效果、响应和逐项证据。
+  const attackerRole = data.attacker && typeof data.attacker === 'object' ? data.attacker as RoundScoreRole : undefined
+  const defenderRole = data.defender && typeof data.defender === 'object' ? data.defender as RoundScoreRole : undefined
+  const attacker = scoreValue(attackerRole) ?? scoreValue(totals.attacker)
+  const defender = scoreValue(defenderRole) ?? scoreValue(totals.defender)
   return attacker === null && defender === null ? null : { attacker, defender, attackerRole, defenderRole }
 }
 
@@ -627,6 +639,21 @@ function syncLiveRoundScore(round: number, scores: LiveRoundScore) {
   element('scoreScopeTitle').textContent = '实时评分 · 当前回合'
   element('scoreScopeNote').textContent = `当前展示第 ${round} 回合已结算的评分`
   element('scoreStatus').textContent = `第 ${round} 回合已结算`
+  const rounds = [...liveRoundScores.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([number, item]) => ({
+      round: number,
+      attacker: item.attackerRole,
+      defender: item.defenderRole,
+      scores: { attacker: item.attacker, defender: item.defender },
+    }))
+  window.dispatchEvent(new CustomEvent('battle-scores:update', {
+    detail: {
+      rounds,
+      latest: rounds.at(-1),
+      label: `第 ${round} 回合已结算`,
+    },
+  }))
 }
 
 function syncLiveScoreParts(attacker: RoundScoreRole | undefined, defender: RoundScoreRole | undefined) {
@@ -652,9 +679,23 @@ function publishBattleVisualizations(rounds: readonly BattleVisualizationRound[]
 async function refreshBattleVisualizations(battleId: string) {
   const requestGeneration = ++visualizationRequestGeneration
   try {
-    const result = await json<{ rounds?: (BattleVisualizationRound & BattleRoundScore)[] }>(`/battles/${encodeURIComponent(battleId)}/rounds`)
+    const encodedBattleId = encodeURIComponent(battleId)
+    const [result, similarityEvents] = await Promise.all([
+      json<{ rounds?: (BattleVisualizationRound & BattleRoundScore)[] }>(`/battles/${encodedBattleId}/rounds`),
+      json<BattleEvent[]>(`/battles/${encodedBattleId}/events?event_type=arbiter.similarity.checked&limit=1000`).catch(() => []),
+    ])
     if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
     renderRoundScoreDetails(result.rounds || [])
+    const sourceByRound = new Map<number, string>()
+    similarityEvents.forEach((event) => {
+      const round = Number(event.data.round)
+      const sourceType = event.data.sourceType
+      if (Number.isInteger(round) && round > 0 && typeof sourceType === 'string') sourceByRound.set(round, sourceType)
+    })
+    const visualizationRounds = (result.rounds || []).map((round) => ({
+      ...round,
+      sourceType: sourceByRound.get(Number(round.round)) ?? round.sourceType,
+    }))
     liveRoundScores.clear()
     ;(result.rounds || []).forEach((round) => {
       const attackerRole = round.attacker && typeof round.attacker === 'object' ? round.attacker : undefined
@@ -666,15 +707,22 @@ async function refreshBattleVisualizations(battleId: string) {
     renderLiveRoundScores()
     const latest = (result.rounds || []).filter((round) => scoreValue(round.attacker) !== null || scoreValue(round.defender) !== null).at(-1)
     if (latest) {
+      const attackerRole = latest.attacker && typeof latest.attacker === 'object' ? latest.attacker : undefined
+      const defenderRole = latest.defender && typeof latest.defender === 'object' ? latest.defender : undefined
+      const normalizedLatest = {
+        ...latest,
+        attacker: attackerRole,
+        defender: defenderRole,
+      }
       syncLiveScoreParts(
-        latest.attacker && typeof latest.attacker === 'object' ? latest.attacker : undefined,
-        latest.defender && typeof latest.defender === 'object' ? latest.defender : undefined,
+        attackerRole,
+        defenderRole,
       )
       window.dispatchEvent(new CustomEvent('battle-scores:update', {
-        detail: { rounds: result.rounds || [], latest, label: `第 ${latest.round} 回合已结算` },
+        detail: { rounds: result.rounds || [], latest: normalizedLatest, label: `第 ${latest.round} 回合已结算` },
       }))
     }
-    publishBattleVisualizations(Array.isArray(result.rounds) ? result.rounds : [], 'ready')
+    publishBattleVisualizations(visualizationRounds, 'ready')
   } catch {
     if (state.selected?.id !== battleId || requestGeneration !== visualizationRequestGeneration) return
     publishBattleVisualizations([], 'unavailable')
@@ -1005,7 +1053,7 @@ function renderLiveEvent(event: BattleEvent) {
   const round = Number(event.data.round || 0)
   // 3D 事件先进入串行播放队列；时间线视觉项共享同一个完成信号。
   const ready = bridge3dEvent(event, round)
-  if (event.type === 'arbiter.round.scored' || event.type === 'round.settled') {
+  if (event.type === 'arbiter.round.score' || event.type === 'arbiter.round.scored' || event.type === 'round.settled') {
     const scores = eventRoundScore(event)
     if (scores) {
       if (slowPlayback) enqueueTimelinePlayback(() => syncLiveRoundScore(round, scores), ready)
@@ -1039,8 +1087,16 @@ function renderLiveEvent(event: BattleEvent) {
     const entryRound = Number(entry.event.data.round || round)
     const timing = eventTiming(entry.event)
     const evidenceIds = timelineEvidenceIds(entry.event)
-    const title = eventTitle(entry.event)
-    const description = eventDescription(entry.event)
+    // 「Ln 已穿透」是合成卡：不属于任何单条后端事件，文案由层级推导。
+    const penetratedLayer = entry.variant === 'penetrated' ? Number(entry.event.data.layerIndex) : NaN
+    const title = entry.variant === 'penetrated'
+      ? `L${penetratedLayer} 已穿透`
+      : eventTitle(entry.event)
+    const description = entry.variant === 'penetrated'
+      ? (penetratedLayer >= 3
+        ? 'payload 融入 Core · L3 球壳破裂 · Core 由蓝色变为红色。'
+        : `payload 来到下一层 L${penetratedLayer + 1}；本层全部环节通过且事件卡已出完，防御球层破裂。`)
+      : eventDescription(entry.event)
     const publishEntry = () => {
       appendTimeline(entry.side, entry.key, entry.event, title, description, timing, evidenceIds)
       element('liveStatus').textContent = title
@@ -1207,10 +1263,15 @@ function timelineGuide(event: BattleEvent, description: string): TimelineGuide {
   if (event.type === 'arbiter.verdict') {
     return { input: '各层检查、实际效果与恢复证据', action: '生成唯一最终分类', next: 'A8 · 公开结果复盘', score: '锁定本回合实际效果分类' }
   }
-  if (event.type === 'arbiter.safe_control' || event.type === 'defense.safe_control') {
+  if (
+    event.type === 'arbiter.safe_control'
+    || event.type === 'arbiter.safe_control.started'
+    || event.type === 'arbiter.safe_control.verdict'
+    || event.type === 'defense.safe_control'
+  ) {
     return { input: '独立正常样本与安全对照证据', action: '验证正常样本是否被正确放行', next: '回合评分与结算', score: '影响 Defender D-07 及相应响应分' }
   }
-  if (event.type === 'arbiter.round.scored') {
+  if (event.type === 'arbiter.round.score' || event.type === 'arbiter.round.scored') {
     return { input: '完整事件链、裁决和响应时长', action: '计算双方基础分、响应分与综合分', next: '本回合结算', score: '写入当前回合实时评分' }
   }
   if (event.type === 'round.settled') {
@@ -1243,15 +1304,12 @@ function appendTimeline(
   let event = Array.from(host.querySelectorAll<HTMLElement>('.event'))
     .find((item) => item.dataset.timelineKey === key)
   const isNew = !event
-  const expanded = event?.classList.contains('is-expanded') || false
+  const expanded = event?.querySelector<HTMLDetailsElement>('.event-disclosure')?.open || false
   if (!event) event = document.createElement('div')
   event.className = `event ${side}${expanded ? ' is-expanded' : ''}`
   event.dataset.timelineKey = key
   event.dataset.eventId = sourceEvent.id
-  event.setAttribute('role', 'button')
-  event.setAttribute('tabindex', '0')
-  event.setAttribute('aria-expanded', String(expanded))
-  event.setAttribute('aria-label', `${title}，${timelineStatusLabel(timelineStatus(sourceEvent))}，点击查看审计详情`)
+  
   event.replaceChildren()
   const card = document.createElement('div')
   card.className = 'card'
@@ -1308,26 +1366,20 @@ function appendTimeline(
     timelineDetail('评分影响', guide.score),
     timelineDetail('下一节点', guide.next),
   )
-  card.append(actor, name, desc, status, timingRow, audit, detail)
+  const disclosure = document.createElement('details')
+  disclosure.className = 'event-disclosure'
+  disclosure.open = expanded
+  const summary = document.createElement('summary')
+  summary.textContent = '查看事件详情'
+  disclosure.append(summary, timingRow, audit, detail)
+  card.append(actor, name, desc, status, disclosure)
   event.appendChild(card)
   if (side !== 'judge') {
     const dot = document.createElement('span')
     dot.className = 'dot'
     event.appendChild(dot)
   }
-  if (isNew) {
-    const toggle = () => {
-      const open = event!.classList.toggle('is-expanded')
-      event!.setAttribute('aria-expanded', String(open))
-    }
-    event.addEventListener('click', toggle)
-    event.addEventListener('keydown', (keyboardEvent) => {
-      if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return
-      keyboardEvent.preventDefault()
-      toggle()
-    })
-    host.appendChild(event)
-  }
+    if (isNew) host.appendChild(event)
   // 让页面脚本根据用户是否正在手动查看时间线决定是否跟随到底部。
   // 直接设置 scrollTop 会覆盖用户滚轮位置，导致实时事件到来时强制跳到底部。
   window.dispatchEvent(new CustomEvent('battle-timeline:follow'))
@@ -1345,9 +1397,10 @@ function eventTitle(event: BattleEvent) {
     const name = String(event.data.checkName || '').trim()
     return `${stageId}${name ? ` · ${name}` : ''}`
   }
-  if (event.type === 'arbiter.layer.started') return `${stageId} · Arbiter 开启层检测`
+  if (event.type === 'arbiter.layer.started' || (event.type === 'defense.layer.started' && /^L[0-3]$/.test(stageId))) return `${stageId} · Arbiter 开启层检测`
   if (event.type === 'arbiter.layer.confirmed') return `${stageId} · Arbiter 确认本层结果`
-  if (event.type === 'arbiter.safe_control') return 'Arbiter · 启动安全对照'
+  if (event.type === 'arbiter.safe_control.started' || event.type === 'arbiter.safe_control') return 'Arbiter · 启动安全对照'
+  if (event.type === 'arbiter.safe_control.verdict') return `Arbiter · 特征库动作（${String(event.data.featureAction || 'no-update')}）`
   if (event.type === 'defense.safe_control') return 'D-07 · 安全对照结果'
   if (event.type === 'agent.call.started' || event.type === 'agent.call.completed' || event.type === 'agent.call.failed') {
     const role = String(event.data.agentRole || '').toLowerCase() === 'defender' ? 'Defender' : 'Attacker'
@@ -1363,7 +1416,8 @@ function eventTitle(event: BattleEvent) {
     'defense.layer.verdict': '防御检查点裁决',
     'defense.completed': '防守分析完成', 'arbiter.similarity.checked': 'A6 · 相似度元数据校验',
     'arbiter.verdict': 'Arbiter · 最终分类',
-    'arbiter.round.scored': 'Arbiter · 本回合评分', 'round.settled': 'Arbiter · 本回合结算',
+    'arbiter.round.score': 'Arbiter · 本回合评分', 'arbiter.round.scored': 'Arbiter · 本回合评分',
+    'round.settled': 'Arbiter · 本回合结算',
     'battle.completed': 'Arbiter · 整局结算完成', 'battle.failed': 'Arbiter · 战局执行失败',
   } as Record<string, string>)[event.type] || event.type
 }
@@ -1382,7 +1436,7 @@ function eventDescription(event: BattleEvent) {
     if (stageId === 'A7') return `提交 ${text(data.submissionId)} · ${data.accepted === false ? '未接受' : suffix}`
     if (stageId === 'A8') return `公开裁决 ${text(data.classification || data.verdict || '待公布')} · ${suffix}`
   }
-  if (event.type === 'arbiter.round.scored') {
+  if (event.type === 'arbiter.round.score' || event.type === 'arbiter.round.scored') {
     const scores = data.scores && typeof data.scores === 'object' ? data.scores as Record<string, unknown> : {}
     const attacker = scoreValue(scores.attacker)
     const defender = scoreValue(scores.defender)
@@ -1419,7 +1473,18 @@ function eventDescription(event: BattleEvent) {
   if (event.type === 'arbiter.layer.started') return `${text(data.layer || data.stageId)} 层检测已开启，等待 Defender 按顺序提交检查证据`
   if (event.type === 'arbiter.layer.confirmed') return `确认 ${text(data.layer || data.stageId)} 必要检查全部通过，证据完整`
   if (event.type === 'arbiter.verdict') return `最终分类：${text(data.classification || event.status)}`
-  if (event.type === 'defense.safe_control' || event.type === 'arbiter.safe_control' || event.type === 'safe_control') {
+  if (event.type === 'arbiter.safe_control.verdict') {
+    const action = String(data.featureAction || 'no-update')
+    return action === 'update-pending-review'
+      ? `特征库动作：update-pending-review · ${String(data.featureActionReason || '特征候选进入待审核队列')}`
+      : `特征库动作：${action} · ${String(data.featureActionReason || '不更新特征库')}`
+  }
+  if (
+    event.type === 'defense.safe_control'
+    || event.type === 'arbiter.safe_control'
+    || event.type === 'arbiter.safe_control.started'
+    || event.type === 'safe_control'
+  ) {
     const result = String(data.classification || data.status || event.status || '').toLowerCase()
     const allowed = result === 'passed' || result === 'allow' || result === 'allowed' || result === '放行'
     if (result === 'pending' || result === 'running' || !result) return '安全对照测试：正常样本检测中'
@@ -1538,8 +1603,9 @@ async function initialize() {
   installSessionDialog()
   await checkHealth()
   const canUse = await checkSession()
-  if (canUse) await Promise.all([loadSummary(), loadHistory(0)])
-  else showLogin('首次使用请先登录，登录后才能准备和创建战局')
+  // 只读数据（统计 / 历史战局）匿名即可读取，先加载出来；写入类操作由 startBattle 统一要求登录。
+  await Promise.all([loadSummary(), loadHistory(0)])
+  if (!canUse) showLogin('浏览实时战局可直接选择「以游客身份浏览」；创建战局需要先登录')
 }
 
 void initialize()

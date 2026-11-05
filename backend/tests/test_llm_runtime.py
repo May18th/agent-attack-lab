@@ -89,7 +89,14 @@ def test_arbiter_can_use_role_specific_chat_completions_configuration(
     assert captured["body"]["model"] == "arbiter-model"
 
 
-def test_role_specific_configuration_requires_all_required_values(monkeypatch) -> None:
+def test_partial_role_configuration_falls_back_to_shared_endpoint(monkeypatch) -> None:
+    """半配的角色块只能退回共享端点，不能把共享端点一起废掉。
+
+    旧行为是"任一角色变量有值就切到角色前缀，再要求三项全有"，于是只填
+    AGENT_ATTACKER_LLM_BASE_URL 会让攻击方判定为未配置，静默降级到本地规则，
+    而共享端点明明可用。现在半配一律回落，并留一条 warning。
+    """
+    llm_runtime._WARNED_PARTIAL.clear()
     for name in ("BASE_URL", "API_KEY", "MODEL"):
         monkeypatch.delenv(f"AGENT_ATTACKER_LLM_{name}", raising=False)
     monkeypatch.setenv("AGENT_ATTACKER_LLM_BASE_URL", "https://attacker.example/v1")
@@ -97,8 +104,34 @@ def test_role_specific_configuration_requires_all_required_values(monkeypatch) -
     monkeypatch.setenv("AGENT_LLM_API_KEY", "shared-key")
     monkeypatch.setenv("AGENT_LLM_MODEL", "shared-model")
 
-    assert llm_runtime.is_configured(role="attacker") is False
+    assert llm_runtime._selected_prefix("attacker") == "AGENT_LLM_"
+    assert llm_runtime.is_configured(role="attacker") is True
     assert llm_runtime.is_configured() is True
+
+
+def test_partial_role_configuration_without_shared_endpoint_stays_unconfigured(
+    monkeypatch,
+) -> None:
+    llm_runtime._WARNED_PARTIAL.clear()
+    for name in ("BASE_URL", "API_KEY", "MODEL"):
+        monkeypatch.delenv(f"AGENT_ATTACKER_LLM_{name}", raising=False)
+        monkeypatch.delenv(f"AGENT_LLM_{name}", raising=False)
+    monkeypatch.setenv("AGENT_ATTACKER_LLM_MODEL", "attacker-model")
+
+    assert llm_runtime._selected_prefix("attacker") == "AGENT_LLM_"
+    assert llm_runtime.is_configured(role="attacker") is False
+
+
+def test_complete_role_configuration_takes_precedence_over_shared(monkeypatch) -> None:
+    llm_runtime._WARNED_PARTIAL.clear()
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://shared.example/v1")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "shared-key")
+    monkeypatch.setenv("AGENT_LLM_MODEL", "shared-model")
+    monkeypatch.setenv("AGENT_DEFENDER_LLM_BASE_URL", "https://defender.example/v1")
+    monkeypatch.setenv("AGENT_DEFENDER_LLM_API_KEY", "defender-key")
+    monkeypatch.setenv("AGENT_DEFENDER_LLM_MODEL", "defender-model")
+
+    assert llm_runtime._selected_prefix("defender") == "AGENT_DEFENDER_LLM_"
 
 
 def test_unknown_model_role_is_rejected() -> None:

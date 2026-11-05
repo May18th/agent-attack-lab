@@ -91,19 +91,30 @@ uv run pytest -q
 
 管理员后台的事件回放接口字段、游标分页、访问控制边界和 3D 模型资源清单见 [`docs/ADMIN_3D_REPLAY.md`](../docs/ADMIN_3D_REPLAY.md)。
 
-`GET /health` 会返回服务版本、运行时间、存储状态和 `requestId`。所有响应都会带 `X-Request-ID`；公网排障时请保留该值。
+`GET /health` 会返回服务版本、运行时间、存储状态和 `requestId`。`externalCases` 字段报告外部用例库的状态（`ok` / `missing` / `empty` / `error`）及去重后记录数；异常时 `warnings` 会追加 `external_cases_missing` 等条目。顶层 `status` 只反映主库：外部用例库缺失只影响参考数据，不会让服务被判为不健康。所有响应都会带 `X-Request-ID`；公网排障时请保留该值。
 
 写入接口默认启用单进程限流：每个客户端每分钟最多 60 次。可通过 `AGENT_RATE_LIMIT_PER_MINUTE` 调整，设置为 `0` 关闭。超限返回 `429` 和 `Retry-After`。
 
-SQLite 备份与恢复：
+备份与恢复（脚本会自动区分后端类型，从 `backend\.env` 读取 `AGENT_BATTLE_DATABASE_URL`）：
 
 ```powershell
 cd "D:\梧桐\backend"
+
+# SQLite：文件级快照
 .\backup.ps1
 .\restore.ps1 -BackupPath ".data\backups\battles-20261006-120000.sqlite3" -Force
+
+# MySQL：逻辑备份，产出 .sql（脚本自动判断，无需额外参数）
+.\backup.ps1
+.\restore.ps1 -BackupPath ".data\backups\battles-20261029-012729.sql"
 ```
 
-恢复前先停止后端服务；不传 `-Force` 时不会覆盖已有数据库。
+注意事项：
+
+- 恢复前先停止后端服务。SQLite 不传 `-Force` 时不会覆盖已有数据库。
+- MySQL 恢复会自动先导出 `.data\backups\pre-restore-<时间>.sql` 快照，失败时直接回滚，不会留下半份数据。
+- MySQL 业务账号通常没有 `DROP` 权限，因此恢复采用「保留现有表结构 + `DELETE` 清空 + 回灌」，不会按备份文件重建表；备份中新增的表会按备份 DDL 创建。
+- 备份实现见 `scripts/db_backup_mysql.py`，只依赖项目已有的 `sqlalchemy` + `pymysql`，目标机不需要安装 `mysqldump`。
 
 部署到公网时应设置 `AGENT_API_KEY`。公开网站所需的业务 API 无需该密钥；`POST /agent/*`、`POST /rpc` 和内部统计接口 `GET /metrics` 始终需要服务端 API Key。
 
@@ -212,11 +223,13 @@ SQLite 会记录 `schema_migrations` 基线版本并以幂等 DDL 自动补齐�
 
 终态战局的内部运行质量评分会写入 `battle_scores` 快照表（评分规则版本、完整 JSON 和计算时间），评分接口优先读取快照；旧战局没有快照时仍按事件实时计算。部署数据库迁移后再启用该表，禁止手工删除评分记录。
 
-战局默认保存到 `.data/battles.sqlite3`，服务重启后仍保留。需要指定其他数据库路径时设置环境变量：
+数据库地址按以下优先级解析：`AGENT_BATTLE_DATABASE_URL`（支持 `mysql+pymysql://`、`postgresql://`）> `AGENT_BATTLE_DB`（SQLite 文件路径）> 默认 `.data/battles.sqlite3`。生产走 MySQL 时只需在 `.env` 设置连接串：
 
 ```powershell
-$env:AGENT_BATTLE_DB="D:\data\attack-lab.sqlite3"
+$env:AGENT_BATTLE_DATABASE_URL="mysql+pymysql://<user>:<password>@127.0.0.1:3306/agent_attack_lab?charset=utf8mb4"
 ```
+
+本地开发想临时回到 SQLite，设置 `$env:AGENT_BATTLE_DB="D:\data\attack-lab.sqlite3"` 即可。注意 `AGENT_BATTLE_DATABASE_URL` 一旦存在就优先，切换时需先清空它。外部用例库（`AGENT_EXTERNAL_CASE_DB`）仍只支持 SQLite 文件，不随主库切换。
 
 ## 接口示例
 

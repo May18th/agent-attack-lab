@@ -41,3 +41,6 @@ node_modules/
 .idea/
 Thumbs.db
 Desktop.ini
+
+# VPS runtime secrets (never commit)
+deploy/

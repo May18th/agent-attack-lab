@@ -67,7 +67,7 @@ class RedisJsonCache:
             return None
         try:
             return json.loads(value)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             self.delete(key)
             return None
 
