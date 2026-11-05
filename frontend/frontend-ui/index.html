@@ -3233,7 +3233,6 @@ var battle3d=(function(){
      开始攻防会在后端创建真实智能体战局：每回合攻防结算后，Attacker 策略候选与
      Defender 特征候选由后端写入候选库（一局记忆按战局隔离，跨局记忆受开关控制），
      前端轮询拉取并渲染，形成智能体逐回合迭代学习的前后端闭环。 */
-  var remoteLibraryStateReady=remoteLibraryState;   /* 声明已上移到 renderAllCandidateLibraries() 之前，见上方注释 */
   function normalizeRemoteEntries(list){return (Array.isArray(list)?list:[]).map(function(item){return {round:item.round,theme:item.topic,resultLabel:item.resultLabel,sourceType:item.sourceType,createdAt:item.createdAt,fields:item.fields||{}};});}
   function applyRemoteBattleLibrary(data){if(!data)return;remoteLibraryState.battleId=data.battleId||remoteLibraryState.battleId;remoteLibraryState.crossMemory=!!data.crossMemory;remoteLibraryState.battle={attacker:normalizeRemoteEntries(data.attacker),defender:normalizeRemoteEntries(data.defender)};}
   function applyRemoteCrossLibrary(data){if(!data)return;remoteLibraryState.cross={attacker:normalizeRemoteEntries(data.attacker),defender:normalizeRemoteEntries(data.defender)};remoteLibraryState.battleCount=Number(data.battleCount||0);}
